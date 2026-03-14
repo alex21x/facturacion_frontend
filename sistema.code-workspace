@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "../sistema"
+		},
+		{
+			"path": "../facturacion"
+		},
+		{
+			"path": "../facturacion_backend"
+		}
+	],
+	"settings": {}
+}
