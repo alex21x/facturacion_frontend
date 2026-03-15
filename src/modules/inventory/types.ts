@@ -41,3 +41,23 @@ export type InventoryLotRow = {
   status: number;
   stock: string;
 };
+
+export type KardexRow = {
+  id: number;
+  warehouse_id: number;
+  warehouse_code: string | null;
+  warehouse_name: string | null;
+  product_id: number;
+  product_sku: string | null;
+  product_name: string;
+  lot_id: number | null;
+  lot_code: string | null;
+  movement_type: string;
+  quantity: string;
+  unit_cost: string;
+  line_total: string;
+  ref_type: string | null;
+  ref_id: number | null;
+  notes: string | null;
+  moved_at: string;
+};

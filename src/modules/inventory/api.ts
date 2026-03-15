@@ -1,5 +1,5 @@
 import { apiClient } from '../../shared/api/client';
-import type { InventoryLotRow, InventoryProduct, InventoryStockRow } from './types';
+import type { InventoryLotRow, InventoryProduct, InventoryStockRow, KardexRow } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
   return {
@@ -65,6 +65,44 @@ export async function fetchInventoryLots(
   }
 
   const response = await apiClient.request<{ data: InventoryLotRow[] }>(`/api/inventory/lots?${query.toString()}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return response.data;
+}
+
+export async function fetchKardex(
+  accessToken: string,
+  params?: {
+    productId?: number | null;
+    warehouseId?: number | null;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+  }
+): Promise<KardexRow[]> {
+  const query = new URLSearchParams();
+
+  if (params?.productId) {
+    query.set('product_id', String(params.productId));
+  }
+  if (params?.warehouseId) {
+    query.set('warehouse_id', String(params.warehouseId));
+  }
+  if (params?.dateFrom) {
+    query.set('date_from', params.dateFrom);
+  }
+  if (params?.dateTo) {
+    query.set('date_to', params.dateTo);
+  }
+  if (params?.limit) {
+    query.set('limit', String(params.limit));
+  }
+
+  const path = query.toString() ? `/api/inventory/kardex?${query.toString()}` : '/api/inventory/kardex';
+
+  const response = await apiClient.request<{ data: KardexRow[] }>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });

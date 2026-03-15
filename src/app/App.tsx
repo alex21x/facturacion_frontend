@@ -4,6 +4,8 @@ import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
 import { fetchOperationalContext } from '../modules/appcfg/api';
 import { AppConfigView } from '../modules/appcfg/components/AppConfigView';
+import { CashView } from '../modules/cash/components/CashView';
+import { CompanyConfigView } from '../modules/company/components/CompanyConfigView';
 import { CustomersView } from '../modules/customers/components/CustomersView';
 import type { OperationalContextResponse } from '../modules/appcfg/types';
 import { InventoryView } from '../modules/inventory/components/InventoryView';
@@ -19,7 +21,16 @@ import {
 } from '../modules/auth/storage';
 import type { AuthSession, LoginPayload } from '../modules/auth/types';
 
-type ModuleTab = 'sales' | 'inventory' | 'purchases' | 'products' | 'customers' | 'masters' | 'appcfg';
+type ModuleTab =
+  | 'cash'
+  | 'sales'
+  | 'inventory'
+  | 'purchases'
+  | 'products'
+  | 'customers'
+  | 'masters'
+  | 'appcfg'
+  | 'company';
 
 const MENU_ITEMS: Array<{
   id: ModuleTab;
@@ -28,6 +39,17 @@ const MENU_ITEMS: Array<{
   hint: string;
   icon: React.ReactNode;
 }> = [
+  {
+    id: 'cash',
+    kicker: 'Tesoreria',
+    label: 'Caja',
+    hint: 'Sesiones y movimientos',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9zm0 0V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2M9 13h6M12 13v4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
   {
     id: 'sales',
     kicker: 'Ventas',
@@ -105,6 +127,17 @@ const MENU_ITEMS: Array<{
       </svg>
     ),
   },
+  {
+    id: 'company',
+    kicker: 'Empresa',
+    label: 'Mi Empresa',
+    hint: 'RUC, logo, certificado',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 21h18M3 7l9-4 9 4M4 7v14M20 7v14M9 11h2v4H9zM13 11h2v4h-2zM9 19h6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
 ];
 
 export function App() {
@@ -112,6 +145,7 @@ export function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ModuleTab>('sales');
+  const [menuSearch, setMenuSearch] = useState('');
   const [context, setContext] = useState<OperationalContextResponse | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | null>(null);
@@ -130,6 +164,18 @@ export function App() {
 
     return `${session.user.first_name} ${session.user.last_name}`.trim();
   }, [session]);
+
+  const filteredMenuItems = useMemo(() => {
+    const query = menuSearch.trim().toLowerCase();
+    if (!query) {
+      return MENU_ITEMS;
+    }
+
+    return MENU_ITEMS.filter((item) => {
+      const source = `${item.kicker} ${item.label} ${item.hint}`.toLowerCase();
+      return source.includes(query);
+    });
+  }, [menuSearch]);
 
   async function handleLogin(payload: LoginPayload): Promise<void> {
     setIsLoading(true);
@@ -250,6 +296,7 @@ export function App() {
         </p>
         <div className="chips">
           <span>Auth</span>
+          <span>Caja</span>
           <span>Sales</span>
           <span>Inventory</span>
           <span>Purchases</span>
@@ -257,6 +304,7 @@ export function App() {
           <span>Customers</span>
           <span>Masters</span>
           <span>AppCfg</span>
+          <span>Empresa</span>
         </div>
 
         {!session && (
@@ -346,8 +394,25 @@ export function App() {
 
         {session && (
           <section className="workspace-panel">
+            <div className="menu-toolbar">
+              <label className="menu-search">
+                <span>Buscar modulo</span>
+                <input
+                  type="text"
+                  placeholder="Ej. caja, inventario, empresa..."
+                  value={menuSearch}
+                  onChange={(e) => setMenuSearch(e.target.value)}
+                />
+              </label>
+              <div className="menu-meta">
+                <span>{filteredMenuItems.length} modulos</span>
+                <span>Sucursal: {selectedBranchId ?? 'N/A'}</span>
+                <span>Caja: {selectedCashRegisterId ?? 'N/A'}</span>
+              </div>
+            </div>
+
             <nav className="tab-nav">
-              {MENU_ITEMS.map((item) => (
+              {filteredMenuItems.map((item) => (
                 <button
                   key={item.id}
                   className={activeTab === item.id ? 'active' : ''}
@@ -366,8 +431,17 @@ export function App() {
                   <span className="menu-arrow" aria-hidden="true">&rsaquo;</span>
                 </button>
               ))}
+              {filteredMenuItems.length === 0 && (
+                <p className="notice" style={{ margin: 0 }}>No hay modulos que coincidan con la busqueda.</p>
+              )}
             </nav>
 
+            {activeTab === 'cash' && (
+              <CashView
+                accessToken={session.accessToken}
+                cashRegisterId={selectedCashRegisterId}
+              />
+            )}
             {activeTab === 'sales' && (
               <SalesView
                 accessToken={session.accessToken}
@@ -402,6 +476,9 @@ export function App() {
                 warehouseId={selectedWarehouseId}
                 cashRegisterId={selectedCashRegisterId}
               />
+            )}
+            {activeTab === 'company' && (
+              <CompanyConfigView accessToken={session.accessToken} />
             )}
           </section>
         )}
