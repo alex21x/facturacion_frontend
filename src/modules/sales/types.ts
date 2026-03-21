@@ -11,11 +11,39 @@ export type CommercialDocumentListItem = {
   document_kind: string;
   series: string;
   number: number;
+  source_document_id?: number | null;
+  source_document_kind?: string | null;
   issue_at: string;
+  created_at?: string | null;
   status: string;
   total: string;
   balance_due: string;
   customer_name: string;
+  payment_method_name?: string | null;
+  has_tributary_conversion?: boolean | string | number;
+  has_order_conversion?: boolean | string | number;
+  has_items?: boolean | string | number;
+};
+
+export type PaginationMeta = {
+  page: number;
+  per_page: number;
+  total: number;
+  last_page: number;
+};
+
+export type PaginatedCommercialDocuments = {
+  data: CommercialDocumentListItem[];
+  meta: PaginationMeta;
+};
+
+export type ConvertCommercialDocumentPayload = {
+  target_document_kind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER';
+  series?: string;
+  issue_at?: string;
+  due_at?: string;
+  cash_register_id?: number | null;
+  payment_method_id?: number | null;
 };
 
 export type SalesDocumentKind = {

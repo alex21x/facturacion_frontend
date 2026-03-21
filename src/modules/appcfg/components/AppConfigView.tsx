@@ -19,6 +19,17 @@ type AppConfigViewProps = {
   cashRegisterId: number | null;
 };
 
+const FEATURE_LABELS: Record<string, string> = {
+  PRODUCT_MULTI_UOM: 'Unidades multiples por producto',
+  PRODUCT_UOM_CONVERSIONS: 'Conversion entre unidades de producto',
+  PRODUCT_WHOLESALE_PRICING: 'Precios mayoristas por volumen',
+  SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja independiente',
+};
+
+function featureLabel(code: string): string {
+  return FEATURE_LABELS[code] ?? code;
+}
+
 export function AppConfigView({ accessToken, branchId, warehouseId, cashRegisterId }: AppConfigViewProps) {
   const [modules, setModules] = useState<ModuleRow[]>([]);
   const [features, setFeatures] = useState<FeatureToggleRow[]>([]);
@@ -248,7 +259,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
           <tbody>
             {features.map((row) => (
               <tr key={row.feature_code}>
-                <td>{row.feature_code}</td>
+                <td>{featureLabel(row.feature_code)}</td>
                 <td>{row.company_enabled === null ? '-' : row.company_enabled ? 'SI' : 'NO'}</td>
                 <td>{row.branch_enabled === null ? '-' : row.branch_enabled ? 'SI' : 'NO'}</td>
                 <td>{row.is_enabled ? 'SI' : 'NO'}</td>

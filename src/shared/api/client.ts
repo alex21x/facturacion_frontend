@@ -72,15 +72,19 @@ async function refreshAccessToken(): Promise<string | null> {
 
 async function request<T>(path: string, init?: RequestInit, allowRetry = true): Promise<T> {
   const baseHeaders = toHeadersObject(init?.headers);
+  const session = loadAuthSession();
+  const authHeader = baseHeaders.Authorization ?? (session ? `Bearer ${session.accessToken}` : undefined);
+
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
       ...baseHeaders,
+      ...(authHeader ? { Authorization: authHeader } : {}),
     },
   });
 
-  if (response.status === 401 && allowRetry && !isAuthRoute(path) && baseHeaders.Authorization) {
+  if (response.status === 401 && allowRetry && !isAuthRoute(path) && authHeader) {
     const newAccessToken = await refreshAccessToken();
 
     if (newAccessToken) {
@@ -102,6 +106,11 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
     const text = await response.text();
     const contentType = response.headers.get('content-type') ?? '';
     const isHtml = contentType.includes('text/html') || /<html|<!doctype/i.test(text);
+
+    if (response.status === 401 && !isAuthRoute(path)) {
+      clearAuthSession();
+      throw new Error('Sesion expirada o invalida. Inicia sesion nuevamente.');
+    }
 
     if (response.status === 429) {
       throw new Error('Demasiadas solicitudes seguidas. Espera unos segundos y vuelve a intentar.');

@@ -107,7 +107,11 @@ export type MastersDashboardResponse = {
 };
 
 export type CommerceFeatureRow = {
-  feature_code: 'PRODUCT_MULTI_UOM' | 'PRODUCT_UOM_CONVERSIONS' | 'PRODUCT_WHOLESALE_PRICING';
+  feature_code:
+    | 'PRODUCT_MULTI_UOM'
+    | 'PRODUCT_UOM_CONVERSIONS'
+    | 'PRODUCT_WHOLESALE_PRICING'
+    | 'SALES_SELLER_TO_CASHIER';
   is_enabled: boolean;
   config: Record<string, unknown> | null;
 };
@@ -115,4 +119,48 @@ export type CommerceFeatureRow = {
 export type CommerceSettingsResponse = {
   company_id: number;
   features: CommerceFeatureRow[];
+};
+
+export type AccessModuleRow = {
+  id: number;
+  code: string;
+  name: string;
+};
+
+export type RolePermissionRow = {
+  module_code: string;
+  can_view: boolean;
+  can_create: boolean;
+  can_update: boolean;
+  can_delete: boolean;
+  can_export: boolean;
+  can_approve: boolean;
+};
+
+export type AccessRoleRow = {
+  id: number;
+  code: string;
+  name: string;
+  status: number;
+  functional_profile: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+  permissions: RolePermissionRow[];
+};
+
+export type AccessUserRow = {
+  id: number;
+  branch_id: number | null;
+  username: string;
+  first_name: string;
+  last_name: string | null;
+  email: string | null;
+  phone: string | null;
+  status: number;
+  role_id: number | null;
+  role_code: string | null;
+};
+
+export type AccessControlResponse = {
+  modules: AccessModuleRow[];
+  roles: AccessRoleRow[];
+  users: AccessUserRow[];
 };

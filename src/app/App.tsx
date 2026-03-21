@@ -21,6 +21,10 @@ import {
 } from '../modules/auth/storage';
 import type { AuthSession, LoginPayload } from '../modules/auth/types';
 
+type UiDensity = 'normal' | 'compact';
+
+const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
+
 type ModuleTab =
   | 'cash'
   | 'sales'
@@ -32,8 +36,24 @@ type ModuleTab =
   | 'appcfg'
   | 'company';
 
+type MenuGroup =
+  | 'operacion'
+  | 'abastecimiento'
+  | 'catalogo'
+  | 'relaciones'
+  | 'administracion';
+
+const MENU_GROUPS: Array<{ id: MenuGroup; label: string }> = [
+  { id: 'operacion', label: 'Operacion diaria' },
+  { id: 'abastecimiento', label: 'Stock y compras' },
+  { id: 'catalogo', label: 'Catalogo maestro' },
+  { id: 'relaciones', label: 'Relacion comercial' },
+  { id: 'administracion', label: 'Configuracion' },
+];
+
 const MENU_ITEMS: Array<{
   id: ModuleTab;
+  group: MenuGroup;
   kicker: string;
   label: string;
   hint: string;
@@ -41,6 +61,7 @@ const MENU_ITEMS: Array<{
 }> = [
   {
     id: 'cash',
+    group: 'operacion',
     kicker: 'Tesoreria',
     label: 'Caja',
     hint: 'Sesiones y movimientos',
@@ -52,6 +73,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'sales',
+    group: 'operacion',
     kicker: 'Ventas',
     label: 'Comercial',
     hint: 'Emision y seguimiento',
@@ -63,6 +85,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'inventory',
+    group: 'abastecimiento',
     kicker: 'Stock',
     label: 'Inventario',
     hint: 'Existencias y lotes',
@@ -74,6 +97,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'purchases',
+    group: 'abastecimiento',
     kicker: 'Abastecimiento',
     label: 'Compras',
     hint: 'Ingresos y ajustes',
@@ -85,6 +109,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'products',
+    group: 'catalogo',
     kicker: 'Catalogo',
     label: 'Productos',
     hint: 'SKU, precios y estado',
@@ -96,6 +121,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'customers',
+    group: 'relaciones',
     kicker: 'Relacion',
     label: 'Clientes',
     hint: 'Documentos y datos',
@@ -107,6 +133,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'masters',
+    group: 'catalogo',
     kicker: 'Catalogos',
     label: 'Maestros',
     hint: 'Series, cajas y reglas',
@@ -118,6 +145,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'appcfg',
+    group: 'administracion',
     kicker: 'Sistema',
     label: 'Configuracion',
     hint: 'Permisos y limites',
@@ -129,6 +157,7 @@ const MENU_ITEMS: Array<{
   },
   {
     id: 'company',
+    group: 'administracion',
     kicker: 'Empresa',
     label: 'Mi Empresa',
     hint: 'RUC, logo, certificado',
@@ -150,6 +179,22 @@ export function App() {
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | null>(null);
   const [selectedCashRegisterId, setSelectedCashRegisterId] = useState<number | null>(null);
+  const [uiDensity, setUiDensity] = useState<UiDensity>(() => {
+    if (typeof window === 'undefined') {
+      return 'compact';
+    }
+
+    const saved = window.localStorage.getItem(UI_DENSITY_STORAGE_KEY);
+    return saved === 'normal' ? 'normal' : 'compact';
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(UI_DENSITY_STORAGE_KEY, uiDensity);
+  }, [uiDensity]);
 
   useEffect(() => {
     return onAuthSessionChanged((nextSession) => {
@@ -176,6 +221,26 @@ export function App() {
       return source.includes(query);
     });
   }, [menuSearch]);
+
+  const activeMenuItem = useMemo(() => {
+    return MENU_ITEMS.find((item) => item.id === activeTab) ?? MENU_ITEMS[0];
+  }, [activeTab]);
+
+  const groupedMenuItems = useMemo(() => {
+    const grouped: Record<MenuGroup, typeof MENU_ITEMS> = {
+      operacion: [],
+      abastecimiento: [],
+      catalogo: [],
+      relaciones: [],
+      administracion: [],
+    };
+
+    filteredMenuItems.forEach((item) => {
+      grouped[item.group].push(item);
+    });
+
+    return grouped;
+  }, [filteredMenuItems]);
 
   async function handleLogin(payload: LoginPayload): Promise<void> {
     setIsLoading(true);
@@ -286,26 +351,29 @@ export function App() {
   }, [selectedBranchId]);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${uiDensity === 'compact' ? 'density-compact' : ''}`}>
       <section className="hero">
-        <p className="eyebrow">Facturacion V2</p>
-        <h1>Frontend Base Operativa</h1>
-        <p>
-          Proyecto React + TypeScript listo para conectar con el backend Laravel.
-          Base URL API: <code>{apiClient.baseUrl}</code>
-        </p>
-        <div className="chips">
-          <span>Auth</span>
-          <span>Caja</span>
-          <span>Sales</span>
-          <span>Inventory</span>
-          <span>Purchases</span>
-          <span>Products</span>
-          <span>Customers</span>
-          <span>Masters</span>
-          <span>AppCfg</span>
-          <span>Empresa</span>
-        </div>
+        <header className="workspace-head">
+          <div>
+            <p className="eyebrow">Facturacion</p>
+            <h1>Operaciones</h1>
+          </div>
+          <div className="workspace-status">
+            <span>API: {apiClient.baseUrl}</span>
+            <span>{session ? 'Sesion iniciada' : 'Sin sesion'}</span>
+            <label className="density-switch">
+              <span>Densidad</span>
+              <select
+                value={uiDensity}
+                onChange={(e) => setUiDensity(e.target.value as UiDensity)}
+                aria-label="Cambiar densidad visual"
+              >
+                <option value="normal">Normal</option>
+                <option value="compact">Compacto</option>
+              </select>
+            </label>
+          </div>
+        </header>
 
         {!session && (
           <>
@@ -318,83 +386,32 @@ export function App() {
 
         {session && (
           <section className="session-box">
-            <h2 className="section-title">Sesion activa</h2>
-            <p>
-              <strong>Usuario:</strong> {fullName} ({session.user.username})
-            </p>
-            <p>
-              <strong>Empresa:</strong> {session.user.company_id} | <strong>Sucursal:</strong>{' '}
-              {selectedBranchId ?? session.user.branch_id ?? 'N/A'}
-            </p>
-            {context && (
-              <div className="grid-form">
-                <label>
-                  Sucursal activa
-                  <select
-                    value={selectedBranchId ?? ''}
-                    onChange={(e) => {
-                      const value = e.target.value ? Number(e.target.value) : null;
-                      setSelectedBranchId(value);
-                      setSelectedWarehouseId(null);
-                      setSelectedCashRegisterId(null);
-                    }}
-                  >
-                    <option value="">Seleccionar</option>
-                    {context.branches.map((branch) => (
-                      <option key={branch.id} value={branch.id}>
-                        {branch.code} - {branch.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label>
-                  Almacen activo
-                  <select
-                    value={selectedWarehouseId ?? ''}
-                    onChange={(e) => setSelectedWarehouseId(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">Seleccionar</option>
-                    {context.warehouses
-                      .filter((row) => row.branch_id === null || row.branch_id === selectedBranchId)
-                      .map((warehouse) => (
-                        <option key={warehouse.id} value={warehouse.id}>
-                          {warehouse.code} - {warehouse.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-
-                <label>
-                  Caja activa
-                  <select
-                    value={selectedCashRegisterId ?? ''}
-                    onChange={(e) => setSelectedCashRegisterId(e.target.value ? Number(e.target.value) : null)}
-                  >
-                    <option value="">Seleccionar</option>
-                    {context.cash_registers
-                      .filter((row) => row.branch_id === null || row.branch_id === selectedBranchId)
-                      .map((cash) => (
-                        <option key={cash.id} value={cash.id}>
-                          {cash.code} - {cash.name}
-                        </option>
-                      ))}
-                  </select>
-                </label>
+            <div className="session-summary">
+              <div>
+                <span className="session-kicker">Sesion activa</span>
+                <strong>{fullName || session.user.username}</strong>
+                <small>@{session.user.username}</small>
               </div>
-            )}
-            <p>
-              <strong>Expira:</strong> {session.expiresAt}
-            </p>
-            <button className="danger" onClick={handleLogout} type="button">
-              Cerrar sesion
-            </button>
+              <div>
+                <span className="session-kicker">Empresa / Sucursal</span>
+                <strong>{session.user.company_id}</strong>
+                <small>{selectedBranchId ?? session.user.branch_id ?? 'N/A'}</small>
+              </div>
+              <div>
+                <span className="session-kicker">Token</span>
+                <strong>Expira</strong>
+                <small>{session.expiresAt}</small>
+              </div>
+              <button className="danger" onClick={handleLogout} type="button">
+                Cerrar sesion
+              </button>
+            </div>
           </section>
         )}
 
         {session && (
           <section className="workspace-panel">
-            <div className="menu-toolbar">
+            <aside className="menu-panel">
               <label className="menu-search">
                 <span>Buscar modulo</span>
                 <input
@@ -404,82 +421,169 @@ export function App() {
                   onChange={(e) => setMenuSearch(e.target.value)}
                 />
               </label>
+
               <div className="menu-meta">
                 <span>{filteredMenuItems.length} modulos</span>
-                <span>Sucursal: {selectedBranchId ?? 'N/A'}</span>
-                <span>Caja: {selectedCashRegisterId ?? 'N/A'}</span>
+                <span>Sucursal {selectedBranchId ?? 'N/A'}</span>
+                <span>Caja {selectedCashRegisterId ?? 'N/A'}</span>
               </div>
-            </div>
 
-            <nav className="tab-nav">
-              {filteredMenuItems.map((item) => (
-                <button
-                  key={item.id}
-                  className={activeTab === item.id ? 'active' : ''}
-                  type="button"
-                  onClick={() => setActiveTab(item.id)}
-                  aria-current={activeTab === item.id ? 'page' : undefined}
-                >
-                  <span className="menu-head">
-                    <span className="menu-icon-wrap">{item.icon}</span>
-                    <span>
-                      <span className="menu-kicker">{item.kicker}</span>
-                      <span className="menu-label">{item.label}</span>
-                      <span className="menu-sub">{item.hint}</span>
-                    </span>
-                  </span>
-                  <span className="menu-arrow" aria-hidden="true">&rsaquo;</span>
-                </button>
-              ))}
-              {filteredMenuItems.length === 0 && (
-                <p className="notice" style={{ margin: 0 }}>No hay modulos que coincidan con la busqueda.</p>
+              <nav className="tab-nav" aria-label="Modulos del sistema">
+                {MENU_GROUPS.map((group) => {
+                  const items = groupedMenuItems[group.id];
+                  if (!items.length) {
+                    return null;
+                  }
+
+                  return (
+                    <section key={group.id} className="menu-group">
+                      <p className="menu-group-title">{group.label}</p>
+                      {items.map((item) => (
+                        <button
+                          key={item.id}
+                          className={activeTab === item.id ? 'active' : ''}
+                          type="button"
+                          onClick={() => setActiveTab(item.id)}
+                          aria-current={activeTab === item.id ? 'page' : undefined}
+                        >
+                          <span className="menu-head">
+                            <span className="menu-icon-wrap">{item.icon}</span>
+                            <span>
+                              <span className="menu-kicker">{item.kicker}</span>
+                              <span className="menu-label">{item.label}</span>
+                              <span className="menu-sub">{item.hint}</span>
+                            </span>
+                          </span>
+                          <span className="menu-arrow" aria-hidden="true">&rsaquo;</span>
+                        </button>
+                      ))}
+                    </section>
+                  );
+                })}
+                {filteredMenuItems.length === 0 && (
+                  <p className="notice" style={{ margin: 0 }}>No hay modulos que coincidan con la busqueda.</p>
+                )}
+              </nav>
+            </aside>
+
+            <section className="content-panel">
+              <header className="active-module-head">
+                <div>
+                  <p className="eyebrow">Seccion activa</p>
+                  <h2>{activeMenuItem.label}</h2>
+                  <p>{activeMenuItem.hint}</p>
+                </div>
+                <div className="active-module-meta">
+                  <span>{activeMenuItem.kicker}</span>
+                  <span>{selectedBranchId ? `Sucursal ${selectedBranchId}` : 'Sucursal sin seleccionar'}</span>
+                </div>
+              </header>
+
+              {context && (
+                <div className="grid-form context-form">
+                  <label>
+                    Sucursal activa
+                    <select
+                      value={selectedBranchId ?? ''}
+                      onChange={(e) => {
+                        const value = e.target.value ? Number(e.target.value) : null;
+                        setSelectedBranchId(value);
+                        setSelectedWarehouseId(null);
+                        setSelectedCashRegisterId(null);
+                      }}
+                    >
+                      <option value="">Seleccionar</option>
+                      {context.branches.map((branch) => (
+                        <option key={branch.id} value={branch.id}>
+                          {branch.code} - {branch.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Almacen activo
+                    <select
+                      value={selectedWarehouseId ?? ''}
+                      onChange={(e) => setSelectedWarehouseId(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Seleccionar</option>
+                      {context.warehouses
+                        .filter((row) => row.branch_id === null || row.branch_id === selectedBranchId)
+                        .map((warehouse) => (
+                          <option key={warehouse.id} value={warehouse.id}>
+                            {warehouse.code} - {warehouse.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    Caja activa
+                    <select
+                      value={selectedCashRegisterId ?? ''}
+                      onChange={(e) => setSelectedCashRegisterId(e.target.value ? Number(e.target.value) : null)}
+                    >
+                      <option value="">Seleccionar</option>
+                      {context.cash_registers
+                        .filter((row) => row.branch_id === null || row.branch_id === selectedBranchId)
+                        .map((cash) => (
+                          <option key={cash.id} value={cash.id}>
+                            {cash.code} - {cash.name}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                </div>
               )}
-            </nav>
 
-            {activeTab === 'cash' && (
-              <CashView
-                accessToken={session.accessToken}
-                cashRegisterId={selectedCashRegisterId}
-              />
-            )}
-            {activeTab === 'sales' && (
-              <SalesView
-                accessToken={session.accessToken}
-                branchId={selectedBranchId}
-                warehouseId={selectedWarehouseId}
-                cashRegisterId={selectedCashRegisterId}
-              />
-            )}
-            {activeTab === 'inventory' && (
-              <InventoryView accessToken={session.accessToken} warehouseId={selectedWarehouseId} />
-            )}
-            {activeTab === 'purchases' && (
-              <PurchasesView accessToken={session.accessToken} warehouseId={selectedWarehouseId} />
-            )}
-            {activeTab === 'products' && (
-              <ProductsView accessToken={session.accessToken} />
-            )}
-            {activeTab === 'customers' && (
-              <CustomersView accessToken={session.accessToken} />
-            )}
-            {activeTab === 'masters' && (
-              <MastersView
-                accessToken={session.accessToken}
-                branchId={selectedBranchId}
-                warehouseId={selectedWarehouseId}
-              />
-            )}
-            {activeTab === 'appcfg' && (
-              <AppConfigView
-                accessToken={session.accessToken}
-                branchId={selectedBranchId}
-                warehouseId={selectedWarehouseId}
-                cashRegisterId={selectedCashRegisterId}
-              />
-            )}
-            {activeTab === 'company' && (
-              <CompanyConfigView accessToken={session.accessToken} />
-            )}
+              {activeTab === 'cash' && (
+                <CashView
+                  accessToken={session.accessToken}
+                  cashRegisterId={selectedCashRegisterId}
+                />
+              )}
+              {activeTab === 'sales' && (
+                <SalesView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                  warehouseId={selectedWarehouseId}
+                  cashRegisterId={selectedCashRegisterId}
+                  currentUserRoleCode={session.user.role_code ?? null}
+                  currentUserRoleProfile={session.user.role_profile ?? null}
+                />
+              )}
+              {activeTab === 'inventory' && (
+                <InventoryView accessToken={session.accessToken} warehouseId={selectedWarehouseId} />
+              )}
+              {activeTab === 'purchases' && (
+                <PurchasesView accessToken={session.accessToken} warehouseId={selectedWarehouseId} />
+              )}
+              {activeTab === 'products' && (
+                <ProductsView accessToken={session.accessToken} />
+              )}
+              {activeTab === 'customers' && (
+                <CustomersView accessToken={session.accessToken} />
+              )}
+              {activeTab === 'masters' && (
+                <MastersView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                  warehouseId={selectedWarehouseId}
+                />
+              )}
+              {activeTab === 'appcfg' && (
+                <AppConfigView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                  warehouseId={selectedWarehouseId}
+                  cashRegisterId={selectedCashRegisterId}
+                />
+              )}
+              {activeTab === 'company' && (
+                <CompanyConfigView accessToken={session.accessToken} />
+              )}
+            </section>
           </section>
         )}
       </section>

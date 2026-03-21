@@ -1,11 +1,14 @@
 import { apiClient } from '../../shared/api/client';
 import type {
   CommercialDocumentListItem,
+  ConvertCommercialDocumentPayload,
   CreateDocumentForm,
+  PaginatedCommercialDocuments,
   SalesCustomerSuggestion,
   SalesLookups,
   SeriesNumber,
 } from './types';
+import type { PrintableSalesDocument } from './print';
 
 function authHeaders(accessToken: string): HeadersInit {
   return {
@@ -67,10 +70,25 @@ export async function fetchCustomerAutocomplete(
 
 export async function fetchCommercialDocuments(
   accessToken: string,
-  context?: { branchId?: number | null; warehouseId?: number | null; cashRegisterId?: number | null }
-): Promise<CommercialDocumentListItem[]> {
+  context?: {
+    branchId?: number | null;
+    warehouseId?: number | null;
+    cashRegisterId?: number | null;
+    documentKind?: string;
+    status?: string;
+    conversionState?: 'PENDING' | 'CONVERTED' | null;
+    customer?: string;
+    issueDateFrom?: string;
+    issueDateTo?: string;
+    series?: string;
+    number?: string;
+    page?: number;
+    perPage?: number;
+  }
+): Promise<PaginatedCommercialDocuments> {
   const query = new URLSearchParams();
-  query.set('limit', '20');
+  query.set('page', String(context?.page ?? 1));
+  query.set('per_page', String(context?.perPage ?? 10));
 
   if (context?.branchId) {
     query.set('branch_id', String(context.branchId));
@@ -81,13 +99,47 @@ export async function fetchCommercialDocuments(
   if (context?.cashRegisterId) {
     query.set('cash_register_id', String(context.cashRegisterId));
   }
+  if (context?.documentKind) {
+    query.set('document_kind', context.documentKind);
+  }
+  if (context?.status) {
+    query.set('status', context.status);
+  }
+  if (context?.conversionState) {
+    query.set('conversion_state', context.conversionState);
+  }
+  if (context?.customer && context.customer.trim() !== '') {
+    query.set('customer', context.customer.trim());
+  }
+  if (context?.issueDateFrom) {
+    query.set('issue_date_from', context.issueDateFrom);
+  }
+  if (context?.issueDateTo) {
+    query.set('issue_date_to', context.issueDateTo);
+  }
+  if (context?.series && context.series.trim() !== '') {
+    query.set('series', context.series.trim());
+  }
+  if (context?.number && context.number.trim() !== '') {
+    query.set('number', context.number.trim());
+  }
 
-  const response = await apiClient.request<{ data: CommercialDocumentListItem[] }>(`/api/sales/commercial-documents?${query.toString()}`, {
+  return apiClient.request<PaginatedCommercialDocuments>(`/api/sales/commercial-documents?${query.toString()}`, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+}
 
-  return response.data;
+export async function convertCommercialDocument(
+  accessToken: string,
+  sourceDocumentId: number,
+  payload: ConvertCommercialDocumentPayload
+) {
+  return apiClient.request(`/api/sales/commercial-documents/${sourceDocumentId}/convert`, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createCommercialDocument(accessToken: string, form: CreateDocumentForm) {
@@ -138,6 +190,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
   });
 
   const total = items.reduce((acc, item) => acc + Number(item.total), 0);
+  const isPreDocument = form.documentKind === 'SALES_ORDER' || form.documentKind === 'QUOTATION';
 
   return apiClient.request('/api/sales/commercial-documents', {
     method: 'POST',
@@ -156,16 +209,18 @@ export async function createCommercialDocument(accessToken: string, form: Create
       metadata: {
         customer_address: form.customerAddress?.trim() || null,
       },
-      status: 'ISSUED',
+      status: isPreDocument ? 'DRAFT' : 'ISSUED',
       items,
-      payments: [
-        {
-          payment_method_id: Number(form.paymentMethodId),
-          amount: total,
-          status: 'PAID',
-          paid_at: new Date().toISOString(),
-        },
-      ],
+      payments: isPreDocument
+        ? []
+        : [
+            {
+              payment_method_id: Number(form.paymentMethodId),
+              amount: total,
+              status: 'PAID',
+              paid_at: new Date().toISOString(),
+            },
+          ],
     }),
   });
 }
@@ -175,4 +230,167 @@ export async function fetchProductCommercialConfig(accessToken: string, productI
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+}
+
+export async function fetchCommercialDocumentDetails(
+  accessToken: string,
+  documentId: number
+): Promise<PrintableSalesDocument> {
+  const response = await apiClient.request<{ data?: PrintableSalesDocument } | PrintableSalesDocument>(
+    `/api/sales/commercial-documents/${documentId}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  if (response && typeof response === 'object' && 'data' in response) {
+    return (response as { data?: PrintableSalesDocument }).data as PrintableSalesDocument;
+  }
+
+  return response as PrintableSalesDocument;
+}
+
+export async function exportCommercialDocumentsExcel(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+    warehouseId?: number | null;
+    cashRegisterId?: number | null;
+    documentKind?: string;
+    status?: string;
+    conversionState?: 'PENDING' | 'CONVERTED' | null;
+    customer?: string;
+    issueDateFrom?: string;
+    issueDateTo?: string;
+    series?: string;
+    number?: string;
+    max?: number;
+  }
+): Promise<{ blob: Blob; fileName: string }> {
+  const query = new URLSearchParams();
+
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+  if (context?.warehouseId) {
+    query.set('warehouse_id', String(context.warehouseId));
+  }
+  if (context?.cashRegisterId) {
+    query.set('cash_register_id', String(context.cashRegisterId));
+  }
+  if (context?.documentKind) {
+    query.set('document_kind', context.documentKind);
+  }
+  if (context?.status) {
+    query.set('status', context.status);
+  }
+  if (context?.conversionState) {
+    query.set('conversion_state', context.conversionState);
+  }
+  if (context?.customer && context.customer.trim() !== '') {
+    query.set('customer', context.customer.trim());
+  }
+  if (context?.issueDateFrom) {
+    query.set('issue_date_from', context.issueDateFrom);
+  }
+  if (context?.issueDateTo) {
+    query.set('issue_date_to', context.issueDateTo);
+  }
+  if (context?.series && context.series.trim() !== '') {
+    query.set('series', context.series.trim());
+  }
+  if (context?.number && context.number.trim() !== '') {
+    query.set('number', context.number.trim());
+  }
+  if (context?.max && context.max > 0) {
+    query.set('max', String(context.max));
+  }
+
+  const response = await fetch(`${apiClient.baseUrl}/api/sales/commercial-documents/export?${query.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`API ${response.status}: ${text}`);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const fileName = (match?.[1] ?? 'reporte_ventas.csv').trim();
+
+  return { blob, fileName };
+}
+
+export async function exportCommercialDocumentsJson(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+    warehouseId?: number | null;
+    cashRegisterId?: number | null;
+    documentKind?: string;
+    status?: string;
+    conversionState?: 'PENDING' | 'CONVERTED' | null;
+    customer?: string;
+    issueDateFrom?: string;
+    issueDateTo?: string;
+    series?: string;
+    number?: string;
+    max?: number;
+  }
+): Promise<CommercialDocumentListItem[]> {
+  const query = new URLSearchParams();
+  query.set('format', 'json');
+
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+  if (context?.warehouseId) {
+    query.set('warehouse_id', String(context.warehouseId));
+  }
+  if (context?.cashRegisterId) {
+    query.set('cash_register_id', String(context.cashRegisterId));
+  }
+  if (context?.documentKind) {
+    query.set('document_kind', context.documentKind);
+  }
+  if (context?.status) {
+    query.set('status', context.status);
+  }
+  if (context?.conversionState) {
+    query.set('conversion_state', context.conversionState);
+  }
+  if (context?.customer && context.customer.trim() !== '') {
+    query.set('customer', context.customer.trim());
+  }
+  if (context?.issueDateFrom) {
+    query.set('issue_date_from', context.issueDateFrom);
+  }
+  if (context?.issueDateTo) {
+    query.set('issue_date_to', context.issueDateTo);
+  }
+  if (context?.series && context.series.trim() !== '') {
+    query.set('series', context.series.trim());
+  }
+  if (context?.number && context.number.trim() !== '') {
+    query.set('number', context.number.trim());
+  }
+  if (context?.max && context.max > 0) {
+    query.set('max', String(context.max));
+  }
+
+  const response = await apiClient.request<{ data: CommercialDocumentListItem[] }>(
+    `/api/sales/commercial-documents/export?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response.data;
 }

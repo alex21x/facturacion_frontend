@@ -1,4 +1,4 @@
-export type PrintableSalesItem = {
+﻿export type PrintableSalesItem = {
   lineNo: number;
   qty: number;
   unitLabel: string;
@@ -79,8 +79,23 @@ function kindMeta(kind: PrintableSalesDocument['documentKind']): { shortCode: st
   return { shortCode: 'ND', title: 'NOTA DE DEBITO' };
 }
 
-function buildHtml(doc: PrintableSalesDocument): string {
+function cashDocumentKindLabel(kind: string): string {
+  const normalized = String(kind || '').toUpperCase();
+  if (normalized === 'INVOICE') return 'Factura';
+  if (normalized === 'RECEIPT') return 'Boleta';
+  if (normalized === 'SALES_ORDER') return 'Pedido';
+  if (normalized === 'QUOTATION') return 'Cotizacion';
+  if (normalized === 'CREDIT_NOTE') return 'N. Credito';
+  if (normalized === 'DEBIT_NOTE') return 'N. Debito';
+  return normalized || '-';
+}
+
+export function buildCommercialDocumentA4Html(
+  doc: PrintableSalesDocument,
+  options?: { embedded?: boolean },
+): string {
   const meta = kindMeta(doc.documentKind);
+  const isEmbedded = options?.embedded === true;
 
   const rows = doc.items
     .map((item) => {
@@ -106,6 +121,26 @@ function buildHtml(doc: PrintableSalesDocument): string {
           @page { size: A4 portrait; margin: 9mm; }
           * { box-sizing: border-box; }
           body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; color: #1f2937; }
+          .print-bar {
+            background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%);
+            color: #fff;
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 13px;
+          }
+          .print-bar button {
+            background: #ffffff;
+            color: #0f172a;
+            border: 1px solid #cbd5e1;
+            padding: 7px 12px;
+            font-size: 12px;
+            font-weight: 700;
+            border-radius: 8px;
+            cursor: pointer;
+            margin-left: 8px;
+          }
           .sheet { width: 100%; border: 1.5px solid #1f2937; min-height: 277mm; padding: 8mm; }
           .head { display: grid; grid-template-columns: 1.1fr 1fr; gap: 10px; align-items: stretch; }
           .brand { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; }
@@ -134,6 +169,15 @@ function buildHtml(doc: PrintableSalesDocument): string {
         </style>
       </head>
       <body>
+        ${isEmbedded
+          ? ''
+          : `<div class="print-bar no-print">
+          <span>Vista Previa - Documento A4</span>
+          <div>
+            <button onclick="window.print()">Imprimir</button>
+            <button onclick="window.close()">Cerrar</button>
+          </div>
+        </div>`}
         <section class="sheet">
           <section class="head">
             <article class="brand">
@@ -209,13 +253,299 @@ function buildHtml(doc: PrintableSalesDocument): string {
   `;
 }
 
+export function buildCommercialDocument80mmHtml(
+  doc: PrintableSalesDocument,
+  options?: { embedded?: boolean },
+): string {
+  const meta = kindMeta(doc.documentKind);
+  const isEmbedded = options?.embedded === true;
+
+  const itemsRows = doc.items
+    .map((item) => {
+      const qtyStr = Number(item.qty).toFixed(2);
+      const priceStr = formatMoney(item.unitPrice);
+      const totalStr = formatMoney(item.lineTotal);
+      
+      // Ajustar descripción para 80mm (aprox. 32 caracteres por línea)
+      const maxDescLength = 32;
+      const desc = escapeHtml(item.description).substring(0, maxDescLength);
+      
+      return `<tr>
+        <td style="font-size:8px;font-weight:700">${desc}</td>
+      </tr>
+      <tr>
+        <td style="font-size:7px">
+          <div style="display:flex;justify-content:space-between">
+            <span>${qtyStr} x ${doc.currencySymbol} ${priceStr}</span>
+            <span style="font-weight:700">${doc.currencySymbol} ${totalStr}</span>
+          </div>
+        </td>
+      </tr>`;
+    })
+    .join('');
+
+  const subtotalAmount = doc.gravadaTotal + doc.inafectaTotal + doc.exoneradaTotal;
+
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>${escapeHtml(meta.title)} ${escapeHtml(doc.series)}-${doc.number}</title>
+        <style>
+          @media print { 
+            @page { 
+              size: 80mm auto; 
+              margin: 0; 
+              padding: 0;
+            } 
+            .no-print { 
+              display: none !important; 
+            }
+            body {
+              margin: 0;
+              padding: 0;
+            }
+          }
+          * { 
+            box-sizing: border-box; 
+            margin: 0;
+            padding: 0;
+          }
+          body { 
+            font-family: 'Courier New', Courier, monospace; 
+            color: #000; 
+            font-size: 9px; 
+            line-height: 1.35;
+            background: #fff;
+            width: 80mm;
+            margin: 0 auto;
+          }
+          .sheet { 
+            width: 80mm;
+            margin: 0;
+            padding: 2mm 3mm;
+            min-height: 100%;
+          }
+          .print-bar { 
+            background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%);
+            color: #fff; 
+            padding: 6px 8px;
+            text-align: center; 
+            font-family: sans-serif; 
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            white-space: nowrap;
+          }
+          .print-bar-title { font-weight: 700; letter-spacing: 0.2px; font-size: 11px; }
+          .print-bar button { 
+            background: #fff;
+            color: #0f172a;
+            border: 1px solid #cbd5e1;
+            padding: 4px 10px; 
+            font-size: 10px;
+            font-weight: 700; 
+            border-radius: 8px; 
+            cursor: pointer;
+          }
+          .divider {
+            border-top: 1px dashed #000;
+            margin: 2mm 0;
+            opacity: 0.6;
+          }
+          .header { 
+            text-align: center;
+            margin-bottom: 2mm;
+          }
+          .title { 
+            font-size: 10px; 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px;
+            margin-bottom: 1mm;
+          }
+          .docno { 
+            font-size: 11px; 
+            font-weight: 700; 
+            margin-bottom: 0.5mm;
+            letter-spacing: 1px;
+          }
+          .date { 
+            font-size: 8px;
+            color: #333;
+          }
+          .section { 
+            margin-bottom: 2mm;
+          }
+          .section-title { 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            font-size: 8px;
+            margin-bottom: 1mm;
+            border-bottom: 1px solid #000;
+            padding-bottom: 0.5mm;
+          }
+          .info-row { 
+            display: flex; 
+            justify-content: space-between; 
+            font-size: 8px; 
+            margin: 0.3mm 0; 
+            word-break: break-word;
+          }
+          .info-label { 
+            font-weight: 600;
+            flex: 0 0 auto;
+            margin-right: 2mm;
+          }
+          .info-value { 
+            flex: 1;
+            text-align: right;
+          }
+          .items { 
+            margin-bottom: 2mm;
+            border-top: 1px solid #000;
+            border-bottom: 1px solid #000;
+            padding: 1mm 0;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+          td {
+            padding: 0.5mm 0;
+            font-size: 8px;
+          }
+          .summary { 
+            border-top: 1px solid #000;
+            padding-top: 1mm;
+            margin-top: 1mm;
+          }
+          .summary-row { 
+            display: flex; 
+            justify-content: space-between; 
+            font-size: 8px; 
+            margin: 0.5mm 0;
+          }
+          .summary-label { 
+            flex: 1; 
+          }
+          .summary-value { 
+            text-align: right;
+            font-weight: 600;
+            flex: 0 0 auto;
+            width: 30mm;
+          }
+          .total-row { 
+            font-size: 10px; 
+            font-weight: 700;
+            border-top: 2px solid #000;
+            padding-top: 1mm;
+            margin-top: 1mm;
+            display: flex;
+            justify-content: space-between;
+          }
+          .footer { 
+            text-align: center; 
+            font-size: 7px; 
+            color: #555; 
+            margin-top: 2mm;
+            border-top: 1px dashed #000;
+            padding-top: 1mm;
+            line-height: 1.2;
+          }
+          .footer-item {
+            margin: 0.3mm 0;
+          }
+        </style>
+      </head>
+      <body>
+        ${isEmbedded
+          ? ''
+          : `<div class="print-bar no-print">
+          <span class="print-bar-title">Vista Ticket 80mm</span>
+          <div>
+            <button onclick="window.print()">Imprimir</button>
+            <button onclick="window.close()">Cerrar</button>
+          </div>
+        </div>`}
+        
+        <div class="sheet">
+          <div class="header">
+            <div class="title">${escapeHtml(meta.title)}</div>
+            <div class="docno">${escapeHtml(doc.series)}-${String(doc.number).padStart(6, '0')}</div>
+            <div class="date">${formatDate(doc.issueDate)}</div>
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="section">
+            <div class="info-row">
+              <div class="info-label">CLIENTE:</div>
+              <div class="info-value">${escapeHtml(doc.customerName || '-')}</div>
+            </div>
+            ${doc.customerDocNumber ? `<div class="info-row">
+              <div class="info-label">Doc:</div>
+              <div class="info-value">${escapeHtml(doc.customerDocNumber)}</div>
+            </div>` : ''}
+          </div>
+
+          <div class="divider"></div>
+
+          <div class="items">
+            <table>
+              <tbody>
+                ${itemsRows || '<tr><td style="text-align:center">Sin items</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="summary">
+            ${doc.gravadaTotal > 0 ? `<div class="summary-row">
+              <div class="summary-label">Op. Gravada:</div>
+              <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.gravadaTotal)}</div>
+            </div>` : ''}
+            ${doc.inafectaTotal > 0 ? `<div class="summary-row">
+              <div class="summary-label">Op. Inafecta:</div>
+              <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.inafectaTotal)}</div>
+            </div>` : ''}
+            ${doc.exoneradaTotal > 0 ? `<div class="summary-row">
+              <div class="summary-label">Op. Exonerada:</div>
+              <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</div>
+            </div>` : ''}
+            ${doc.taxTotal > 0 ? `<div class="summary-row">
+              <div class="summary-label">IGV:</div>
+              <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</div>
+            </div>` : ''}
+            <div class="total-row">
+              <span>TOTAL</span>
+              <span>${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</span>
+            </div>
+          </div>
+
+          <div class="footer">
+            <div class="footer-item">Forma Pago: ${escapeHtml(doc.paymentMethodName || '-')}</div>
+            <div class="footer-item">Estado: ${escapeHtml(doc.status)}</div>
+            <div class="divider" style="margin: 1mm 0"></div>
+            <div class="footer-item">Gracias por su compra</div>
+            <div class="footer-item">ID: ${doc.id}</div>
+          </div>
+        </div>
+      </body>
+    </html>
+  `;
+}
+
 export function openCommercialDocumentPrintA4(doc: PrintableSalesDocument): void {
   const printWindow = window.open('', '_blank', 'width=1024,height=920');
   if (!printWindow) {
     return;
   }
 
-  const html = buildHtml(doc);
+  const html = buildCommercialDocumentA4Html(doc);
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
@@ -231,3 +561,425 @@ export function openCommercialDocumentPrintA4(doc: PrintableSalesDocument): void
     printWindow.onload = trigger;
   }
 }
+
+export function openCommercialDocumentPreview80mm(doc: PrintableSalesDocument): void {
+  const previewWindow = window.open('', '_blank', 'width=420,height=800');
+  if (!previewWindow) {
+    return;
+  }
+
+  const html = buildCommercialDocument80mmHtml(doc);
+  previewWindow.document.open();
+  previewWindow.document.write(html);
+  previewWindow.document.close();
+
+  if (previewWindow.document.readyState === 'complete') {
+    previewWindow.focus();
+  } else {
+    previewWindow.onload = () => {
+      previewWindow.focus();
+    };
+  }
+}
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Cash Report Print Functions
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+export type PaymentMethodBreakdown = {
+  payment_method_id: number;
+  payment_method_code: string;
+  payment_method_name: string;
+  document_count: number;
+  total_amount: number;
+};
+
+export type CashReportDocumentItem = {
+  description: string;
+  quantity: number;
+  unit_code: string;
+  unit_price: number;
+  line_total: number;
+};
+
+export type CashReportDocument = {
+  id: number;
+  document_number: string;
+  document_kind: string;
+  customer_name: string;
+  payment_method_name: string | null;
+  total: number;
+  created_at: string;
+  user_name: string | null;
+  items: CashReportDocumentItem[];
+};
+
+export type CashReportMovement = {
+  id: number;
+  movement_type: 'IN' | 'OUT';
+  amount: number;
+  description: string | null;
+  ref_type: string | null;
+  movement_at: string;
+};
+
+export type CashReportPrintData = {
+  cashRegisterCode: string;
+  cashRegisterName: string;
+  userName: string;
+  openedAt: string;
+  closedAt: string;
+  openingBalance: number;
+  closingBalance: number;
+  expectedBalance: number;
+  totalIn: number;
+  totalOut: number;
+  difference: number;
+  paymentMethodBreakdown: PaymentMethodBreakdown[];
+  movements?: CashReportMovement[];
+  documents?: CashReportDocument[];
+};
+
+export function buildCashReportHtml80mm(
+  data: CashReportPrintData,
+  options?: { embedded?: boolean },
+): string {
+  const isEmbedded = options?.embedded === true;
+  const paymentRows = data.paymentMethodBreakdown
+    .map((pm) => `
+      <tr>
+        <td>${escapeHtml(pm.payment_method_name)}</td>
+        <td class="ta-r">${pm.document_count}</td>
+        <td class="ta-r">${formatMoney(pm.total_amount)}</td>
+      </tr>`)
+    .join('');
+
+  const productMap = new Map<string, {
+    documentKind: string;
+    documentNumber: string;
+    description: string;
+    unitCode: string;
+    paymentMethod: string;
+    quantity: number;
+    amount: number;
+  }>();
+  for (const doc of data.documents ?? []) {
+    const documentKind = cashDocumentKindLabel(doc.document_kind);
+    const documentNumber = (doc.document_number || '').trim() || '-';
+    const paymentMethod = (doc.payment_method_name || '').trim() || '-';
+    for (const item of doc.items ?? []) {
+      const description = (item.description || '').trim() || 'Producto sin descripcion';
+      const unitCode = (item.unit_code || '').trim() || '-';
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}`;
+      const current = productMap.get(key);
+
+      if (current) {
+        current.quantity += Number(item.quantity || 0);
+        current.amount += Number(item.line_total || 0);
+      } else {
+        productMap.set(key, {
+          documentKind,
+          documentNumber,
+          description,
+          unitCode,
+          paymentMethod,
+          quantity: Number(item.quantity || 0),
+          amount: Number(item.line_total || 0),
+        });
+      }
+    }
+  }
+
+  const productRowsData = Array.from(productMap.values()).sort((a, b) => b.amount - a.amount);
+  const productRows = productRowsData
+    .map(
+      (row) => `
+        <tr>
+          <td style="font-size:8px">${escapeHtml(row.description)}</td>
+          <td style="font-size:8px">${escapeHtml(row.paymentMethod)}</td>
+          <td class="ta-r" style="font-size:8px">${row.quantity.toFixed(2)}</td>
+          <td style="font-size:8px">${escapeHtml(row.documentKind)}</td>
+          <td style="font-size:8px">${escapeHtml(row.documentNumber)}</td>
+          <td class="ta-r" style="font-size:8px;font-weight:700">${formatMoney(row.amount)}</td>
+        </tr>`,
+    )
+    .join('');
+
+  const totalProductQty = productRowsData.reduce((sum, row) => sum + row.quantity, 0);
+  const totalProductAmount = productRowsData.reduce((sum, row) => sum + row.amount, 0);
+
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>REPORTE DE CAJA - ${escapeHtml(data.cashRegisterCode)}</title>
+        <style>
+          @media print { @page { size: 80mm auto; margin: 0; } .no-print { display: none !important; } }
+          * { box-sizing: border-box; }
+          body { margin: 0; font-family: Courier, monospace; color: #000; font-size: 10px; line-height: 1.3; background: #fff; }
+          .sheet { width: 80mm; min-width: 300px; margin: 0 auto; padding: 6mm; }
+          .print-bar { background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%); color: #fff; padding: 8px 12px; text-align: center; font-family: sans-serif; font-size: 13px; }
+          .print-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-radius: 8px; white-space: nowrap; }
+          .print-bar button { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 8px; cursor: pointer; margin: 0 2px; }
+          .print-bar-title { font-size: 11px; font-weight: 700; letter-spacing: 0.2px; }
+          .header { text-align: center; border-bottom: 1px dashed #000; padding-bottom: 4mm; margin-bottom: 4mm; }
+          .header h1 { margin: 0; font-size: 12px; font-weight: 700; }
+          .header p { margin: 1px 0; font-size: 9px; }
+          .section { margin-bottom: 5mm; border-bottom: 1px dashed #000; padding-bottom: 4mm; }
+          .section-title { font-weight: 700; text-transform: uppercase; font-size: 9px; margin-bottom: 2mm; }
+          .row { display: flex; justify-content: space-between; margin: 1mm 0; font-size: 9px; }
+          .label { flex: 1.5; }
+          .value { text-align: right; flex: 1; }
+          table { width: 100%; border-collapse: collapse; margin: 1mm 0; }
+          th { text-align: left; font-weight: 700; font-size: 8px; border-bottom: 1px solid #000; padding: 1mm 0; }
+          td { padding: 0.8mm 1mm; font-size: 9px; vertical-align: top; }
+          .ta-r { text-align: right; }
+          .ta-c { text-align: center; }
+          .total-row { font-weight: 700; border-top: 1px solid #000; }
+          .footer { text-align: center; font-size: 8px; color: #444; margin-top: 4mm; }
+        </style>
+      </head>
+      <body>
+        ${isEmbedded
+          ? ''
+          : `<div class="print-bar no-print">
+          <span class="print-bar-title">Vista Ticket 80mm</span>
+          <div>
+            <button onclick="window.print()">Imprimir</button>
+            <button onclick="window.close()">Cerrar</button>
+          </div>
+        </div>`}
+        <div class="sheet">
+          <div class="header">
+            <h1>*** REPORTE DE CAJA ***</h1>
+            <p>${escapeHtml(data.cashRegisterName)}</p>
+            <p>Fecha: ${formatDate(data.closedAt || data.openedAt)}</p>
+          </div>
+
+          <div class="section">
+            <div class="section-title">INFO GENERAL</div>
+            <div class="row"><div class="label">Caja:</div><div class="value">${escapeHtml(data.cashRegisterCode)}</div></div>
+            <div class="row"><div class="label">Usuario:</div><div class="value">${escapeHtml(data.userName)}</div></div>
+            <div class="row"><div class="label">Apertura:</div><div class="value">${formatDate(data.openedAt)}</div></div>
+            ${data.closedAt ? `<div class="row"><div class="label">Cierre:</div><div class="value">${formatDate(data.closedAt)}</div></div>` : ''}
+          </div>
+
+          <div class="section">
+            <div class="section-title">SALDOS</div>
+            <div class="row"><div class="label">Saldo Inicial:</div><div class="value">S/ ${formatMoney(data.openingBalance)}</div></div>
+            <div class="row"><div class="label">Entradas (+):</div><div class="value">S/ ${formatMoney(data.totalIn)}</div></div>
+            <div class="row"><div class="label">Salidas (-):</div><div class="value">S/ ${formatMoney(data.totalOut)}</div></div>
+            <div class="row"><div class="label">Esperado:</div><div class="value">S/ ${formatMoney(data.expectedBalance)}</div></div>
+            <div class="row" style="font-weight:700;border-top:1px solid #000;padding-top:1mm"><div class="label">Real:</div><div class="value">S/ ${formatMoney(data.closingBalance)}</div></div>
+            ${data.difference !== 0 ? `<div class="row" style="color:${data.difference >= 0 ? '#008000' : '#cc0000'}"><div class="label">Diferencia:</div><div class="value">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</div></div>` : ''}
+          </div>
+
+          <div class="section">
+            <div class="section-title">VENTAS POR TIPO DE PAGO</div>
+            <table>
+              <thead><tr><th>Tipo de Pago</th><th class="ta-c">Can.</th><th class="ta-r">Monto</th></tr></thead>
+              <tbody>
+                ${paymentRows || '<tr><td colspan="3" class="ta-c">Sin ventas</td></tr>'}
+                <tr class="total-row"><td>TOTAL</td><td class="ta-c">${data.paymentMethodBreakdown.reduce((s, p) => s + p.document_count, 0)}</td><td class="ta-r">${formatMoney(data.paymentMethodBreakdown.reduce((s, p) => s + p.total_amount, 0))}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          ${productRows ? `
+          <div class="section">
+            <div class="section-title">PRODUCTOS VENDIDOS</div>
+            <table>
+              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th><th class="ta-r">Total</th></tr></thead>
+              <tbody>
+                ${productRows}
+                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="2"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td></tr>
+              </tbody>
+            </table>
+          </div>` : ''}
+
+          <div class="footer">Emitido: ${new Date().toLocaleString('es-PE')}</div>
+        </div>
+      </body>
+    </html>`;
+}
+
+export function buildCashReportHtmlA4(
+  data: CashReportPrintData,
+  options?: { embedded?: boolean },
+): string {
+  const isEmbedded = options?.embedded === true;
+  const paymentRows = data.paymentMethodBreakdown
+    .map((pm) => `
+      <tr>
+        <td>${escapeHtml(pm.payment_method_name)}</td>
+        <td class="ta-c">${pm.document_count}</td>
+        <td class="ta-r">S/ ${formatMoney(pm.total_amount)}</td>
+      </tr>`)
+    .join('');
+
+  const productMap = new Map<string, {
+    documentKind: string;
+    documentNumber: string;
+    description: string;
+    unitCode: string;
+    paymentMethod: string;
+    quantity: number;
+    amount: number;
+  }>();
+  for (const doc of data.documents ?? []) {
+    const documentKind = cashDocumentKindLabel(doc.document_kind);
+    const documentNumber = (doc.document_number || '').trim() || '-';
+    const paymentMethod = (doc.payment_method_name || '').trim() || '-';
+    for (const item of doc.items ?? []) {
+      const description = (item.description || '').trim() || 'Producto sin descripcion';
+      const unitCode = (item.unit_code || '').trim() || '-';
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}`;
+      const current = productMap.get(key);
+
+      if (current) {
+        current.quantity += Number(item.quantity || 0);
+        current.amount += Number(item.line_total || 0);
+      } else {
+        productMap.set(key, {
+          documentKind,
+          documentNumber,
+          description,
+          unitCode,
+          paymentMethod,
+          quantity: Number(item.quantity || 0),
+          amount: Number(item.line_total || 0),
+        });
+      }
+    }
+  }
+
+  const productRowsData = Array.from(productMap.values()).sort((a, b) => b.amount - a.amount);
+  const productRows = productRowsData
+    .map(
+      (row) => `
+      <tr>
+        <td>${escapeHtml(row.description)}</td>
+        <td>${escapeHtml(row.paymentMethod)}</td>
+        <td class="ta-c">${escapeHtml(row.unitCode)}</td>
+        <td class="ta-r">${row.quantity.toFixed(3)}</td>
+        <td>${escapeHtml(row.documentKind)}</td>
+        <td>${escapeHtml(row.documentNumber)}</td>
+        <td class="ta-r">S/ ${formatMoney(row.amount)}</td>
+      </tr>`,
+    )
+    .join('');
+
+  const totalProductQty = productRowsData.reduce((sum, row) => sum + row.quantity, 0);
+  const totalProductAmount = productRowsData.reduce((sum, row) => sum + row.amount, 0);
+
+  return `
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>REPORTE DE CAJA - ${escapeHtml(data.cashRegisterCode)}</title>
+        <style>
+          @media print { @page { size: A4 portrait; margin: 12mm; } .no-print { display: none !important; } }
+          * { box-sizing: border-box; }
+          body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; color: #1f2937; background: #fff; }
+          .print-bar { background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%); color: #fff; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+          .print-bar button { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; padding: 7px 16px; font-size: 13px; font-weight: 700; border-radius: 8px; cursor: pointer; margin-left: 8px; }
+          .page { max-width: 210mm; margin: 0 auto; padding: 14px; }
+          .header { text-align: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 10px; }
+          .header h1 { margin: 0; font-size: 18px; font-weight: 700; }
+          .header p { margin: 1px 0; font-size: 11px; color: #64748b; }
+          .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+          .metric { border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; }
+          .metric span { display: block; font-size: 10px; color: #64748b; }
+          .metric strong { display: block; margin-top: 2px; font-size: 14px; }
+          .kv { display: flex; justify-content: space-between; font-size: 11px; margin: 2px 0; }
+          .kv .k { font-weight: 600; color: #374151; }
+          .kv .v { text-align: right; color: #1f2937; }
+          .section { border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
+          .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #1e40af; border-bottom: 1px solid #dbeafe; padding-bottom: 4px; margin-bottom: 8px; }
+          table { width: 100%; border-collapse: collapse; }
+          thead th { background: #1e40af; color: #fff; font-size: 10px; text-align: left; padding: 6px 7px; }
+          tbody td { border-bottom: 1px solid #e5e7eb; padding: 5px 7px; font-size: 11px; vertical-align: top; }
+          .ta-r { text-align: right; }
+          .ta-c { text-align: center; }
+          .total-row { background: #f0f4ff; font-weight: 700; }
+          .footer { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5e7eb; }
+        </style>
+      </head>
+      <body>
+        ${isEmbedded
+          ? ''
+          : `<div class="print-bar no-print">
+          <span>Vista Previa - Reporte A4</span>
+          <div>
+            <button onclick="window.print()">Imprimir</button>
+            <button onclick="window.close()">Cerrar</button>
+          </div>
+        </div>`}
+        <div class="page">
+          <div class="header">
+            <h1>REPORTE DE CIERRE DE CAJA</h1>
+            <p>${escapeHtml(data.cashRegisterName)}</p>
+            <p>Rango: ${formatDate(data.openedAt)} ${data.closedAt ? `a ${formatDate(data.closedAt)}` : 'a la fecha'}</p>
+            <p>Usuario: ${escapeHtml(data.userName)} | Caja: ${escapeHtml(data.cashRegisterCode)}</p>
+          </div>
+
+          <div class="summary-grid">
+            <article class="metric"><span>Saldo inicial</span><strong>S/ ${formatMoney(data.openingBalance)}</strong></article>
+            <article class="metric"><span>Saldo esperado</span><strong>S/ ${formatMoney(data.expectedBalance)}</strong></article>
+            <article class="metric"><span>Saldo real</span><strong>S/ ${formatMoney(data.closingBalance)}</strong></article>
+            <article class="metric"><span>Diferencia</span><strong style="color:${data.difference >= 0 ? '#059669' : '#dc2626'}">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</strong></article>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Totales por tipo de pago</div>
+            <table>
+              <thead><tr><th>Forma de pago</th><th class="ta-c" style="width:90px">Cantidad</th><th class="ta-r" style="width:130px">Monto</th></tr></thead>
+              <tbody>
+                ${paymentRows || '<tr><td colspan="3" class="ta-c">Sin ventas registradas</td></tr>'}
+                <tr class="total-row"><td>TOTAL</td><td class="ta-c">${data.paymentMethodBreakdown.reduce((s, p) => s + p.document_count, 0)}</td><td class="ta-r">S/ ${formatMoney(data.paymentMethodBreakdown.reduce((s, p) => s + p.total_amount, 0))}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="section">
+            <div class="section-title">Productos vendidos en la sesion</div>
+            <table>
+              <thead><tr><th>Producto</th><th style="width:130px">Tipo de pago</th><th class="ta-c" style="width:90px">Unidad</th><th class="ta-r" style="width:120px">Cantidad</th><th style="width:110px">Tipo comprobante</th><th style="width:130px">Serie-correlativo</th><th class="ta-r" style="width:130px">Total</th></tr></thead>
+              <tbody>
+                ${productRows || '<tr><td colspan="7" class="ta-c">Sin productos vendidos en la sesion</td></tr>'}
+                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="2"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="footer">Reporte generado: ${new Date().toLocaleString('es-PE')}</div>
+        </div>
+      </body>
+    </html>`;
+}
+
+export function openCashReportPrint80mm(data: CashReportPrintData): void {
+  const printWindow = window.open('', '_blank', 'width=460,height=780');
+  if (!printWindow) {
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(buildCashReportHtml80mm(data));
+  printWindow.document.close();
+  printWindow.focus();
+}
+
+export function openCashReportPrintA4(data: CashReportPrintData): void {
+  const printWindow = window.open('', '_blank', 'width=980,height=820');
+  if (!printWindow) {
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(buildCashReportHtmlA4(data));
+  printWindow.document.close();
+  printWindow.focus();
+}
+
+

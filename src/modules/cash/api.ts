@@ -5,6 +5,8 @@ import type {
   CloseSessionPayload,
   CreateMovementPayload,
   OpenSessionPayload,
+  PaginatedCashSessions,
+  SessionDetailResponse,
 } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -13,19 +15,26 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchCashSessions(
   accessToken: string,
-  params?: { cashRegisterId?: number | null; status?: string; limit?: number }
-): Promise<CashSession[]> {
+  params?: {
+    cashRegisterId?: number | null;
+    status?: string;
+    limit?: number;
+    page?: number;
+    perPage?: number;
+  }
+): Promise<PaginatedCashSessions> {
   const query = new URLSearchParams();
   if (params?.cashRegisterId) query.set('cash_register_id', String(params.cashRegisterId));
   if (params?.status) query.set('status', params.status);
   if (params?.limit) query.set('limit', String(params.limit));
+  if (params?.page) query.set('page', String(params.page));
+  if (params?.perPage) query.set('per_page', String(params.perPage));
 
   const path = `/api/cash/sessions${query.toString() ? '?' + query.toString() : ''}`;
-  const res = await apiClient.request<{ data: CashSession[] }>(path, {
+  return apiClient.request<PaginatedCashSessions>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
-  return res.data;
 }
 
 export async function fetchCurrentSession(
@@ -91,5 +100,15 @@ export async function createCashMovement(
     method: 'POST',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchSessionDetail(
+  accessToken: string,
+  sessionId: number
+): Promise<SessionDetailResponse> {
+  return apiClient.request(`/api/cash/sessions/${sessionId}/detail`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
   });
 }

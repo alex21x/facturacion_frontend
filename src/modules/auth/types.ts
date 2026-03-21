@@ -6,6 +6,8 @@ export type AuthUser = {
   first_name: string;
   last_name: string;
   email: string | null;
+  role_code?: string | null;
+  role_profile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
 };
 
 export type LoginPayload = {

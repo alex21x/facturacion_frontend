@@ -1,5 +1,6 @@
 import { apiClient } from '../../shared/api/client';
 import type {
+  AccessControlResponse,
   CashRegisterRow,
   CommerceSettingsResponse,
   DocumentKindRow,
@@ -237,5 +238,104 @@ export async function updateCommerceSettings(
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify({ features }),
+  });
+}
+
+export async function fetchAccessControl(accessToken: string): Promise<AccessControlResponse> {
+  return apiClient.request<AccessControlResponse>('/api/masters/access-control', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function createRole(
+  accessToken: string,
+  payload: {
+    code: string;
+    name: string;
+    status?: number;
+    functional_profile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+    permissions: Array<{
+      module_code: string;
+      can_view: boolean;
+      can_create: boolean;
+      can_update: boolean;
+      can_delete: boolean;
+      can_export: boolean;
+      can_approve: boolean;
+    }>;
+  }
+) {
+  return apiClient.request('/api/masters/roles', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateRole(
+  accessToken: string,
+  id: number,
+  payload: {
+    name?: string;
+    status?: number;
+    functional_profile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+    permissions?: Array<{
+      module_code: string;
+      can_view: boolean;
+      can_create: boolean;
+      can_update: boolean;
+      can_delete: boolean;
+      can_export: boolean;
+      can_approve: boolean;
+    }>;
+  }
+) {
+  return apiClient.request(`/api/masters/roles/${id}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createUser(
+  accessToken: string,
+  payload: {
+    branch_id?: number | null;
+    username: string;
+    password: string;
+    first_name: string;
+    last_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    status?: number;
+    role_id: number;
+  }
+) {
+  return apiClient.request('/api/masters/users', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateUser(
+  accessToken: string,
+  id: number,
+  payload: {
+    branch_id?: number | null;
+    password?: string;
+    first_name?: string;
+    last_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    status?: number;
+    role_id?: number;
+  }
+) {
+  return apiClient.request(`/api/masters/users/${id}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
   });
 }
