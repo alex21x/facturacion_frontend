@@ -1,3 +1,12 @@
+export type ModulePermissions = {
+  can_view: boolean;
+  can_create: boolean;
+  can_update: boolean;
+  can_delete: boolean;
+  can_export: boolean;
+  can_approve: boolean;
+};
+
 export type AuthUser = {
   id: string;
   company_id: string;
@@ -8,6 +17,7 @@ export type AuthUser = {
   email: string | null;
   role_code?: string | null;
   role_profile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+  permissions?: Record<string, ModulePermissions>;
 };
 
 export type LoginPayload = {

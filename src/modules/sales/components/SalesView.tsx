@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { docKindLabel } from '../../../shared/utils/docKind';
 import { fetchInventoryLots, fetchInventoryProducts } from '../../inventory/api';
 import type { InventoryLotRow, InventoryProduct } from '../../inventory/types';
 import {
@@ -99,8 +100,28 @@ type DocumentAdvancedFilters = {
 type SalesWorkspaceMode = 'SELL' | 'REPORT';
 type SalesFlowMode = 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
 type CashierReportPanelMode = 'PENDING' | 'FULL';
+type PriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
 
 const SALES_REPORT_FILTERS_STORAGE_KEY = 'sales.report.filters.v1';
+
+function computeLineTotals(qty: number, unitPrice: number, taxRate: number, priceIncludesTax: boolean) {
+  const safeQty = Number.isFinite(qty) ? qty : 0;
+  const safePrice = Number.isFinite(unitPrice) ? unitPrice : 0;
+  const safeRate = Number.isFinite(taxRate) ? taxRate : 0;
+  const includes = priceIncludesTax && safeRate > 0;
+  const gross = safeQty * safePrice;
+
+  if (includes) {
+    const divisor = 1 + safeRate / 100;
+    const subtotal = divisor > 0 ? gross / divisor : gross;
+    const tax = gross - subtotal;
+    return { subtotal, tax, total: gross };
+  }
+
+  const subtotal = gross;
+  const tax = subtotal * (safeRate / 100);
+  return { subtotal, tax, total: subtotal + tax };
+}
 
 const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
@@ -207,11 +228,17 @@ function normalizePrintableTotals(lookups: SalesLookups | null, items: SalesDraf
   let exoneradaTotal = 0;
 
   for (const item of items) {
-    const lineSubtotal = Number(item.qty) * Number(item.unitPrice);
     const category = taxCategories.find((row) => row.id === item.taxCategoryId) ?? null;
-    const code = String(category?.code ?? '').trim();
     const ratePercent = Number(item.taxRate ?? category?.rate_percent ?? 0);
-    const lineTax = lineSubtotal * (ratePercent / 100);
+    const line = computeLineTotals(
+      Number(item.qty),
+      Number(item.unitPrice),
+      ratePercent,
+      Boolean(item.priceIncludesTax)
+    );
+    const lineSubtotal = line.subtotal;
+    const code = String(category?.code ?? '').trim();
+    const lineTax = line.tax;
 
     subtotal += lineSubtotal;
     taxTotal += lineTax;
@@ -428,25 +455,33 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [seriesExpanded, setSeriesExpanded] = useState(false);
   const [cashierDefaultApplied, setCashierDefaultApplied] = useState(false);
+  const [showModeSummaryDetails, setShowModeSummaryDetails] = useState(false);
+  const [priceTaxMode, setPriceTaxMode] = useState<PriceTaxMode>('INCLUSIVE');
 
   const normalizedRoleCode = (currentUserRoleCode ?? '').toUpperCase();
   const normalizedRoleProfile = (currentUserRoleProfile ?? '').toUpperCase();
   const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
-  const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER') || normalizedRoleCode.includes('ADMIN');
+  const isAdminUser = normalizedRoleCode.includes('ADMIN');
+  const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isSeparatedMode = salesFlowMode === 'SELLER_TO_CASHIER';
   const canUseSellWorkspace = true;
   const shouldPrioritizePendingOrders = isSeparatedMode && isCashierUser;
-  const canConvertInCurrentMode = !isSeparatedMode || isCashierUser;
+  const canConvertInCurrentMode = !isSeparatedMode || (isCashierUser && !isAdminUser);
 
   const salesFlowModeLabel = salesFlowMode === 'SELLER_TO_CASHIER'
     ? 'Vendedor -> Caja independiente'
     : 'Venta directa en punto de venta';
+  const activeProfileLabel = isSellerUser ? 'Vendedor' : isCashierUser ? 'Caja' : 'No identificado';
+  const activeProfileHint = isSellerUser
+    ? 'Genera pedido comercial; caja realiza la emision final.'
+    : isCashierUser
+      ? 'Inicia en pedidos pendientes para conversion y emision.'
+      : 'Configura un perfil VENDEDOR/CAJERO para separar flujos.';
 
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productInputRef = useRef<HTMLInputElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
 
-  const draftSubtotal = useMemo(() => Number(form.qty) * Number(form.unitPrice), [form.qty, form.unitPrice]);
   const isTributaryDocument = useMemo(() => {
     return TRIBUTARY_DOCUMENTS.includes(form.documentKind);
   }, [form.documentKind]);
@@ -466,8 +501,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return Number(selectedTaxCategory?.rate_percent ?? 0);
   }, [isTributaryDocument, selectedTaxCategory]);
 
-  const draftTaxTotal = useMemo(() => draftSubtotal * (draftTaxRate / 100), [draftSubtotal, draftTaxRate]);
-  const draftGrandTotal = useMemo(() => draftSubtotal + draftTaxTotal, [draftSubtotal, draftTaxTotal]);
+  const isDraftPriceTaxInclusive = isTributaryDocument && priceTaxMode === 'INCLUSIVE';
+  const draftLineTotals = useMemo(() => {
+    return computeLineTotals(Number(form.qty), Number(form.unitPrice), draftTaxRate, isDraftPriceTaxInclusive);
+  }, [draftTaxRate, form.qty, form.unitPrice, isDraftPriceTaxInclusive]);
+  const draftSubtotal = useMemo(() => draftLineTotals.subtotal, [draftLineTotals]);
+  const draftTaxTotal = useMemo(() => draftLineTotals.tax, [draftLineTotals]);
+  const draftGrandTotal = useMemo(() => draftLineTotals.total, [draftLineTotals]);
   const draftConversionFactor = useMemo(() => {
     if (form.isManualItem) {
       return 1;
@@ -478,13 +518,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const draftQtyBase = useMemo(() => Number(form.qty || 0) * Number(draftConversionFactor || 1), [form.qty, draftConversionFactor]);
 
   const subtotal = useMemo(() => {
-    return cart.reduce((acc, item) => acc + Number(item.qty) * Number(item.unitPrice), 0);
+    return cart.reduce((acc, item) => {
+      const line = computeLineTotals(
+        Number(item.qty),
+        Number(item.unitPrice),
+        Number(item.taxRate ?? 0),
+        Boolean(item.priceIncludesTax)
+      );
+      return acc + line.subtotal;
+    }, 0);
   }, [cart]);
   const taxTotal = useMemo(() => {
     return cart.reduce((acc, item) => {
-      const itemSubtotal = Number(item.qty) * Number(item.unitPrice);
-      const itemRate = Number(item.taxRate ?? 0);
-      return acc + itemSubtotal * (itemRate / 100);
+      const line = computeLineTotals(
+        Number(item.qty),
+        Number(item.unitPrice),
+        Number(item.taxRate ?? 0),
+        Boolean(item.priceIncludesTax)
+      );
+      return acc + line.tax;
     }, 0);
   }, [cart]);
   const grandTotal = useMemo(() => subtotal + taxTotal, [subtotal, taxTotal]);
@@ -492,6 +544,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const selectedCurrency = useMemo(() => {
     return lookups?.currencies.find((row) => row.id === form.currencyId) ?? null;
   }, [lookups, form.currencyId]);
+
+  const inventorySettings = lookups?.inventory_settings ?? null;
+  const inventoryProEnabled = Boolean(inventorySettings?.enable_inventory_pro);
+  const lotTrackingEnabled = inventoryProEnabled && Boolean(inventorySettings?.enable_lot_tracking);
+  const lotOutflowStrategy = inventorySettings?.lot_outflow_strategy ?? 'MANUAL';
+  const manualLotSelectionEnabled = lotTrackingEnabled && lotOutflowStrategy === 'MANUAL';
+  const resolvedDraftLotId = !manualLotSelectionEnabled || form.isManualItem ? null : form.lotId;
 
   const defaultEnabledUnit = useMemo(() => {
     return lookups?.units?.[0] ?? null;
@@ -508,18 +567,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return form.manualDescription.trim().length > 0;
     }
 
-    const lotIsValid = lots.length === 0 || Boolean(form.lotId);
+    const lotIsValid = !manualLotSelectionEnabled || lots.length === 0 || Boolean(form.lotId);
 
     return Boolean(selectedProduct && lotIsValid);
   }, [
     form.isManualItem,
-    form.lotId,
     form.manualDescription,
     form.qty,
     form.taxCategoryId,
     form.unitPrice,
     isTributaryDocument,
+    manualLotSelectionEnabled,
     lots.length,
+    resolvedDraftLotId,
     selectedProduct,
   ]);
 
@@ -556,14 +616,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       {
         productId: form.isManualItem ? null : form.productId,
         unitId: form.unitId,
-        lotId: form.isManualItem ? null : form.lotId,
+        lotId: resolvedDraftLotId,
         taxCategoryId: isTributaryDocument ? form.taxCategoryId : null,
+        priceIncludesTax: isDraftPriceTaxInclusive,
         qtyBase: form.isManualItem ? null : Number(draftQtyBase),
         conversionFactor: form.isManualItem ? null : Number(draftConversionFactor),
         baseUnitPrice:
           form.isManualItem
             ? null
-            : Number(form.unitPrice || 0) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
+            : Number(
+                (isDraftPriceTaxInclusive && draftTaxRate > 0
+                  ? Number(form.unitPrice || 0) / (1 + (draftTaxRate / 100))
+                  : Number(form.unitPrice || 0))
+              ) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
         taxRate: isTributaryDocument ? Number(selectedTaxCategory?.rate_percent ?? 0) : 0,
         taxLabel: isTributaryDocument ? (selectedTaxCategory?.label ?? 'IGV') : 'Sin IGV',
         isManual: form.isManualItem,
@@ -576,7 +641,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     canAddDraftItem,
     cart,
     form.isManualItem,
-    form.lotId,
     form.manualDescription,
     form.productId,
     form.qty,
@@ -584,9 +648,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     form.unitId,
     form.unitPrice,
     isTributaryDocument,
+    resolvedDraftLotId,
     selectedProduct,
     draftQtyBase,
     draftConversionFactor,
+    draftTaxRate,
+    isDraftPriceTaxInclusive,
     selectedTaxCategory,
   ]);
 
@@ -612,11 +679,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     let firstGravadaRate: number | null = null;
 
     for (const item of previewItems) {
-      const subtotalValue = Number(item.qty) * Number(item.unitPrice);
       const category = categories.find((row) => row.id === item.taxCategoryId) ?? null;
       const code = String(category?.code ?? '').trim();
       const ratePercent = Number(item.taxRate ?? category?.rate_percent ?? 0);
-      const taxValue = subtotalValue * (ratePercent / 100);
+      const line = computeLineTotals(
+        Number(item.qty),
+        Number(item.unitPrice),
+        ratePercent,
+        Boolean(item.priceIncludesTax)
+      );
+      const subtotalValue = line.subtotal;
+      const taxValue = line.tax;
 
       const isFreeTransfer = code === '21' || code === '37';
       const isGravada = /^1\d$/.test(code);
@@ -663,7 +736,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     try {
       const filterParams = buildDocumentFilterParams(documentViewFilter);
-      const [lookupRows, seriesRows, docs, commerce] = await Promise.all([
+      const [lookupRows, seriesRows, docs, commerceResult] = await Promise.all([
         fetchSalesLookups(accessToken),
         fetchSeriesNumbers(accessToken, { documentKind: effectiveDocumentKind, branchId, warehouseId }),
         salesWorkspaceMode === 'REPORT'
@@ -683,12 +756,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               perPage: documentsMeta.per_page,
             })
           : Promise.resolve(null),
-        fetchCommerceSettings(accessToken),
+        fetchCommerceSettings(accessToken).catch(() => null),
       ]);
 
       setLookups(lookupRows);
       setSeries(seriesRows);
-      setSalesFlowMode(resolveSalesFlowMode(commerce.features ?? []));
+      setSalesFlowMode(resolveSalesFlowMode(commerceResult?.features ?? []));
       if (docs) {
         setDocuments(docs.data);
         setDocumentsMeta(docs.meta);
@@ -780,8 +853,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         }
 
         const rows = await fetchCustomerAutocomplete(accessToken, form.customerQuery.trim());
-        setCustomerSuggestions(rows);
-        setActiveCustomerIndex(rows.length > 0 ? 0 : -1);
+        const compactRows = rows.slice(0, 12);
+        setCustomerSuggestions(compactRows);
+        setActiveCustomerIndex(compactRows.length > 0 ? 0 : -1);
       } catch {
         setCustomerSuggestions([]);
         setActiveCustomerIndex(-1);
@@ -803,8 +877,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           search: form.productQuery.trim(),
           warehouseId,
         });
-        setProductSuggestions(rows);
-        setActiveProductIndex(rows.length > 0 ? 0 : -1);
+        const compactRows = rows.slice(0, 12);
+        setProductSuggestions(compactRows);
+        setActiveProductIndex(compactRows.length > 0 ? 0 : -1);
       } catch {
         setProductSuggestions([]);
         setActiveProductIndex(-1);
@@ -815,7 +890,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [accessToken, form.productQuery, warehouseId]);
 
   useEffect(() => {
-    if (form.isManualItem) {
+    if (!manualLotSelectionEnabled || form.isManualItem) {
       setLots([]);
       setForm((prev) => ({ ...prev, lotId: null }));
       return;
@@ -839,7 +914,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         setLots([]);
       }
     })();
-  }, [accessToken, form.isManualItem, form.productId, warehouseId]);
+  }, [accessToken, form.isManualItem, form.productId, manualLotSelectionEnabled, warehouseId]);
 
   useEffect(() => {
     void (async () => {
@@ -1074,20 +1149,24 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       : `${selectedProduct?.sku ?? 'SIN-SKU'} - ${selectedProduct?.name ?? ''}`.trim();
     const currentTaxCategory = lookups?.tax_categories.find((row) => row.id === form.taxCategoryId) ?? null;
     const itemTaxRate = isTributaryDocument ? Number(currentTaxCategory?.rate_percent ?? 0) : 0;
+    const normalizedUnitPrice = isDraftPriceTaxInclusive && itemTaxRate > 0
+      ? Number(form.unitPrice || 0) / (1 + (itemTaxRate / 100))
+      : Number(form.unitPrice || 0);
 
     setCart((prev) => [
       ...prev,
       {
         productId: form.isManualItem ? null : form.productId,
         unitId: form.unitId,
-        lotId: form.isManualItem ? null : form.lotId,
+        lotId: resolvedDraftLotId,
         taxCategoryId: isTributaryDocument ? form.taxCategoryId : null,
+        priceIncludesTax: isDraftPriceTaxInclusive,
         qtyBase: form.isManualItem ? null : Number(draftQtyBase),
         conversionFactor: form.isManualItem ? null : Number(draftConversionFactor),
         baseUnitPrice:
           form.isManualItem
             ? null
-            : Number(form.unitPrice || 0) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
+            : Number(normalizedUnitPrice || 0) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
         taxRate: itemTaxRate,
         taxLabel: isTributaryDocument
           ? (currentTaxCategory?.label ?? 'IGV')
@@ -1105,6 +1184,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }));
 
     setAutoPriceHint('');
+
+    // Keep cashier speed high: return focus to product search for next item.
+    setTimeout(() => {
+      productInputRef.current?.focus();
+      productInputRef.current?.select();
+    }, 0);
+  }
+
+  function handleQuickAddItem(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    if (!canAddDraftItem || loading) {
+      return;
+    }
+
+    event.preventDefault();
+    addDraftItem();
   }
 
   useEffect(() => {
@@ -1253,7 +1351,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const sheetRows = rows.map((row) => ({
         ID: row.id,
-        Documento: row.document_kind,
+        Documento: docKindLabel(row.document_kind),
         Serie: row.series,
         Numero: row.number,
         FechaEmision: row.issue_at,
@@ -1286,20 +1384,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     try {
       const payloadItems = cart.length > 0
-        ? cart
+        ? cart.map((item) => ({
+            ...item,
+          lotId: manualLotSelectionEnabled ? item.lotId : null,
+          }))
         : canAddDraftItem
           ? [
               {
                 productId: form.isManualItem ? null : form.productId,
                 unitId: form.unitId,
-                lotId: form.isManualItem ? null : form.lotId,
+                lotId: resolvedDraftLotId,
                 taxCategoryId: isTributaryDocument ? (form.taxCategoryId ?? null) : null,
+                priceIncludesTax: isDraftPriceTaxInclusive,
                 qtyBase: form.isManualItem ? null : Number(draftQtyBase),
                 conversionFactor: form.isManualItem ? null : Number(draftConversionFactor),
                 baseUnitPrice:
                   form.isManualItem
                     ? null
-                    : Number(form.unitPrice || 0) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
+                    : Number(
+                        (isDraftPriceTaxInclusive && draftTaxRate > 0
+                          ? Number(form.unitPrice || 0) / (1 + (draftTaxRate / 100))
+                          : Number(form.unitPrice || 0))
+                      ) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
                 taxRate: isTributaryDocument ? Number(selectedTaxCategory?.rate_percent ?? 0) : 0,
                 taxLabel: isTributaryDocument ? (selectedTaxCategory?.label ?? 'IGV') : 'Sin IGV',
                 isManual: form.isManualItem,
@@ -1366,7 +1472,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             unitLabel: unitLabelForPrint(lookups?.units ?? null, item.unitId ?? null),
             description: item.description,
             unitPrice: Number(item.unitPrice),
-            lineTotal: Number(item.qty) * Number(item.unitPrice),
+            lineTotal: computeLineTotals(
+              Number(item.qty),
+              Number(item.unitPrice),
+              Number(item.taxRate ?? 0),
+              Boolean(item.priceIncludesTax)
+            ).total,
           })),
         };
 
@@ -1395,7 +1506,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setForm((prev) => ({
         ...prev,
         productId: prev.isManualItem ? null : prev.productId,
-        lotId: prev.isManualItem ? null : prev.lotId,
+        lotId: !manualLotSelectionEnabled || prev.isManualItem ? null : prev.lotId,
         manualDescription: '',
         qty: 1,
         unitPrice: prev.unitPrice,
@@ -1595,19 +1706,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         </button>
       </div>
 
-      <p className="notice" style={{ marginTop: '0.35rem' }}>
-        <strong>Modo de venta actual:</strong> {salesFlowModeLabel}
-      </p>
+      <div className="sales-mode-summary" aria-live="polite">
+        <span className="sales-mode-chip">Modo: {salesFlowModeLabel}</span>
+        {isSeparatedMode && <span className="sales-mode-chip">Perfil: {activeProfileLabel}</span>}
+        <button
+          type="button"
+          className="sales-mode-toggle"
+          onClick={() => setShowModeSummaryDetails((prev) => !prev)}
+        >
+          {showModeSummaryDetails ? 'Ocultar detalle' : 'Ver detalle'}
+        </button>
+      </div>
 
-      {isSeparatedMode && (
+      {showModeSummaryDetails && isSeparatedMode && (
         <p className="notice" style={{ marginTop: '0.25rem' }}>
-          <strong>Perfil activo:</strong> {isSellerUser ? 'Vendedor' : isCashierUser ? 'Caja' : 'No identificado'}.
-          {' '}
-          {isSellerUser
-            ? 'Puedes generar pedido comercial (cotizacion/proforma); caja realiza la emision final.'
-            : isCashierUser
-              ? 'Tu vista inicia en pedidos comerciales pendientes para conversion y emision.'
-              : 'Configura un perfil VENDEDOR/CAJERO para separar flujos.'}
+          <strong>Perfil activo:</strong> {activeProfileLabel}. {activeProfileHint}
         </p>
       )}
 
@@ -1694,7 +1807,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               placeholder="Buscar por nombre, documento o placa"
             />
             {customerSuggestions.length > 0 && (
-              <div className="suggest-box">
+              <div className="suggest-box suggest-box--customer">
                 {customerSuggestions.map((row, index) => (
                   <button
                     type="button"
@@ -1743,14 +1856,36 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         <div className="sales-concepts-shell">
           <section className="sales-concepts-main">
             <header className="sales-section-head">
-              <h4>Conceptos del comprobante</h4>
+              <div className="sales-section-head-main">
+                <h4>Conceptos del comprobante</h4>
+                <div className="tax-mode-toggle" role="group" aria-label="Modo de precio IGV">
+                  <label className="tax-mode-toggle-label">
+                    <input
+                      type="checkbox"
+                      checked={priceTaxMode === 'INCLUSIVE'}
+                      onChange={(e) => setPriceTaxMode(e.target.checked ? 'INCLUSIVE' : 'EXCLUSIVE')}
+                    />
+                    Incluye IGV
+                  </label>
+                </div>
+              </div>
               <p>Agrega productos o items manuales y arma el detalle antes de emitir.</p>
             </header>
 
             <div className="sales-grid-main">
-              <div className="sales-grid-row sales-grid-row-top">
+              <div className={`sales-grid-row sales-grid-row-item ${isTributaryDocument ? 'tax-on' : 'tax-off'}`}>
                 <label className="with-suggest sales-field-product">
-                  {form.isManualItem ? 'Descripcion manual' : 'Producto'}
+                  <span className="sales-field-product-head">
+                    <span>{form.isManualItem ? 'Descripcion manual' : 'Producto'}</span>
+                    <span className="sales-stock-toggle sales-stock-toggle-inline">
+                      <input
+                        type="checkbox"
+                        checked={form.isManualItem}
+                        onChange={(e) => toggleManualItem(e.target.checked)}
+                      />
+                      Agregar sin stock
+                    </span>
+                  </span>
                   {form.isManualItem ? (
                     <input
                       value={form.manualDescription}
@@ -1767,7 +1902,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         placeholder="Buscar producto por SKU o nombre"
                       />
                       {productSuggestions.length > 0 && (
-                        <div className="suggest-box">
+                        <div className="suggest-box suggest-box--product">
                           {productSuggestions.map((row, index) => (
                             <button
                               type="button"
@@ -1784,17 +1919,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     </>
                   )}
                 </label>
-
-                <div className="sales-field-stock-toggle">
-                  <label className="sales-stock-toggle">
-                    <input
-                      type="checkbox"
-                      checked={form.isManualItem}
-                      onChange={(e) => toggleManualItem(e.target.checked)}
-                    />
-                    Agregar sin stock
-                  </label>
-                </div>
 
                 <label className="sales-field-unit">
                   Unidad
@@ -1816,6 +1940,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   </select>
                 </label>
 
+                {manualLotSelectionEnabled && (
                 <label className="sales-field-lot">
                   Lote
                   <select
@@ -1833,14 +1958,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     {!form.isManualItem &&
                       lots.map((row) => (
                         <option key={row.id} value={row.id}>
-                          {row.lot_code} | Stock {row.stock}
+                          {row.lot_code} | Stock {row.stock}{row.expires_at ? ` | Vence: ${new Date(row.expires_at).toLocaleDateString('es-PE')}` : ''}
                         </option>
                       ))}
                   </select>
                 </label>
-              </div>
+                )}
 
-              <div className={`sales-grid-row sales-grid-row-bottom ${isTributaryDocument ? 'tax-on' : 'tax-off'}`}>
+                {lotTrackingEnabled && !manualLotSelectionEnabled && !form.isManualItem && selectedProduct?.lot_tracking && (
+                  <div className="sales-field-context">
+                    <span className="sales-price-hint">
+                      Salida por lotes automatica: {lotOutflowStrategy}. El sistema asignara los lotes al emitir.
+                    </span>
+                  </div>
+                )}
+
                 <label className="sales-field-qty">
                   Cantidad
                   <input
@@ -1880,24 +2012,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     step="0.01"
                     value={form.unitPrice}
                     onChange={(e) => setForm((prev) => ({ ...prev, unitPrice: Number(e.target.value) }))}
-                  />
-                </label>
-
-                {autoPriceHint && (
-                  <p className="sales-price-hint">{autoPriceHint}</p>
-                )}
-
-                {!form.isManualItem && selectedProductCommercialConfig?.product?.unit_id && form.unitId && (
-                  <p className="sales-price-hint">
-                    Equivalencia base: {Number(form.qty || 0).toFixed(3)} x factor {Number(draftConversionFactor || 1).toFixed(6)} = {Number(draftQtyBase || 0).toFixed(6)} en unidad base.
-                  </p>
-                )}
-
-                <label className="sales-field-context">
-                  Sucursal/Almacen/Caja
-                  <input
-                    disabled
-                    value={`${branchId ?? 'N/A'} / ${warehouseId ?? 'N/A'} / ${cashRegisterId ?? 'N/A'}`}
+                    onKeyDown={handleQuickAddItem}
                   />
                 </label>
 
@@ -1911,6 +2026,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   </button>
                 </div>
               </div>
+
+                {autoPriceHint && (
+                  <p className="sales-price-hint">{autoPriceHint}</p>
+                )}
+
+                {!form.isManualItem && selectedProductCommercialConfig?.product?.unit_id && form.unitId && (
+                  <p className="sales-price-hint">
+                    Equivalencia base: {Number(form.qty || 0).toFixed(3)} x factor {Number(draftConversionFactor || 1).toFixed(6)} = {Number(draftQtyBase || 0).toFixed(6)} en unidad base.
+                  </p>
+                )}
             </div>
 
             {cart.length > 0 && (
@@ -1954,7 +2079,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
                           />
                         </td>
-                        <td>{(item.qty * item.unitPrice).toFixed(2)}</td>
+                        <td>
+                          {computeLineTotals(
+                            Number(item.qty),
+                            Number(item.unitPrice),
+                            Number(item.taxRate ?? 0),
+                            Boolean(item.priceIncludesTax)
+                          ).subtotal.toFixed(2)}
+                        </td>
                         <td>
                           <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
                             Quitar
@@ -2062,7 +2194,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         <div className="issued-preview">
           <h4>Vista previa de emision</h4>
           <p>
-            {issuedPreview.document_kind} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
+            {docKindLabel(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
             {issuedPreview.total.toFixed(2)} | Estado: {issuedPreview.status}
           </p>
           <button type="button" onClick={printIssuedPreview}>
@@ -2119,7 +2251,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <tbody>
               {documents.map((row) => (
                 <tr key={`top-${row.id}`}>
-                  <td>{row.document_kind} {row.series}-{row.number}</td>
+                  <td>{docKindLabel(row.document_kind)} {row.series}-{row.number}</td>
                   <td>{row.customer_name}</td>
                   <td>{row.total}</td>
                   <td>
@@ -2190,7 +2322,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 {series.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
-                    <td>{row.document_kind}</td>
+                    <td>{docKindLabel(row.document_kind)}</td>
                     <td>{row.series}</td>
                     <td>{row.current_number}</td>
                   </tr>
@@ -2310,7 +2442,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <tr key={row.id}>
                 <td>{row.id}</td>
                 <td>
-                  {row.document_kind} {row.series}-{row.number}
+                  {docKindLabel(row.document_kind)} {row.series}-{row.number}
                 </td>
                 <td>{row.issue_at ? new Date(row.issue_at).toLocaleString() : '-'}</td>
                 <td>{row.customer_name}</td>

@@ -90,7 +90,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const description = (item.description || '').trim() || 'Producto sin descripcion';
         const unitCode = (item.unit_code || '').trim() || '-';
         const paymentMethod = (doc.payment_method_name || '').trim() || '-';
-        const documentKind = (doc.document_kind || '').trim() || '-';
+        const rawDocumentKind = (doc.document_kind || '').trim();
+        const documentKind = rawDocumentKind
+          ? ({'QUOTATION':'Cotizacion','SALES_ORDER':'Nota de Pedido','INVOICE':'Factura','RECEIPT':'Boleta','CREDIT_NOTE':'Nota de Credito','DEBIT_NOTE':'Nota de Debito'} as Record<string,string>)[rawDocumentKind] ?? rawDocumentKind
+          : '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
         const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}`;
         const current = grouped.get(key);

@@ -1,3 +1,5 @@
+import type { InventorySettings } from '../masters/types';
+
 export type SeriesNumber = {
   id: number;
   document_kind: string;
@@ -95,6 +97,7 @@ export type SalesLookups = {
   payment_methods: SalesPaymentMethod[];
   tax_categories: SalesTaxCategory[];
   units: SalesUnit[];
+  inventory_settings: InventorySettings;
 };
 
 export type SalesDraftItem = {
@@ -102,6 +105,7 @@ export type SalesDraftItem = {
   unitId: number | null;
   lotId: number | null;
   taxCategoryId: number | null;
+  priceIncludesTax?: boolean;
   qtyBase?: number | null;
   conversionFactor?: number | null;
   baseUnitPrice?: number | null;

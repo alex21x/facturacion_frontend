@@ -79,12 +79,28 @@ type ProductCommercialConfig = {
   wholesale_prices: ProductWholesalePriceRow[];
 };
 
+type ProductMasterEntry = {
+  id: number;
+  name: string;
+  status: number;
+};
+
+type MasterKind = 'line' | 'brand' | 'location' | 'warranty';
+
 type ProductFormState = {
   sku: string;
   barcode: string;
   name: string;
   unit_id: number | null;
   category_id: number | null;
+  line_id: number | null;
+  brand_id: number | null;
+  location_id: number | null;
+  warranty_id: number | null;
+  product_nature: 'PRODUCT' | 'SUPPLY';
+  sunat_code: string;
+  image_url: string;
+  seller_commission_percent: number;
   sale_price: number;
   cost_price: number;
   is_stockable: boolean;
@@ -99,6 +115,14 @@ const EMPTY_FORM: ProductFormState = {
   name: '',
   unit_id: null,
   category_id: null,
+  line_id: null,
+  brand_id: null,
+  location_id: null,
+  warranty_id: null,
+  product_nature: 'PRODUCT',
+  sunat_code: '',
+  image_url: '',
+  seller_commission_percent: 0,
   sale_price: 0,
   cost_price: 0,
   is_stockable: true,
@@ -113,10 +137,49 @@ function authHeaders(accessToken: string): HeadersInit {
   };
 }
 
-async function fetchProductLookups(accessToken: string): Promise<{ units: ProductLookup[]; categories: ProductLookup[] }> {
+async function fetchProductLookups(accessToken: string): Promise<{
+  units: ProductLookup[];
+  categories: ProductLookup[];
+}> {
   return apiClient.request('/api/inventory/product-lookups', {
     method: 'GET',
     headers: authHeaders(accessToken),
+  });
+}
+
+async function fetchProductMasters(accessToken: string): Promise<{
+  lines: ProductMasterEntry[];
+  brands: ProductMasterEntry[];
+  locations: ProductMasterEntry[];
+  warranties: ProductMasterEntry[];
+}> {
+  return apiClient.request('/api/inventory/product-masters', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+async function createProductMaster(
+  accessToken: string,
+  kind: MasterKind,
+  name: string
+): Promise<ProductMasterEntry> {
+  return apiClient.request('/api/inventory/product-masters', {
+    method: 'POST',
+    headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ kind, name }),
+  });
+}
+
+async function updateProductMaster(
+  accessToken: string,
+  id: number,
+  payload: { kind: MasterKind; name?: string; status?: number }
+): Promise<ProductMasterEntry> {
+  return apiClient.request(`/api/inventory/product-masters/${id}`, {
+    method: 'PUT',
+    headers: { ...authHeaders(accessToken), 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
   });
 }
 
@@ -164,6 +227,17 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
   const [rows, setRows] = useState<InventoryProduct[]>([]);
   const [units, setUnits] = useState<ProductLookup[]>([]);
   const [categories, setCategories] = useState<ProductLookup[]>([]);
+  const [lines, setLines] = useState<ProductMasterEntry[]>([]);
+  const [brands, setBrands] = useState<ProductMasterEntry[]>([]);
+  const [locations, setLocations] = useState<ProductMasterEntry[]>([]);
+  const [warranties, setWarranties] = useState<ProductMasterEntry[]>([]);
+  const [newLineName, setNewLineName] = useState('');
+  const [newBrandName, setNewBrandName] = useState('');
+  const [newLocationName, setNewLocationName] = useState('');
+  const [newWarrantyName, setNewWarrantyName] = useState('');
+  const [masterSavingKind, setMasterSavingKind] = useState<null | MasterKind>(null);
+  const [editingMaster, setEditingMaster] = useState<{ kind: MasterKind; id: number; name: string; status: number } | null>(null);
+  const [editingMasterSaving, setEditingMasterSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
@@ -194,16 +268,21 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
     setMessage('');
 
     try {
-      const [data, lookups] = await Promise.all([
+      const [data, lookups, masters] = await Promise.all([
         fetchInventoryProducts(accessToken, {
           search: search.trim() || undefined,
           status: status === 'all' ? null : Number(status),
         }),
         fetchProductLookups(accessToken),
+        fetchProductMasters(accessToken),
       ]);
       setRows(data);
       setUnits(lookups.units ?? []);
       setCategories(lookups.categories ?? []);
+      setLines(masters.lines ?? []);
+      setBrands(masters.brands ?? []);
+      setLocations(masters.locations ?? []);
+      setWarranties(masters.warranties ?? []);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo cargar productos');
     } finally {
@@ -216,9 +295,22 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, status]);
 
-  function resetForm() {
+  function resetForm(keepMasters = false) {
+    const nextForm = keepMasters
+      ? {
+          ...EMPTY_FORM,
+          line_id: form.line_id,
+          brand_id: form.brand_id,
+          location_id: form.location_id,
+          warranty_id: form.warranty_id,
+          product_nature: form.product_nature,
+          unit_id: form.unit_id,
+          category_id: form.category_id,
+        }
+      : EMPTY_FORM;
+
     setEditingId(null);
-    setForm(EMPTY_FORM);
+    setForm(nextForm);
     setCommercialConfig(null);
     setCommercialUnits([]);
     setCommercialConversions([]);
@@ -234,6 +326,14 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
       name: row.name,
       unit_id: row.unit_id,
       category_id: null,
+      line_id: row.line_id ?? null,
+      brand_id: row.brand_id ?? null,
+      location_id: row.location_id ?? null,
+      warranty_id: row.warranty_id ?? null,
+      product_nature: row.product_nature ?? 'PRODUCT',
+      sunat_code: row.sunat_code ?? '',
+      image_url: row.image_url ?? '',
+      seller_commission_percent: Number(row.seller_commission_percent ?? 0),
       sale_price: Number(row.sale_price ?? 0),
       cost_price: Number(row.cost_price ?? 0),
       is_stockable: Boolean(row.is_stockable),
@@ -429,6 +529,106 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
     }
   }
 
+  async function quickCreateMaster(
+    kind: MasterKind,
+    name: string,
+    setter: React.Dispatch<React.SetStateAction<ProductMasterEntry[]>>,
+    formField: keyof ProductFormState,
+    clearName: () => void
+  ) {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      setMessage('Ingresa un nombre para crear el maestro.');
+      return;
+    }
+
+    const kindLabels: Record<'line' | 'brand' | 'location' | 'warranty', string> = {
+      line: 'Línea',
+      brand: 'Marca',
+      location: 'Ubicación',
+      warranty: 'Garantía',
+    };
+
+    try {
+      setMasterSavingKind(kind);
+      setMessage('');
+      const entry = await createProductMaster(accessToken, kind, trimmed);
+      const entryId = Number(entry.id);
+      setter((prev) => {
+        const normalized = {
+          id: entryId,
+          name: String(entry.name ?? trimmed),
+          status: Number(entry.status ?? 1),
+        };
+
+        const index = prev.findIndex((r) => r.id === normalized.id);
+        if (index >= 0) {
+          const next = [...prev];
+          next[index] = normalized;
+          return next.sort((a, b) => a.name.localeCompare(b.name));
+        }
+
+        return [...prev, normalized].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      setForm((prev) => ({ ...prev, [formField]: entryId }));
+
+      // If an existing product is being edited, persist the selected master immediately.
+      if (editingId) {
+        await updateProduct(accessToken, editingId, { [formField]: entryId });
+      }
+
+      const masters = await fetchProductMasters(accessToken);
+      setLines(masters.lines ?? []);
+      setBrands(masters.brands ?? []);
+      setLocations(masters.locations ?? []);
+      setWarranties(masters.warranties ?? []);
+
+      clearName();
+      setMessage(editingId
+        ? `${kindLabels[kind]} agregada y asignada al producto.`
+        : `${kindLabels[kind]} agregada correctamente.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo crear el maestro');
+    } finally {
+      setMasterSavingKind(null);
+    }
+  }
+
+  async function saveEditedMaster() {
+    if (!editingMaster) {
+      return;
+    }
+
+    const name = editingMaster.name.trim();
+    if (!name) {
+      setMessage('El nombre del maestro no puede estar vacío.');
+      return;
+    }
+
+    try {
+      setEditingMasterSaving(true);
+      setMessage('');
+      await updateProductMaster(accessToken, editingMaster.id, {
+        kind: editingMaster.kind,
+        name,
+        status: Number(editingMaster.status) === 1 ? 1 : 0,
+      });
+
+      const masters = await fetchProductMasters(accessToken);
+      setLines(masters.lines ?? []);
+      setBrands(masters.brands ?? []);
+      setLocations(masters.locations ?? []);
+      setWarranties(masters.warranties ?? []);
+
+      setMessage('Maestro actualizado correctamente.');
+      setEditingMaster(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo actualizar el maestro');
+    } finally {
+      setEditingMasterSaving(false);
+    }
+  }
+
   async function saveProduct(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -438,13 +638,13 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
       if (editingId) {
         await updateProduct(accessToken, editingId, form);
         setMessage('Producto actualizado correctamente.');
+        await loadProducts();
       } else {
         await createProduct(accessToken, form);
         setMessage('Producto creado correctamente.');
+        resetForm(true);
+        await loadProducts();
       }
-
-      resetForm();
-      await loadProducts();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo guardar producto');
     } finally {
@@ -469,6 +669,8 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
           Refrescar
         </button>
       </div>
+
+      {message && <p className="notice">{message}</p>}
 
       <div className="grid-form entity-filters">
         <label>
@@ -500,7 +702,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
         </div>
       </div>
 
-      <form className="grid-form entity-editor" onSubmit={saveProduct}>
+      <form className="grid-form entity-editor products-editor" onSubmit={saveProduct}>
         <h4>{editingId ? `Editar producto #${editingId}` : 'Nuevo producto'}</h4>
         <label>
           SKU
@@ -538,6 +740,157 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
             ))}
           </select>
         </label>
+
+        <label>
+          Tipo
+          <select
+            value={form.product_nature}
+            onChange={(event) => setForm((prev) => ({ ...prev, product_nature: event.target.value as 'PRODUCT' | 'SUPPLY' }))}
+          >
+            <option value="PRODUCT">Producto</option>
+            <option value="SUPPLY">Insumo</option>
+          </select>
+        </label>
+
+        <div className="master-select-row products-master-field">
+          <label>
+            Línea
+            <select
+              value={form.line_id ?? ''}
+              onChange={(event) => setForm((prev) => ({ ...prev, line_id: event.target.value ? Number(event.target.value) : null }))}
+            >
+              <option value="">Sin línea</option>
+              {lines.filter((r) => r.status === 1).map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="master-quick-add">
+            <input
+              placeholder="Nueva línea..."
+              value={newLineName}
+              onChange={(e) => setNewLineName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void quickCreateMaster('line', newLineName, setLines, 'line_id', () => setNewLineName('')); } }}
+            />
+            <button
+              type="button"
+              disabled={masterSavingKind !== null || !newLineName.trim()}
+              onClick={() => void quickCreateMaster('line', newLineName, setLines, 'line_id', () => setNewLineName(''))}
+            >
+              {masterSavingKind === 'line' ? 'Agregando...' : 'Agregar'}
+            </button>
+          </div>
+        </div>
+
+        <div className="master-select-row products-master-field">
+          <label>
+            Marca
+            <select
+              value={form.brand_id ?? ''}
+              onChange={(event) => setForm((prev) => ({ ...prev, brand_id: event.target.value ? Number(event.target.value) : null }))}
+            >
+              <option value="">Sin marca</option>
+              {brands.filter((r) => r.status === 1).map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="master-quick-add">
+            <input
+              placeholder="Nueva marca..."
+              value={newBrandName}
+              onChange={(e) => setNewBrandName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void quickCreateMaster('brand', newBrandName, setBrands, 'brand_id', () => setNewBrandName('')); } }}
+            />
+            <button
+              type="button"
+              disabled={masterSavingKind !== null || !newBrandName.trim()}
+              onClick={() => void quickCreateMaster('brand', newBrandName, setBrands, 'brand_id', () => setNewBrandName(''))}
+            >
+              {masterSavingKind === 'brand' ? 'Agregando...' : 'Agregar'}
+            </button>
+          </div>
+        </div>
+
+        <div className="master-select-row products-master-field">
+          <label>
+            Ubicación
+            <select
+              value={form.location_id ?? ''}
+              onChange={(event) => setForm((prev) => ({ ...prev, location_id: event.target.value ? Number(event.target.value) : null }))}
+            >
+              <option value="">Sin ubicación</option>
+              {locations.filter((r) => r.status === 1).map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="master-quick-add">
+            <input
+              placeholder="Nueva ubicación..."
+              value={newLocationName}
+              onChange={(e) => setNewLocationName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void quickCreateMaster('location', newLocationName, setLocations, 'location_id', () => setNewLocationName('')); } }}
+            />
+            <button
+              type="button"
+              disabled={masterSavingKind !== null || !newLocationName.trim()}
+              onClick={() => void quickCreateMaster('location', newLocationName, setLocations, 'location_id', () => setNewLocationName(''))}
+            >
+              {masterSavingKind === 'location' ? 'Agregando...' : 'Agregar'}
+            </button>
+          </div>
+        </div>
+
+        <div className="master-select-row products-master-field">
+          <label>
+            Garantía
+            <select
+              value={form.warranty_id ?? ''}
+              onChange={(event) => setForm((prev) => ({ ...prev, warranty_id: event.target.value ? Number(event.target.value) : null }))}
+            >
+              <option value="">Sin garantía</option>
+              {warranties.filter((r) => r.status === 1).map((row) => (
+                <option key={row.id} value={row.id}>{row.name}</option>
+              ))}
+            </select>
+          </label>
+          <div className="master-quick-add">
+            <input
+              placeholder="Nueva garantía..."
+              value={newWarrantyName}
+              onChange={(e) => setNewWarrantyName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void quickCreateMaster('warranty', newWarrantyName, setWarranties, 'warranty_id', () => setNewWarrantyName('')); } }}
+            />
+            <button
+              type="button"
+              disabled={masterSavingKind !== null || !newWarrantyName.trim()}
+              onClick={() => void quickCreateMaster('warranty', newWarrantyName, setWarranties, 'warranty_id', () => setNewWarrantyName(''))}
+            >
+              {masterSavingKind === 'warranty' ? 'Agregando...' : 'Agregar'}
+            </button>
+          </div>
+        </div>
+
+        <label>
+          Código SUNAT
+          <input
+            value={form.sunat_code}
+            maxLength={40}
+            onChange={(event) => setForm((prev) => ({ ...prev, sunat_code: event.target.value }))}
+          />
+        </label>
+        <label>
+          Comisión vendedor (%)
+          <input
+            type="number"
+            step="0.01"
+            min="0"
+            max="100"
+            value={form.seller_commission_percent}
+            onChange={(event) => setForm((prev) => ({ ...prev, seller_commission_percent: Number(event.target.value) }))}
+          />
+        </label>
         <label>
           Precio venta
           <input
@@ -559,6 +912,20 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
           />
         </label>
         <label>
+          URL Imagen
+          <input
+            value={form.image_url}
+            maxLength={500}
+            placeholder="https://..."
+            onChange={(event) => setForm((prev) => ({ ...prev, image_url: event.target.value }))}
+          />
+        </label>
+        {form.image_url && (
+          <div className="product-image-preview products-field-span-full">
+            <img src={form.image_url} alt="Vista previa" onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
+          </div>
+        )}
+        <label className="products-checkbox-field">
           <input
             type="checkbox"
             checked={form.is_stockable}
@@ -566,7 +933,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
           />
           Es stockeable
         </label>
-        <label>
+        <label className="products-checkbox-field">
           <input
             type="checkbox"
             checked={form.lot_tracking}
@@ -574,7 +941,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
           />
           Control por lote
         </label>
-        <label>
+        <label className="products-checkbox-field">
           <input
             type="checkbox"
             checked={form.has_expiration}
@@ -591,9 +958,93 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
         </label>
         <div className="entity-actions wide">
           <button type="submit" disabled={loading}>{editingId ? 'Guardar cambios' : 'Crear producto'}</button>
-          <button type="button" className="danger" onClick={resetForm}>Limpiar</button>
+          <button type="button" className="danger" onClick={() => resetForm()}>Limpiar</button>
         </div>
       </form>
+
+      <section className="entity-editor product-masters-admin">
+        <h4>Configurar maestros de producto</h4>
+
+        <div className="master-admin-grid">
+          <article>
+            <h5>Líneas</h5>
+            <ul>
+              {lines.map((row) => (
+                <li key={`line-${row.id}`}>
+                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <button type="button" onClick={() => setEditingMaster({ kind: 'line', id: row.id, name: row.name, status: row.status })}>Editar</button>
+                </li>
+              ))}
+              {lines.length === 0 && <li className="empty">Sin líneas</li>}
+            </ul>
+          </article>
+
+          <article>
+            <h5>Marcas</h5>
+            <ul>
+              {brands.map((row) => (
+                <li key={`brand-${row.id}`}>
+                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <button type="button" onClick={() => setEditingMaster({ kind: 'brand', id: row.id, name: row.name, status: row.status })}>Editar</button>
+                </li>
+              ))}
+              {brands.length === 0 && <li className="empty">Sin marcas</li>}
+            </ul>
+          </article>
+
+          <article>
+            <h5>Ubicaciones</h5>
+            <ul>
+              {locations.map((row) => (
+                <li key={`location-${row.id}`}>
+                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <button type="button" onClick={() => setEditingMaster({ kind: 'location', id: row.id, name: row.name, status: row.status })}>Editar</button>
+                </li>
+              ))}
+              {locations.length === 0 && <li className="empty">Sin ubicaciones</li>}
+            </ul>
+          </article>
+
+          <article>
+            <h5>Garantías</h5>
+            <ul>
+              {warranties.map((row) => (
+                <li key={`warranty-${row.id}`}>
+                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <button type="button" onClick={() => setEditingMaster({ kind: 'warranty', id: row.id, name: row.name, status: row.status })}>Editar</button>
+                </li>
+              ))}
+              {warranties.length === 0 && <li className="empty">Sin garantías</li>}
+            </ul>
+          </article>
+        </div>
+
+        {editingMaster && (
+          <div className="master-editor-inline">
+            <strong>Editar {editingMaster.kind === 'line' ? 'Línea' : editingMaster.kind === 'brand' ? 'Marca' : editingMaster.kind === 'location' ? 'Ubicación' : 'Garantía'}</strong>
+            <div className="master-editor-fields">
+              <input
+                value={editingMaster.name}
+                onChange={(event) => setEditingMaster((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
+                maxLength={120}
+              />
+              <select
+                value={editingMaster.status}
+                onChange={(event) => setEditingMaster((prev) => (prev ? { ...prev, status: Number(event.target.value) } : prev))}
+              >
+                <option value={1}>ACTIVO</option>
+                <option value={0}>INACTIVO</option>
+              </select>
+              <button type="button" onClick={() => void saveEditedMaster()} disabled={editingMasterSaving}>
+                {editingMasterSaving ? 'Guardando...' : 'Guardar'}
+              </button>
+              <button type="button" className="danger" onClick={() => setEditingMaster(null)} disabled={editingMasterSaving}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
 
       {editingId && commercialConfig && (
         <section className="entity-editor product-commerce-panel">
@@ -908,8 +1359,6 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
         </section>
       )}
 
-      {message && <p className="notice">{message}</p>}
-
       <div className="stat-grid">
         <article>
           <span>Total productos</span>
@@ -933,6 +1382,9 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
               <th>ID</th>
               <th>SKU</th>
               <th>Nombre</th>
+              <th>Tipo</th>
+              <th>Línea</th>
+              <th>Marca</th>
               <th>Unidad</th>
               <th>Precio Venta</th>
               <th>Precio Costo</th>
@@ -946,6 +1398,9 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
                 <td>{row.id}</td>
                 <td>{row.sku ?? '-'}</td>
                 <td>{row.name}</td>
+                <td>{row.product_nature === 'SUPPLY' ? 'Insumo' : 'Producto'}</td>
+                <td>{row.line_name ?? '-'}</td>
+                <td>{row.brand_name ?? '-'}</td>
                 <td>{row.unit_code ?? row.unit_name ?? '-'}</td>
                 <td>{row.sale_price}</td>
                 <td>{row.cost_price}</td>
@@ -960,7 +1415,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8}>No hay productos para el filtro actual.</td>
+                <td colSpan={11}>No hay productos para el filtro actual.</td>
               </tr>
             )}
           </tbody>

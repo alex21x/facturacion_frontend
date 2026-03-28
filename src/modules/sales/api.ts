@@ -163,9 +163,12 @@ export async function createCommercialDocument(accessToken: string, form: Create
     const qty = Number(item.qty);
     const unitPrice = Number(item.unitPrice);
     const taxRate = Number(item.taxRate ?? 0);
-    const subtotal = +(qty * unitPrice).toFixed(2);
-    const taxTotal = +(subtotal * (taxRate / 100)).toFixed(2);
-    const total = +(subtotal + taxTotal).toFixed(2);
+    const includesTax = Boolean(item.priceIncludesTax) && taxRate > 0;
+    const divisor = 1 + (taxRate / 100);
+    const grossLine = qty * unitPrice;
+    const subtotal = includesTax ? +(grossLine / divisor).toFixed(2) : +(grossLine).toFixed(2);
+    const taxTotal = includesTax ? +(grossLine - subtotal).toFixed(2) : +(subtotal * (taxRate / 100)).toFixed(2);
+    const total = includesTax ? +(grossLine).toFixed(2) : +(subtotal + taxTotal).toFixed(2);
 
     return {
       description: item.description,
@@ -180,6 +183,9 @@ export async function createCommercialDocument(accessToken: string, form: Create
       subtotal,
       tax_total: taxTotal,
       total,
+      metadata: {
+        price_includes_tax: includesTax,
+      },
       lots: item.lotId ? [
         {
           lot_id: Number(item.lotId),

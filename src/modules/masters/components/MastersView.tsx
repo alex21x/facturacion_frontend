@@ -42,6 +42,7 @@ type MastersViewProps = {
   accessToken: string;
   branchId: number | null;
   warehouseId: number | null;
+  currentUserRoleCode: string | null;
 };
 
 type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
@@ -79,7 +80,7 @@ function commerceFeatureLabel(code: string): string {
   return COMMERCE_FEATURE_LABELS[code] ?? code;
 }
 
-export function MastersView({ accessToken, branchId, warehouseId }: MastersViewProps) {
+export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode }: MastersViewProps) {
   const [options, setOptions] = useState<MasterOptionsResponse | null>(null);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [cashRegisters, setCashRegisters] = useState<CashRegisterRow[]>([]);
@@ -262,6 +263,30 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
         return 'Buscar';
     }
   }, [activeSection]);
+
+  const isAdminUser = useMemo(() => {
+    const roleCode = (currentUserRoleCode ?? '').trim().toUpperCase();
+    return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
+  }, [currentUserRoleCode]);
+
+  const availableSections = useMemo<MasterSection[]>(() => {
+    const sections: MasterSection[] = [
+      'warehouse',
+      'cash',
+      'payment',
+      'series',
+      'lot',
+      'settings',
+      'units',
+      'doc-kinds',
+    ];
+
+    if (isAdminUser) {
+      sections.push('commerce', 'access');
+    }
+
+    return sections;
+  }, [isAdminUser]);
 
   const canCreateInSection =
     activeSection === 'warehouse' ||
@@ -568,10 +593,7 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
     setError('');
 
     try {
-      const [dashboard, commerce] = await Promise.all([
-        fetchMastersDashboard(accessToken),
-        fetchCommerceSettings(accessToken),
-      ]);
+      const dashboard = await fetchMastersDashboard(accessToken);
       setOptions(dashboard.options);
       setWarehouses(dashboard.warehouses);
       setCashRegisters(dashboard.cash_registers);
@@ -581,27 +603,42 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
       setUnits(dashboard.units);
       setInventorySettings(dashboard.inventory_settings);
       setDocumentKinds(dashboard.document_kinds);
-      setCommerceFeatures(commerce.features ?? []);
       setStats(dashboard.stats);
 
-      const access = await fetchAccessControl(accessToken);
-      setAccessModules(access.modules ?? []);
-      setAccessRoles(access.roles ?? []);
-      setAccessUsers(access.users ?? []);
+      if (isAdminUser) {
+        const [commerce, access] = await Promise.all([
+          fetchCommerceSettings(accessToken),
+          fetchAccessControl(accessToken),
+        ]);
 
-      const selectedRole =
-        access.roles?.find((role) => role.id === selectedRoleId)
-        ?? access.roles?.[0]
-        ?? null;
-      setSelectedRoleId(selectedRole?.id ?? null);
-      setRoleEditorName(selectedRole?.name ?? '');
-      setRoleEditorProfile(selectedRole?.functional_profile ?? '');
-      setRoleEditorPermissions(selectedRole?.permissions ?? []);
+        setCommerceFeatures(commerce.features ?? []);
+        setAccessModules(access.modules ?? []);
+        setAccessRoles(access.roles ?? []);
+        setAccessUsers(access.users ?? []);
 
-      setAccessUserForm((prev) => ({
-        ...prev,
-        role_id: prev.role_id || (access.roles?.[0]?.id ?? 0),
-      }));
+        const selectedRole =
+          access.roles?.find((role) => role.id === selectedRoleId)
+          ?? access.roles?.[0]
+          ?? null;
+        setSelectedRoleId(selectedRole?.id ?? null);
+        setRoleEditorName(selectedRole?.name ?? '');
+        setRoleEditorProfile(selectedRole?.functional_profile ?? '');
+        setRoleEditorPermissions(selectedRole?.permissions ?? []);
+
+        setAccessUserForm((prev) => ({
+          ...prev,
+          role_id: prev.role_id || (access.roles?.[0]?.id ?? 0),
+        }));
+      } else {
+        setCommerceFeatures([]);
+        setAccessModules([]);
+        setAccessRoles([]);
+        setAccessUsers([]);
+        setSelectedRoleId(null);
+        setRoleEditorName('');
+        setRoleEditorProfile('');
+        setRoleEditorPermissions([]);
+      }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo cargar maestros');
     } finally {
@@ -612,7 +649,7 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken]);
+  }, [accessToken, isAdminUser]);
 
   useEffect(() => {
     setWarehouseForm((prev) => ({ ...prev, branch_id: branchId }));
@@ -625,6 +662,12 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
   useEffect(() => {
     setSectionSearch('');
   }, [activeSection]);
+
+  useEffect(() => {
+    if (!availableSections.includes(activeSection)) {
+      setActiveSection(availableSections[0] ?? 'warehouse');
+    }
+  }, [activeSection, availableSections]);
 
   async function saveWarehouse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -928,120 +971,65 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
         </div>
       )}
 
-      <nav className="master-nav">
-        <button type="button" className={activeSection === 'warehouse' ? 'active' : ''} onClick={() => setActiveSection('warehouse')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 6 12 2l8 4-8 4zM4 10l8 4 8-4M4 14l8 4 8-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Stock</span>
-              <span className="master-menu-label">Almacenes</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'cash' ? 'active' : ''} onClick={() => setActiveSection('cash')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Punto de venta</span>
-              <span className="master-menu-label">Cajas</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'payment' ? 'active' : ''} onClick={() => setActiveSection('payment')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 7h18v10H3zM7 11h3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Cobranza</span>
-              <span className="master-menu-label">Tipos de Pago</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'series' ? 'active' : ''} onClick={() => setActiveSection('series')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M6 3h9l4 4v14H6zM15 3v5h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Documentos</span>
-              <span className="master-menu-label">Series</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'lot' ? 'active' : ''} onClick={() => setActiveSection('lot')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 4h10v4l-2 2v8l-3 2-3-2v-8L7 8z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Vencimientos</span>
-              <span className="master-menu-label">Lotes</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'settings' ? 'active' : ''} onClick={() => setActiveSection('settings')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 1 0 12 8.5zM3 12h2m14 0h2M12 3v2m0 14v2M5.7 5.7l1.4 1.4m9.8 9.8 1.4 1.4M18.3 5.7l-1.4 1.4m-9.8 9.8-1.4 1.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Reglas</span>
-              <span className="master-menu-label">Inventario</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'units' ? 'active' : ''} onClick={() => setActiveSection('units')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 8h16M4 12h16M4 16h16M8 6v12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Catalogo</span>
-              <span className="master-menu-label">Unidades</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'doc-kinds' ? 'active' : ''} onClick={() => setActiveSection('doc-kinds')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 6h16M4 12h16M4 18h16M10 6v12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Habilitacion</span>
-              <span className="master-menu-label">Comprobantes</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'commerce' ? 'active' : ''} onClick={() => setActiveSection('commerce')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 12h10M7 7h10M7 17h10M4 7h.01M4 12h.01M4 17h.01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Comercio</span>
-              <span className="master-menu-label">Funciones</span>
-            </span>
-          </span>
-        </button>
-        <button type="button" className={activeSection === 'access' ? 'active' : ''} onClick={() => setActiveSection('access')}>
-          <span className="master-btn-head">
-            <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M7 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm10 2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20a5 5 0 0 1 8 0M13 20a5 5 0 0 1 8 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span>
-              <span className="master-menu-kicker">Seguridad</span>
-              <span className="master-menu-label">Usuarios y perfiles</span>
-            </span>
-          </span>
-        </button>
-      </nav>
-
-      <div className="master-nav-mobile-control">
+      <div className="masters-layout">
+        <nav className="master-nav">
+          <div className="master-nav-group">
+            <span className="master-nav-group-label">Operacion</span>
+            <button type="button" className={activeSection === 'warehouse' ? 'active' : ''} onClick={() => setActiveSection('warehouse')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6 12 2l8 4-8 4zM4 10l8 4 8-4M4 14l8 4 8-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Almacenes
+            </button>
+            <button type="button" className={activeSection === 'cash' ? 'active' : ''} onClick={() => setActiveSection('cash')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+              Cajas
+            </button>
+            <button type="button" className={activeSection === 'payment' ? 'active' : ''} onClick={() => setActiveSection('payment')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v10H3zM7 11h3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Tipos de Pago
+            </button>
+          </div>
+          <div className="master-nav-group">
+            <span className="master-nav-group-label">Documentos</span>
+            <button type="button" className={activeSection === 'series' ? 'active' : ''} onClick={() => setActiveSection('series')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Series
+            </button>
+            <button type="button" className={activeSection === 'doc-kinds' ? 'active' : ''} onClick={() => setActiveSection('doc-kinds')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M10 6v12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+              Comprobantes
+            </button>
+          </div>
+          <div className="master-nav-group">
+            <span className="master-nav-group-label">Inventario</span>
+            <button type="button" className={activeSection === 'lot' ? 'active' : ''} onClick={() => setActiveSection('lot')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4h10v4l-2 2v8l-3 2-3-2v-8L7 8z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Lotes
+            </button>
+            <button type="button" className={activeSection === 'units' ? 'active' : ''} onClick={() => setActiveSection('units')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16M4 12h16M4 16h16M8 6v12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+              Unidades
+            </button>
+            <button type="button" className={activeSection === 'settings' ? 'active' : ''} onClick={() => setActiveSection('settings')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 1 0 12 8.5zM3 12h2m14 0h2M12 3v2m0 14v2M5.7 5.7l1.4 1.4m9.8 9.8 1.4 1.4M18.3 5.7l-1.4 1.4m-9.8 9.8-1.4 1.4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+              Reglas
+            </button>
+          </div>
+          {isAdminUser && (
+            <div className="master-nav-group">
+              <span className="master-nav-group-label">Administracion</span>
+              <button type="button" className={activeSection === 'commerce' ? 'active' : ''} onClick={() => setActiveSection('commerce')}>
+                <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 12h10M7 7h10M7 17h10M4 7h.01M4 12h.01M4 17h.01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+                Funciones
+              </button>
+              <button type="button" className={activeSection === 'access' ? 'active' : ''} onClick={() => setActiveSection('access')}>
+                <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm10 2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20a5 5 0 0 1 8 0M13 20a5 5 0 0 1 8 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                Usuarios y perfiles
+              </button>
+            </div>
+          )}
+        </nav>
+        <div className="masters-main">
+        <div className="master-nav-mobile-control">
         <label>
           Ir a seccion
           <select value={activeSection} onChange={(e) => setActiveSection(e.target.value as MasterSection)}>
@@ -1053,8 +1041,8 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
             <option value="units">Unidades</option>
             <option value="settings">Inventario</option>
             <option value="doc-kinds">Comprobantes</option>
-            <option value="commerce">Funciones comerciales</option>
-            <option value="access">Usuarios y perfiles</option>
+            {isAdminUser && <option value="commerce">Funciones comerciales</option>}
+            {isAdminUser && <option value="access">Usuarios y perfiles</option>}
           </select>
         </label>
       </div>
@@ -1326,6 +1314,38 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
         <form ref={settingsFormRef} className="grid-form master-card" onSubmit={saveInventorySettings}>
           <h4>Configuracion de Inventario</h4>
           <label>
+            Perfil de complejidad
+            <select value={inventorySettings.complexity_mode} onChange={(e) => setInventorySettings((prev) => {
+              if (!prev) return prev;
+              const nextMode = e.target.value as InventorySettings['complexity_mode'];
+              if (nextMode === 'BASIC') {
+                return {
+                  ...prev,
+                  complexity_mode: 'BASIC',
+                  inventory_mode: 'KARDEX_SIMPLE',
+                  lot_outflow_strategy: 'MANUAL',
+                  enable_inventory_pro: false,
+                  enable_lot_tracking: false,
+                  enable_expiry_tracking: false,
+                  enable_advanced_reporting: false,
+                  enable_graphical_dashboard: false,
+                  enable_location_control: false,
+                  enforce_lot_for_tracked: false,
+                };
+              }
+              return {
+                ...prev,
+                complexity_mode: 'ADVANCED',
+                enable_inventory_pro: true,
+                enable_lot_tracking: true,
+                enable_advanced_reporting: true,
+              };
+            })}>
+              <option value="BASIC">BASICO</option>
+              <option value="ADVANCED">AVANZADO</option>
+            </select>
+          </label>
+          <label>
             Modo inventario
             <select value={inventorySettings.inventory_mode} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, inventory_mode: e.target.value as InventorySettings['inventory_mode'] } : prev)}>
               <option value="KARDEX_SIMPLE">KARDEX_SIMPLE</option>
@@ -1339,6 +1359,30 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
               <option value="FIFO">FIFO</option>
               <option value="FEFO">FEFO</option>
             </select>
+          </label>
+          <label>
+            <input type="checkbox" checked={inventorySettings.enable_inventory_pro} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_inventory_pro: e.target.checked } : prev)} /> Habilitar Inventory Pro
+          </label>
+          <label>
+            <input type="checkbox" checked={inventorySettings.enable_lot_tracking} onChange={(e) => setInventorySettings((prev) => prev ? {
+              ...prev,
+              enable_lot_tracking: e.target.checked,
+              inventory_mode: e.target.checked ? prev.inventory_mode : 'KARDEX_SIMPLE',
+              enforce_lot_for_tracked: e.target.checked ? prev.enforce_lot_for_tracked : false,
+              enable_expiry_tracking: e.target.checked ? prev.enable_expiry_tracking : false,
+            } : prev)} /> Habilitar control por lotes
+          </label>
+          <label>
+            <input type="checkbox" checked={inventorySettings.enable_expiry_tracking} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_expiry_tracking: e.target.checked, enable_lot_tracking: e.target.checked ? true : prev.enable_lot_tracking } : prev)} /> Habilitar control de vencimiento
+          </label>
+          <label>
+            <input type="checkbox" checked={inventorySettings.enable_advanced_reporting} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_advanced_reporting: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar reportes avanzados
+          </label>
+          <label>
+            <input type="checkbox" checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_graphical_dashboard: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar dashboard grafico
+          </label>
+          <label>
+            <input type="checkbox" checked={inventorySettings.enable_location_control} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_location_control: e.target.checked } : prev)} /> Habilitar control por ubicacion
           </label>
           <label>
             <input type="checkbox" checked={inventorySettings.allow_negative_stock} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, allow_negative_stock: e.target.checked } : prev)} /> Permitir stock negativo
@@ -1584,7 +1628,7 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
 
           <div className="master-card" style={{ gridColumn: '1 / -1' }}>
             <h4>Permisos por perfil</h4>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(280px, 1fr) auto', gap: '0.75rem', alignItems: 'end', marginBottom: '0.75rem' }}>
+            <div className="role-permissions-toolbar">
               <label>
                 Perfil
                 <select
@@ -1601,29 +1645,31 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
               </button>
             </div>
 
-            <label style={{ marginBottom: '0.75rem', display: 'block' }}>
-              Nombre del perfil
-              <input
-                value={roleEditorName}
-                onChange={(e) => setRoleEditorName(e.target.value)}
-                placeholder="Nombre visible del perfil"
-                disabled={!selectedRoleId}
-              />
-            </label>
+            <div className="role-permissions-fields">
+              <label>
+                Nombre del perfil
+                <input
+                  value={roleEditorName}
+                  onChange={(e) => setRoleEditorName(e.target.value)}
+                  placeholder="Nombre visible del perfil"
+                  disabled={!selectedRoleId}
+                />
+              </label>
 
-            <label style={{ marginBottom: '0.75rem', display: 'block' }}>
-              Perfil funcional del rol
-              <select
-                value={roleEditorProfile}
-                onChange={(e) => setRoleEditorProfile(e.target.value as 'SELLER' | 'CASHIER' | 'GENERAL' | '')}
-                disabled={!selectedRoleId}
-              >
-                <option value="">No definido</option>
-                <option value="GENERAL">General</option>
-                <option value="SELLER">Vendedor</option>
-                <option value="CASHIER">Caja</option>
-              </select>
-            </label>
+              <label>
+                Perfil funcional del rol
+                <select
+                  value={roleEditorProfile}
+                  onChange={(e) => setRoleEditorProfile(e.target.value as 'SELLER' | 'CASHIER' | 'GENERAL' | '')}
+                  disabled={!selectedRoleId}
+                >
+                  <option value="">No definido</option>
+                  <option value="GENERAL">General</option>
+                  <option value="SELLER">Vendedor</option>
+                  <option value="CASHIER">Caja</option>
+                </select>
+              </label>
+            </div>
 
             <table>
               <thead>
@@ -1657,6 +1703,8 @@ export function MastersView({ accessToken, branchId, warehouseId }: MastersViewP
           </div>
         </div>
       )}
+        </div>
+      </div>
     </section>
   );
 }

@@ -117,10 +117,30 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
     }
 
     if (isHtml) {
-      throw new Error(`API ${response.status}: respuesta no JSON del servidor`);
+      throw new Error(`Error ${response.status}: respuesta inesperada del servidor.`);
     }
 
-    throw new Error(`API ${response.status}: ${text}`);
+    if (response.status === 403) {
+      throw new Error('No tienes permiso para acceder a esta sección.');
+    }
+
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // not JSON
+    }
+
+    const serverMessage = typeof parsed?.message === 'string' ? parsed.message : null;
+    const isTechnical = serverMessage
+      ? /SQLSTATE|ERROR:|Exception|at line \d+|vendor\/|->|php/i.test(serverMessage)
+      : false;
+
+    if (serverMessage && !isTechnical) {
+      throw new Error(serverMessage);
+    }
+
+    throw new Error(`Error en el servidor (${response.status}). Contacta al administrador.`);
   }
 
   return (await response.json()) as T;
