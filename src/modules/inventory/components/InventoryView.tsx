@@ -24,7 +24,128 @@ import type {
   InventoryProReportRequestDetail,
 } from '../types';
 
-type InvTab = 'stock' | 'lotes' | 'kardex' | 'dashboard' | 'reportes';
+type InvTab = 'stock' | 'lotes' | 'ubicaciones' | 'kardex' | 'dashboard' | 'reportes';
+
+const REF_TYPE_LABELS: Record<string, string> = {
+  STOCK_ENTRY: 'Ingreso',
+  COMMERCIAL_DOCUMENT: 'Doc. Comercial',
+};
+
+const MOVEMENT_TYPE_LABELS: Record<string, string> = {
+  IN: 'Entrada',
+  OUT: 'Salida',
+};
+
+const REPORT_TYPE_LABELS: Record<string, string> = {
+  STOCK_SNAPSHOT: 'Foto de stock',
+  KARDEX_PHYSICAL: 'Kardex fisico',
+  KARDEX_VALUED: 'Kardex valorizado',
+  LOT_EXPIRY: 'Venc. de lotes',
+  INVENTORY_CUT: 'Corte de inventario',
+};
+
+const REPORT_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Pendiente',
+  PROCESSING: 'En proceso',
+  COMPLETED: 'Completado',
+  FAILED: 'Fallido',
+};
+
+const EXPIRY_BUCKET_LABELS: Record<string, string> = {
+  EXPIRED: 'Vencido',
+  DUE_7: 'Vence ≤7 dias',
+  DUE_30: 'Vence ≤30 dias',
+  DUE_60: 'Vence ≤60 dias',
+  OK: 'Vigente',
+  NO_EXPIRY: 'Sin vencimiento',
+};
+
+function fmtDateTime(value: string | null | undefined): string {
+  if (!value) return '-';
+  // If no offset/Z, assume UTC to avoid local-browser timezone shift
+  const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(value.trim());
+  const normalised = hasOffset ? value.trim() : value.trim() + 'Z';
+  const d = new Date(normalised);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Lima' })
+    + ' '
+    + d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Lima' });
+}
+
+function fmtDate(value: string | null | undefined): string {
+  if (!value) return '-';
+  const d = new Date(value.length === 10 ? value + 'T00:00:00' : value);
+  if (isNaN(d.getTime())) return value;
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Lima' });
+}
+
+function fileNameTimestampLima(): string {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).formatToParts(now);
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const period = (get('dayPeriod') || 'AM').toUpperCase();
+
+  return `${get('year')}-${get('month')}-${get('day')}_${get('hour')}-${get('minute')}-${get('second')}_${period}`;
+}
+
+const EXPORT_KEY_LABELS: Record<string, string> = {
+  id: 'ID',
+  moved_at: 'FechaHora',
+  movement_type: 'Movimiento',
+  quantity: 'Cantidad',
+  unit_cost: 'CostoUnitario',
+  line_total: 'TotalLinea',
+  product_id: 'ProductoID',
+  product_sku: 'SKU',
+  product_name: 'Producto',
+  warehouse_id: 'AlmacenID',
+  warehouse_code: 'AlmacenCodigo',
+  warehouse_name: 'Almacen',
+  lot_id: 'LoteID',
+  lot_code: 'Lote',
+  ref_type: 'ReferenciaTipo',
+  ref_id: 'ReferenciaID',
+  snapshot_date: 'Fecha',
+  expires_at: 'Vencimiento',
+  manufacture_at: 'Fabricacion',
+  expiry_bucket: 'Bucket',
+  days_to_expire: 'DiasParaVencer',
+};
+
+function formatExportCell(key: string, value: unknown): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  if (key === 'movement_type') {
+    return MOVEMENT_TYPE_LABELS[value] ?? value;
+  }
+  if (key === 'ref_type') {
+    return REF_TYPE_LABELS[value] ?? value;
+  }
+  if (key === 'expiry_bucket') {
+    return EXPIRY_BUCKET_LABELS[value] ?? value;
+  }
+
+  if (/(moved_at|requested_at|started_at|finished_at|generated_at)$/i.test(key)) {
+    return fmtDateTime(value);
+  }
+  if (/(snapshot_date|expires_at|manufacture_at|date_from|date_to)$/i.test(key)) {
+    return fmtDate(value);
+  }
+
+  return value;
+}
 
 type InventoryViewProps = {
   accessToken: string;
@@ -38,6 +159,9 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [activeTab, setActiveTab] = useState<InvTab>('stock');
+  const [stockQuickSearch, setStockQuickSearch] = useState('');
+  const [lotQuickSearch, setLotQuickSearch] = useState('');
+  const [locationQuickSearch, setLocationQuickSearch] = useState('');
 
   // Kardex state
   const [kardex, setKardex] = useState<KardexRow[]>([]);
@@ -57,6 +181,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   const [exportingDashboard, setExportingDashboard] = useState(false);
   const [exportingDailySnapshot, setExportingDailySnapshot] = useState(false);
   const [exportingLotExpiry, setExportingLotExpiry] = useState(false);
+  const [exportingRequestResult, setExportingRequestResult] = useState(false);
   const [creatingReportRequest, setCreatingReportRequest] = useState(false);
   const [loadingReportRequests, setLoadingReportRequests] = useState(false);
   const [loadingReportRequestDetail, setLoadingReportRequestDetail] = useState(false);
@@ -68,9 +193,144 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   const [reportDateFrom, setReportDateFrom] = useState('');
   const [reportDateTo, setReportDateTo] = useState('');
 
+  const normalizedLocation = (locationRaw: string | null | undefined): string => {
+    const location = (locationRaw ?? '').trim();
+    return location ? location.toLowerCase() : 'sin ubicacion';
+  };
+
   const totalStock = useMemo(() => {
     return stock.reduce((acc, row) => acc + Number(row.stock), 0);
   }, [stock]);
+
+  const productLocationById = useMemo(() => {
+    const map = new Map<number, string>();
+    products.forEach((product) => {
+      const location = (product.location_name ?? '').trim();
+      if (location) {
+        map.set(product.id, location);
+      }
+    });
+    return map;
+  }, [products]);
+
+  const filteredStock = useMemo(() => {
+    const query = stockQuickSearch.trim().toLowerCase();
+    if (!query) return stock;
+
+    return stock.filter((row) => {
+      const productLocation = normalizedLocation(productLocationById.get(row.product_id));
+      return [
+        row.product_name,
+        row.sku ?? '',
+        row.warehouse_name ?? '',
+        row.warehouse_code ?? '',
+        productLocation,
+      ].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [stock, stockQuickSearch, productLocationById]);
+
+  const filteredLots = useMemo(() => {
+    const query = lotQuickSearch.trim().toLowerCase();
+    if (!query) return lots;
+
+    return lots.filter((row) => {
+      const productLocation = normalizedLocation(productLocationById.get(row.product_id));
+      return [
+        row.lot_code,
+        row.product_name,
+        row.sku ?? '',
+        row.warehouse_name ?? '',
+        row.warehouse_code ?? '',
+        productLocation,
+      ].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [lots, lotQuickSearch, productLocationById]);
+
+  const locationRows = useMemo(() => {
+    const rows = new Map<string, {
+      location: string;
+      stockTotal: number;
+      productIds: Set<number>;
+      lotCount: number;
+      warehouseCodes: Set<string>;
+      skus: Set<string>;
+      productNames: Set<string>;
+    }>();
+
+    const ensureLocation = (locationRaw: string | null | undefined) => {
+      const location = (locationRaw ?? '').trim() || 'Sin ubicacion';
+      if (!rows.has(location)) {
+        rows.set(location, {
+          location,
+          stockTotal: 0,
+          productIds: new Set<number>(),
+          lotCount: 0,
+          warehouseCodes: new Set<string>(),
+          skus: new Set<string>(),
+          productNames: new Set<string>(),
+        });
+      }
+      return rows.get(location)!;
+    };
+
+    stock.forEach((row) => {
+      const bucket = ensureLocation(productLocationById.get(row.product_id));
+      bucket.stockTotal += Number(row.stock) || 0;
+      bucket.productIds.add(row.product_id);
+      if (row.sku) bucket.skus.add(row.sku);
+      if (row.product_name) bucket.productNames.add(row.product_name);
+      bucket.warehouseCodes.add(String(row.warehouse_code ?? row.warehouse_name ?? row.warehouse_id));
+    });
+
+    lots.forEach((row) => {
+      const bucket = ensureLocation(productLocationById.get(row.product_id));
+      bucket.lotCount += 1;
+      bucket.productIds.add(row.product_id);
+      if (row.sku) bucket.skus.add(row.sku);
+      if (row.product_name) bucket.productNames.add(row.product_name);
+      bucket.warehouseCodes.add(String(row.warehouse_code ?? row.warehouse_name ?? row.warehouse_id));
+    });
+
+    return Array.from(rows.values())
+      .map((row) => ({
+        location: row.location,
+        stockTotal: row.stockTotal,
+        productCount: row.productIds.size,
+        lotCount: row.lotCount,
+        warehouseList: Array.from(row.warehouseCodes).sort(),
+        skuList: Array.from(row.skus).sort(),
+        productNameList: Array.from(row.productNames).sort(),
+      }))
+      .sort((a, b) => {
+        if (a.location === 'Sin ubicacion') return 1;
+        if (b.location === 'Sin ubicacion') return -1;
+        return a.location.localeCompare(b.location, 'es');
+      });
+  }, [stock, lots, productLocationById]);
+
+  const filteredLocationRows = useMemo(() => {
+    const query = locationQuickSearch.trim().toLowerCase();
+    if (!query) return locationRows;
+
+    return locationRows.filter((row) => {
+      return [
+        row.location,
+        row.warehouseList.join(' '),
+        row.skuList.join(' '),
+        row.productNameList.join(' '),
+      ].some((value) => value.toLowerCase().includes(query));
+    });
+  }, [locationRows, locationQuickSearch]);
+
+  function openStockByLocation(location: string) {
+    setStockQuickSearch(location);
+    setActiveTab('stock');
+  }
+
+  function openLotsByLocation(location: string) {
+    setLotQuickSearch(location);
+    setActiveTab('lotes');
+  }
 
   async function loadKardex() {
     setKardexLoading(true);
@@ -220,7 +480,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
     const workbook = XLSX.utils.book_new();
     const worksheet = XLSX.utils.json_to_sheet(rows);
     XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
-    const fileName = `${filePrefix}_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+    const fileName = `${filePrefix}_${fileNameTimestampLima()}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   }
 
@@ -231,7 +491,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
     try {
       const trendRows = (dashboardData?.movement_trend ?? []).map((row) => ({
         Seccion: 'Tendencia',
-        Fecha: row.snapshot_date,
+        Fecha: fmtDate(row.snapshot_date),
         Entradas: Number(row.qty_in),
         Salidas: Number(row.qty_out),
         ValorEntrada: Number(row.value_in),
@@ -248,7 +508,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
 
       const expiryRows = (dashboardData?.expiry_buckets ?? []).map((row) => ({
         Seccion: 'Vencimientos',
-        Bucket: row.bucket,
+        Bucket: EXPIRY_BUCKET_LABELS[row.bucket] ?? row.bucket,
         Lotes: Number(row.total_lots),
         Stock: Number(row.total_stock),
         Valor: Number(row.total_value),
@@ -274,7 +534,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
 
     try {
       const rows = (dailySnapshotData?.data ?? []).map((row) => ({
-        Fecha: row.snapshot_date,
+        Fecha: fmtDate(row.snapshot_date),
         Almacen: row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id,
         Producto: `${row.product_sku ? `[${row.product_sku}] ` : ''}${row.product_name}`,
         Lote: row.lot_code ?? '',
@@ -308,10 +568,10 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
         Almacen: row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id,
         Producto: `${row.product_sku ? `[${row.product_sku}] ` : ''}${row.product_name}`,
         Lote: row.lot_code,
-        Fabricacion: row.manufacture_at ?? '',
-        Vencimiento: row.expires_at ?? '',
+        Fabricacion: fmtDate(row.manufacture_at),
+        Vencimiento: fmtDate(row.expires_at),
         DiasParaVencer: row.days_to_expire ?? '',
-        Bucket: row.expiry_bucket ?? '',
+        Bucket: row.expiry_bucket ? (EXPIRY_BUCKET_LABELS[row.expiry_bucket] ?? row.expiry_bucket) : '',
         Stock: Number(row.stock),
         CostoUnitario: Number(row.unit_cost),
         ValorStock: Number(row.stock_value),
@@ -327,6 +587,35 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
       setMessage(error instanceof Error ? error.message : 'No se pudo exportar lotes por vencimiento.');
     } finally {
       setExportingLotExpiry(false);
+    }
+  }
+
+  async function handleExportSelectedRequestResult() {
+    setExportingRequestResult(true);
+    setMessage('');
+
+    try {
+      const rawRows = (selectedReportRequest?.result?.rows ?? []) as Array<Record<string, unknown>>;
+
+      if (rawRows.length === 0) {
+        setMessage('La solicitud seleccionada no tiene filas para exportar.');
+        return;
+      }
+
+      const rows = rawRows.map((row) => {
+        const output: Record<string, unknown> = {};
+        Object.entries(row).forEach(([key, value]) => {
+          output[EXPORT_KEY_LABELS[key] ?? key] = formatExportCell(key, value);
+        });
+        return output;
+      });
+
+      const requestId = selectedReportRequest?.id ?? 'x';
+      await exportToXlsx(rows, 'SolicitudReporte', `inventory_report_request_${requestId}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo exportar la solicitud de reporte.');
+    } finally {
+      setExportingRequestResult(false);
     }
   }
 
@@ -392,7 +681,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   return (
     <section className="module-panel">
       <div className="module-header">
-        <h3>Inventory</h3>
+        <h3>Inventario</h3>
         <button
           type="button"
           onClick={() => {
@@ -442,6 +731,9 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
         <button type="button" className={activeTab === 'lotes' ? 'active' : ''} onClick={() => setActiveTab('lotes')}>
           Lotes
         </button>
+        <button type="button" className={activeTab === 'ubicaciones' ? 'active' : ''} onClick={() => setActiveTab('ubicaciones')}>
+          Ubicaciones
+        </button>
         <button
           type="button"
           className={activeTab === 'kardex' ? 'active' : ''}
@@ -468,6 +760,25 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
       {/* ── STOCK ── */}
       {activeTab === 'stock' && (
         <>
+          <div className="form-card">
+            <h4>Buscador rapido de stock</h4>
+            <div className="grid-form">
+              <label>
+                Producto / SKU / Almacen / Ubicacion
+                <input
+                  value={stockQuickSearch}
+                  onChange={(e) => setStockQuickSearch(e.target.value)}
+                  placeholder="Ej. arroz, SKU001, principal, estante A1"
+                />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <button type="button" onClick={() => setStockQuickSearch('')} disabled={!stockQuickSearch.trim()}>
+                Limpiar filtro
+              </button>
+            </div>
+            <small>Resultados: {filteredStock.length}</small>
+          </div>
           <div className="stat-grid">
             <article>
               <span>Productos</span>
@@ -490,18 +801,20 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                   <th>Producto</th>
                   <th>SKU</th>
                   <th>Almacen</th>
+                  <th>Ubicacion</th>
                   <th>Stock</th>
                 </tr>
               </thead>
               <tbody>
-                {stock.length === 0 && (
-                  <tr><td colSpan={4} style={{ textAlign: 'center' }}>Sin datos</td></tr>
+                {filteredStock.length === 0 && (
+                  <tr><td colSpan={5} style={{ textAlign: 'center' }}>Sin datos</td></tr>
                 )}
-                {stock.map((row) => (
+                {filteredStock.map((row) => (
                   <tr key={`${row.product_id}-${row.warehouse_id}`}>
                     <td>{row.product_name}</td>
                     <td>{row.sku ?? '-'}</td>
                     <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
+                    <td>{productLocationById.get(row.product_id) ?? '-'}</td>
                     <td>{row.stock}</td>
                   </tr>
                 ))}
@@ -515,32 +828,127 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
       {activeTab === 'lotes' && (
         <div className="table-wrap">
           <h4>Lotes con stock</h4>
+          <div className="grid-form" style={{ marginBottom: '0.6rem' }}>
+            <label>
+              Buscar por lote, producto, SKU, almacen o ubicacion
+              <input
+                value={lotQuickSearch}
+                onChange={(e) => setLotQuickSearch(e.target.value)}
+                placeholder="Ej. L001, PRODUCTO2, principal, rack B2"
+              />
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
+            <button type="button" onClick={() => setLotQuickSearch('')} disabled={!lotQuickSearch.trim()}>
+              Limpiar filtro
+            </button>
+          </div>
+          <small style={{ display: 'inline-block', marginBottom: '0.5rem' }}>Resultados: {filteredLots.length}</small>
           <table>
             <thead>
               <tr>
                 <th>Lote</th>
                 <th>Producto</th>
                 <th>Almacen</th>
+                <th>Ubicacion</th>
                 <th>Vence</th>
                 <th>Stock</th>
               </tr>
             </thead>
             <tbody>
-              {lots.length === 0 && (
-                <tr><td colSpan={5} style={{ textAlign: 'center' }}>Sin lotes</td></tr>
+              {filteredLots.length === 0 && (
+                <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin lotes</td></tr>
               )}
-              {lots.map((row) => (
+              {filteredLots.map((row) => (
                 <tr key={row.id}>
                   <td>{row.lot_code}</td>
                   <td>{row.product_name}</td>
                   <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
-                  <td>{row.expires_at ?? '-'}</td>
+                  <td>{productLocationById.get(row.product_id) ?? '-'}</td>
+                  <td>{fmtDate(row.expires_at)}</td>
                   <td>{row.stock}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* ── UBICACIONES ── */}
+      {activeTab === 'ubicaciones' && (
+        <>
+          <div className="form-card">
+            <h4>Localizador por ubicacion fisica</h4>
+            <div className="grid-form">
+              <label>
+                Buscar por ubicacion, producto, SKU o almacen
+                <input
+                  value={locationQuickSearch}
+                  onChange={(e) => setLocationQuickSearch(e.target.value)}
+                  placeholder="Ej. estante A1, rack frio, SKU001, principal"
+                />
+              </label>
+            </div>
+            <small>Ubicaciones encontradas: {filteredLocationRows.length}</small>
+          </div>
+
+          <div className="stat-grid">
+            <article>
+              <span>Ubicaciones</span>
+              <strong>{filteredLocationRows.length}</strong>
+            </article>
+            <article>
+              <span>Productos (agregados)</span>
+              <strong>{filteredLocationRows.reduce((acc, row) => acc + row.productCount, 0)}</strong>
+            </article>
+            <article>
+              <span>Stock total</span>
+              <strong>{filteredLocationRows.reduce((acc, row) => acc + row.stockTotal, 0).toFixed(3)}</strong>
+            </article>
+          </div>
+
+          <div className="table-wrap">
+            <h4>Mapa rapido por ubicacion</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Ubicacion</th>
+                  <th>Productos</th>
+                  <th>Lotes</th>
+                  <th>Stock</th>
+                  <th>Almacenes</th>
+                  <th>SKUs (muestra)</th>
+                  <th>Productos (muestra)</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLocationRows.length === 0 && (
+                  <tr><td colSpan={8} style={{ textAlign: 'center' }}>Sin coincidencias</td></tr>
+                )}
+                {filteredLocationRows.map((row) => (
+                  <tr key={row.location}>
+                    <td>{row.location}</td>
+                    <td>{row.productCount}</td>
+                    <td>{row.lotCount}</td>
+                    <td>{row.stockTotal.toFixed(3)}</td>
+                    <td>{row.warehouseList.join(', ') || '-'}</td>
+                    <td>{row.skuList.slice(0, 4).join(', ') || '-'}</td>
+                    <td>{row.productNameList.slice(0, 3).join(', ') || '-'}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      <button type="button" style={{ marginRight: '0.35rem' }} onClick={() => openStockByLocation(row.location)}>
+                        Ver stock
+                      </button>
+                      <button type="button" onClick={() => openLotsByLocation(row.location)}>
+                        Ver lotes
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       {/* ── KARDEX ── */}
@@ -608,17 +1016,17 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 )}
                 {kardex.map((row) => (
                   <tr key={row.id}>
-                    <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>{row.moved_at}</td>
+                    <td style={{ whiteSpace: 'nowrap', fontSize: '0.82rem' }}>{fmtDateTime(row.moved_at)}</td>
                     <td>{row.product_sku ? `[${row.product_sku}] ` : ''}{row.product_name}</td>
                     <td>{row.lot_code ?? '-'}</td>
                     <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
                     <td style={{ color: row.movement_type === 'IN' ? 'var(--color-ok)' : 'var(--color-err)', fontWeight: 600 }}>
-                      {row.movement_type}
+                      {MOVEMENT_TYPE_LABELS[row.movement_type] ?? row.movement_type}
                     </td>
                     <td>{Number(row.quantity).toFixed(4)}</td>
                     <td>{Number(row.unit_cost).toFixed(4)}</td>
                     <td>{Number(row.line_total).toFixed(2)}</td>
-                    <td>{row.ref_type ?? '-'}{row.ref_id ? ` #${row.ref_id}` : ''}</td>
+                    <td>{REF_TYPE_LABELS[row.ref_type ?? ''] ?? row.ref_type ?? '-'}{row.ref_id ? ` #${row.ref_id}` : ''}</td>
                     <td style={{ fontSize: '0.8rem' }}>{row.notes ?? '-'}</td>
                   </tr>
                 ))}
@@ -693,7 +1101,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 )}
                 {(dashboardData?.movement_trend ?? []).map((row) => (
                   <tr key={row.snapshot_date}>
-                    <td>{row.snapshot_date}</td>
+                    <td>{fmtDate(row.snapshot_date)}</td>
                     <td>{Number(row.qty_in).toFixed(3)}</td>
                     <td>{Number(row.qty_out).toFixed(3)}</td>
                     <td>{Number(row.value_in).toFixed(2)}</td>
@@ -748,7 +1156,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 )}
                 {(dashboardData?.expiry_buckets ?? []).map((row) => (
                   <tr key={row.bucket}>
-                    <td>{row.bucket}</td>
+                    <td>{EXPIRY_BUCKET_LABELS[row.bucket] ?? row.bucket}</td>
                     <td>{row.total_lots}</td>
                     <td>{Number(row.total_stock).toFixed(3)}</td>
                     <td>{Number(row.total_value).toFixed(2)}</td>
@@ -837,10 +1245,10 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 {reportRequests.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
-                    <td>{row.report_type}</td>
-                    <td>{row.status}</td>
-                    <td>{row.requested_at}</td>
-                    <td>{row.finished_at ?? '-'}</td>
+                    <td>{REPORT_TYPE_LABELS[row.report_type] ?? row.report_type}</td>
+                    <td>{REPORT_STATUS_LABELS[row.status] ?? row.status}</td>
+                    <td>{fmtDateTime(row.requested_at)}</td>
+                    <td>{fmtDateTime(row.finished_at)}</td>
                     <td>
                       <button type="button" onClick={() => void loadReportRequestDetail(row.id)} disabled={loadingReportRequestDetail && selectedReportRequestId === row.id}>
                         {loadingReportRequestDetail && selectedReportRequestId === row.id ? 'Cargando...' : 'Ver'}
@@ -856,26 +1264,57 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
             <div className="form-card">
               <h4>Detalle solicitud #{selectedReportRequest.id}</h4>
               <div className="inventory-detail-grid">
-                <article><span>Tipo</span><strong>{selectedReportRequest.report_type}</strong></article>
-                <article><span>Estado</span><strong>{selectedReportRequest.status}</strong></article>
-                <article><span>Solicitado</span><strong>{selectedReportRequest.requested_at}</strong></article>
-                <article><span>Finalizado</span><strong>{selectedReportRequest.finished_at ?? '-'}</strong></article>
+                <article><span>Tipo</span><strong>{REPORT_TYPE_LABELS[selectedReportRequest.report_type] ?? selectedReportRequest.report_type}</strong></article>
+                <article><span>Estado</span><strong>{REPORT_STATUS_LABELS[selectedReportRequest.status] ?? selectedReportRequest.status}</strong></article>
+                <article><span>Solicitado</span><strong>{fmtDateTime(selectedReportRequest.requested_at)}</strong></article>
+                <article><span>Finalizado</span><strong>{fmtDateTime(selectedReportRequest.finished_at)}</strong></article>
               </div>
               {selectedReportRequest.error_message && (
                 <p className="notice">{selectedReportRequest.error_message}</p>
               )}
-              <div className="table-wrap">
-                <h4>Resumen resultado</h4>
-                <pre className="inventory-result-json">
-                  {JSON.stringify(selectedReportRequest.result?.summary ?? selectedReportRequest.result ?? {}, null, 2)}
-                </pre>
-              </div>
+              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result?.summary && (() => {
+                const s = selectedReportRequest.result.summary;
+                const type = selectedReportRequest.report_type;
+                const items: Array<{ label: string; value: string }> = [];
+                if ('warehouses' in s)
+                  items.push({ label: 'Almacenes', value: String(s.warehouses) });
+                if ('total_rows' in s)
+                  items.push({ label: 'Registros generados', value: String(s.total_rows) });
+                if ('expired_rows' in s)
+                  items.push({ label: 'Lotes vencidos', value: String(s.expired_rows) });
+                if ('total_qty' in s)
+                  items.push({ label: type === 'KARDEX_PHYSICAL' || type === 'KARDEX_VALUED' ? 'Cantidad total movida' : 'Cantidad total en stock', value: Number(s.total_qty).toFixed(3) });
+                if ('total_value' in s)
+                  items.push({ label: 'Valor total (S/.)', value: Number(s.total_value).toFixed(2) });
+                if (selectedReportRequest.result.generated_at)
+                  items.push({ label: 'Generado el', value: fmtDateTime(String(selectedReportRequest.result.generated_at)) });
+                return (
+                  <div className="stat-grid" style={{ marginTop: '0.75rem' }}>
+                    {items.map((item) => (
+                      <article key={item.label}>
+                        <span>{item.label}</span>
+                        <strong>{item.value}</strong>
+                      </article>
+                    ))}
+                  </div>
+                );
+              })()}
+              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result?.rows && (
+                <div style={{ marginTop: '0.5rem' }}>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)' }}>
+                    El reporte contiene {(selectedReportRequest.result.rows as unknown[]).length} fila(s).
+                  </p>
+                  <button type="button" onClick={() => void handleExportSelectedRequestResult()} disabled={exportingRequestResult}>
+                    {exportingRequestResult ? 'Exportando...' : 'Exportar solicitud XLSX'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
           <div className="table-wrap">
             <div className="inventory-table-head">
-              <h4>Snapshot diario ({dailySnapshotData?.summary.rows ?? 0})</h4>
+              <h4>Movimientos por dia ({dailySnapshotData?.summary.rows ?? 0})</h4>
               <button type="button" onClick={() => void handleExportDailySnapshot()} disabled={exportingDailySnapshot || dailySnapshotLoading}>
                 {exportingDailySnapshot ? 'Exportando...' : 'Exportar XLSX'}
               </button>
@@ -898,7 +1337,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 )}
                 {(dailySnapshotData?.data ?? []).map((row, idx) => (
                   <tr key={`${row.snapshot_date}-${row.product_id}-${row.lot_id ?? 0}-${idx}`}>
-                    <td>{row.snapshot_date}</td>
+                    <td>{fmtDate(row.snapshot_date)}</td>
                     <td>{row.product_sku ? `[${row.product_sku}] ` : ''}{row.product_name}</td>
                     <td>{row.lot_code ?? '-'}</td>
                     <td>{Number(row.qty_in).toFixed(3)}</td>
@@ -938,7 +1377,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                   <tr key={`${row.product_id}-${row.lot_id}`}>
                     <td>{row.product_sku ? `[${row.product_sku}] ` : ''}{row.product_name}</td>
                     <td>{row.lot_code}</td>
-                    <td>{row.expires_at ?? '-'}</td>
+                    <td>{fmtDate(row.expires_at)}</td>
                     <td>{row.days_to_expire ?? '-'}</td>
                     <td>{row.expiry_bucket ?? '-'}</td>
                     <td>{Number(row.stock).toFixed(3)}</td>

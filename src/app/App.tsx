@@ -12,6 +12,7 @@ import { InventoryView } from '../modules/inventory/components/InventoryView';
 import { MastersView } from '../modules/masters/components/MastersView';
 import { ProductsView } from '../modules/products/components/ProductsView';
 import { PurchasesView } from '../modules/purchases/components/PurchasesView';
+import { fetchSalesLookups } from '../modules/sales/api';
 import { SalesView } from '../modules/sales/components/SalesView';
 import {
   clearAuthSession,
@@ -22,6 +23,7 @@ import {
 import type { AuthSession, LoginPayload } from '../modules/auth/types';
 
 type UiDensity = 'normal' | 'compact';
+type SalesFlowMode = 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
 
 const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
 
@@ -187,6 +189,7 @@ export function App() {
   const [selectedCashRegisterId, setSelectedCashRegisterId] = useState<number | null>(null);
   const [isContextPickerOpen, setIsContextPickerOpen] = useState(false);
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
+  const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [uiDensity, setUiDensity] = useState<UiDensity>(() => {
     if (typeof window === 'undefined') {
       return 'compact';
@@ -218,8 +221,19 @@ export function App() {
     return `${session.user.first_name} ${session.user.last_name}`.trim();
   }, [session]);
 
+  const normalizedRoleCode = (session?.user?.role_code ?? '').toUpperCase();
+  const normalizedRoleProfile = (session?.user?.role_profile ?? '').toUpperCase();
+  const isAdminUser = normalizedRoleCode.includes('ADMIN');
+  const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
+  const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
+  const shouldHideCashModule = salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser && !isCashierUser && !isAdminUser;
+
   const permittedMenuItems = useMemo(() => {
     return MENU_ITEMS.filter((item) => {
+      if (item.id === 'cash' && shouldHideCashModule) {
+        return false;
+      }
+
       if (!item.moduleCode) return true;
       const perms = session?.user?.permissions;
       if (!perms) return true;
@@ -227,7 +241,7 @@ export function App() {
       if (!perm) return true;
       return perm.can_view;
     });
-  }, [session?.user?.permissions]);
+  }, [session?.user?.permissions, shouldHideCashModule]);
 
   const filteredMenuItems = useMemo(() => {
     const query = menuSearch.trim().toLowerCase();
@@ -370,11 +384,53 @@ export function App() {
   }, [selectedBranchId]);
 
   useEffect(() => {
+    if (!session) {
+      setSalesFlowMode('DIRECT_CASHIER');
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const lookups = await fetchSalesLookups(session.accessToken, {
+          branchId: selectedBranchId,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        const isSeparatedMode = Boolean(
+          (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_SELLER_TO_CASHIER')?.is_enabled
+        );
+
+        setSalesFlowMode(isSeparatedMode ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER');
+      } catch {
+        if (!cancelled) {
+          setSalesFlowMode('DIRECT_CASHIER');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, selectedBranchId]);
+
+  useEffect(() => {
     if (!permittedMenuItems.find((item) => item.id === activeTab)) {
       setActiveTab(permittedMenuItems[0]?.id ?? 'cash');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [permittedMenuItems]);
+
+  useEffect(() => {
+    if (shouldHideCashModule && activeTab === 'cash') {
+      const fallbackTab = permittedMenuItems.find((item) => item.id !== 'cash')?.id ?? 'sales';
+      setActiveTab(fallbackTab);
+    }
+  }, [activeTab, permittedMenuItems, shouldHideCashModule]);
 
   useEffect(() => {
     setIsContextPickerOpen(false);

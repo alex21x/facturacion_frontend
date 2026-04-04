@@ -6,7 +6,10 @@ import type {
   PaginatedCommercialDocuments,
   SalesCustomerSuggestion,
   SalesLookups,
+  SalesReferenceDocument,
   SeriesNumber,
+  UpdateCommercialDocumentPayload,
+  VoidCommercialDocumentPayload,
 } from './types';
 import type { PrintableSalesDocument } from './print';
 
@@ -42,8 +45,21 @@ export async function fetchSeriesNumbers(
   return response.data;
 }
 
-export async function fetchSalesLookups(accessToken: string): Promise<SalesLookups> {
-  return apiClient.request<SalesLookups>('/api/sales/lookups', {
+export async function fetchSalesLookups(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+  }
+): Promise<SalesLookups> {
+  const query = new URLSearchParams();
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+
+  const suffix = query.toString();
+  const path = suffix ? `/api/sales/lookups?${suffix}` : '/api/sales/lookups';
+
+  return apiClient.request<SalesLookups>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
@@ -130,12 +146,69 @@ export async function fetchCommercialDocuments(
   });
 }
 
+export async function fetchReferenceDocuments(
+  accessToken: string,
+  context: {
+    customerId: number;
+    branchId?: number | null;
+    noteKind?: 'CREDIT_NOTE' | 'DEBIT_NOTE' | null;
+    limit?: number;
+  }
+): Promise<SalesReferenceDocument[]> {
+  const query = new URLSearchParams();
+  query.set('customer_id', String(context.customerId));
+
+  if (context.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+  if (context.noteKind) {
+    query.set('note_kind', context.noteKind);
+  }
+  if (context.limit && context.limit > 0) {
+    query.set('limit', String(context.limit));
+  }
+
+  const response = await apiClient.request<{ data: SalesReferenceDocument[] }>(
+    `/api/sales/reference-documents?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response.data;
+}
+
 export async function convertCommercialDocument(
   accessToken: string,
   sourceDocumentId: number,
   payload: ConvertCommercialDocumentPayload
 ) {
   return apiClient.request(`/api/sales/commercial-documents/${sourceDocumentId}/convert`, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCommercialDocument(
+  accessToken: string,
+  documentId: number,
+  payload: UpdateCommercialDocumentPayload
+) {
+  return apiClient.request(`/api/sales/commercial-documents/${documentId}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function voidCommercialDocument(
+  accessToken: string,
+  documentId: number,
+  payload: VoidCommercialDocumentPayload
+) {
+  return apiClient.request(`/api/sales/commercial-documents/${documentId}/void`, {
     method: 'POST',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
@@ -174,6 +247,9 @@ export async function createCommercialDocument(accessToken: string, form: Create
       description: item.description,
       product_id: item.productId ? Number(item.productId) : null,
       unit_id: item.unitId ? Number(item.unitId) : null,
+      price_tier_id: item.priceTierId ? Number(item.priceTierId) : undefined,
+      wholesale_discount_percent: item.wholesaleDiscountPercent != null ? Number(item.wholesaleDiscountPercent) : undefined,
+      price_source: item.priceSource ?? undefined,
       tax_category_id: item.taxCategoryId ? Number(item.taxCategoryId) : null,
       qty,
       qty_base: item.qtyBase != null ? Number(item.qtyBase) : undefined,
@@ -197,6 +273,47 @@ export async function createCommercialDocument(accessToken: string, form: Create
 
   const total = items.reduce((acc, item) => acc + Number(item.total), 0);
   const isPreDocument = form.documentKind === 'SALES_ORDER' || form.documentKind === 'QUOTATION';
+  const advanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
+  const hasAdvance = advanceAmount > 0;
+  const pendingCreditTotal = Math.max(0, Number((total - advanceAmount).toFixed(2)));
+
+  const normalizedInstallments = (form.creditInstallments ?? [])
+    .map((row) => ({
+      amount: Number(row.amount ?? 0),
+      dueDate: String(row.dueDate ?? '').trim(),
+      observation: String(row.observation ?? '').trim(),
+    }))
+    .filter((row) => row.amount > 0 && row.dueDate !== '');
+
+  const payments = isPreDocument
+    ? []
+    : form.isCreditSale
+      ? [
+          ...(hasAdvance
+            ? [{
+                payment_method_id: Number(form.paymentMethodId),
+                amount: Number(advanceAmount.toFixed(2)),
+                status: 'PAID',
+                paid_at: new Date().toISOString(),
+                notes: 'Anticipo aplicado en emisión',
+              }]
+            : []),
+          ...normalizedInstallments.map((row) => ({
+            payment_method_id: Number(form.paymentMethodId),
+            amount: Number(row.amount.toFixed(2)),
+            due_at: row.dueDate,
+            status: 'PENDING',
+            notes: row.observation || null,
+          })),
+        ]
+      : [
+          {
+            payment_method_id: Number(form.paymentMethodId),
+            amount: total,
+            status: 'PAID',
+            paid_at: new Date().toISOString(),
+          },
+        ];
 
   return apiClient.request('/api/sales/commercial-documents', {
     method: 'POST',
@@ -214,19 +331,31 @@ export async function createCommercialDocument(accessToken: string, form: Create
       payment_method_id: Number(form.paymentMethodId),
       metadata: {
         customer_address: form.customerAddress?.trim() || null,
+        source_document_id: form.noteAffectedDocumentId ?? null,
+        note_reason_code: form.noteReasonCode?.trim() || null,
+        has_detraccion: form.hasDetraccion ?? false,
+        detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
+        has_retencion: form.hasRetencion ?? false,
+        retencion_type_code: form.hasRetencion ? (form.retencionTypeCode ?? null) : null,
+        has_percepcion: form.hasPercepcion ?? false,
+        percepcion_type_code: form.hasPercepcion ? (form.percepcionTypeCode ?? null) : null,
+        sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion) ? (form.sunatOperationTypeCode ?? null) : null,
+        payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
+        credit_installments: form.isCreditSale
+          ? normalizedInstallments.map((row, index) => ({
+              installment_no: index + 1,
+              amount: Number(row.amount.toFixed(2)),
+              due_at: row.dueDate,
+              notes: row.observation || null,
+            }))
+          : [],
+        credit_total: form.isCreditSale ? Number(pendingCreditTotal.toFixed(2)) : 0,
+        has_advance: hasAdvance,
+        advance_amount: hasAdvance ? Number(advanceAmount.toFixed(2)) : 0,
       },
       status: isPreDocument ? 'DRAFT' : 'ISSUED',
       items,
-      payments: isPreDocument
-        ? []
-        : [
-            {
-              payment_method_id: Number(form.paymentMethodId),
-              amount: total,
-              status: 'PAID',
-              paid_at: new Date().toISOString(),
-            },
-          ],
+      payments,
     }),
   });
 }
@@ -399,4 +528,250 @@ export async function exportCommercialDocumentsJson(
   );
 
   return response.data;
+}
+
+export async function retryTaxBridgeSend(
+  accessToken: string,
+  documentId: number,
+  companyId?: number
+): Promise<{
+  message: string;
+  document_id: number;
+  sunat_status: string;
+  sunat_status_label: string;
+  bridge_http_code?: number | null;
+  bridge_response?: unknown;
+  payload?: unknown;
+  debug?: {
+    bridge_mode?: string;
+    endpoint?: string;
+    method?: string;
+    content_type?: string;
+    form_key?: string;
+    payload?: unknown;
+    request_json?: unknown;
+    payload_length?: number | null;
+    payload_sha1?: string | null;
+  } | null;
+}> {
+  const query = new URLSearchParams();
+  if (companyId) {
+    query.set('company_id', String(companyId));
+  }
+
+  const response = await apiClient.request<{
+    message: string;
+    document_id: number;
+    sunat_status: string;
+    sunat_status_label: string;
+    bridge_http_code?: number | null;
+    bridge_response?: unknown;
+    payload?: unknown;
+    debug?: {
+      bridge_mode?: string;
+      endpoint?: string;
+      method?: string;
+      content_type?: string;
+      form_key?: string;
+      payload?: unknown;
+      request_json?: unknown;
+      payload_length?: number | null;
+      payload_sha1?: string | null;
+    } | null;
+  }>(
+    `/api/sales/commercial-documents/${documentId}/retry-tax-bridge?${query.toString()}`,
+    {
+      method: 'PUT',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response;
+}
+
+export async function fetchTaxBridgePreview(accessToken: string, documentId: number, companyId?: number) {
+  const query = new URLSearchParams();
+  if (companyId) {
+    query.set('company_id', String(companyId));
+  }
+
+  const suffix = query.toString();
+
+  return apiClient.request<{
+    message: string;
+    document_id: number;
+    bridge_mode: string;
+    endpoint: string;
+    method: string;
+    content_type: string;
+    form_key: string;
+    payload: unknown;
+    debug: {
+      bridge_mode?: string;
+      endpoint?: string;
+      method?: string;
+      content_type?: string;
+      form_key?: string;
+      payload?: unknown;
+      request_json?: unknown;
+      payload_length?: number | null;
+      payload_sha1?: string | null;
+    };
+  }>(
+    suffix
+      ? `/api/sales/commercial-documents/${documentId}/tax-bridge-preview?${suffix}`
+      : `/api/sales/commercial-documents/${documentId}/tax-bridge-preview`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+}
+
+export async function sendSunatVoidCommunication(
+  accessToken: string,
+  documentId: number,
+  payload?: {
+    reason?: string;
+    notes?: string;
+  },
+  companyId?: number
+): Promise<{
+  message: string;
+  document_id: number;
+  sunat_void_status: string;
+  sunat_void_label: string;
+  bridge_http_code?: number | null;
+  bridge_response?: unknown;
+  void_number?: number | null;
+  debug?: {
+    bridge_mode?: string;
+    endpoint?: string;
+    method?: string;
+    content_type?: string;
+    form_key?: string;
+    payload?: unknown;
+    payload_length?: number | null;
+    payload_sha1?: string | null;
+  } | null;
+}> {
+  const query = new URLSearchParams();
+  if (companyId) {
+    query.set('company_id', String(companyId));
+  }
+
+  return apiClient.request(
+    `/api/sales/commercial-documents/${documentId}/sunat-void?${query.toString()}`,
+    {
+      method: 'PUT',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload ?? {}),
+    }
+  );
+}
+
+export async function downloadSunatXml(
+  accessToken: string,
+  documentId: number
+): Promise<{
+  blob: Blob;
+  filename: string;
+  endpoint: string;
+  httpStatus: number;
+  method: 'GET';
+  contentType: string;
+  responseHeaders: Record<string, string>;
+}> {
+  const requestPath = `/api/sales/commercial-documents/${documentId}/download-xml`;
+  const requestUrl = `${apiClient.baseUrl}${requestPath}`;
+  const response = await apiClient.requestRaw(requestPath, {
+    method: 'GET',
+    headers: authHeaders(accessToken) as Record<string, string>,
+  });
+
+  const endpoint = response.headers.get('X-Bridge-Endpoint') ?? '';
+  const httpStatus = response.status;
+  const contentType = response.headers.get('content-type') ?? '';
+  const responseHeaders = Object.fromEntries(response.headers.entries());
+
+  if (!response.ok) {
+    const text = await response.text();
+    let msg = `HTTP ${response.status}`;
+    try { msg = (JSON.parse(text) as { message?: string }).message ?? msg; } catch { /* noop */ }
+    throw Object.assign(new Error(msg), {
+      endpoint,
+      httpStatus,
+      method: 'GET',
+      contentType,
+      requestUrl,
+      responseHeaders,
+    });
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const nameMatch = /filename="([^"]+)"/.exec(disposition);
+  const filename = nameMatch ? nameMatch[1] : `document_${documentId}.xml`;
+  return {
+    blob,
+    filename,
+    endpoint,
+    httpStatus,
+    method: 'GET',
+    contentType,
+    responseHeaders,
+  };
+}
+
+export async function downloadSunatCdr(
+  accessToken: string,
+  documentId: number
+): Promise<{
+  blob: Blob;
+  filename: string;
+  endpoint: string;
+  httpStatus: number;
+  method: 'GET';
+  contentType: string;
+  responseHeaders: Record<string, string>;
+}> {
+  const requestPath = `/api/sales/commercial-documents/${documentId}/download-cdr`;
+  const requestUrl = `${apiClient.baseUrl}${requestPath}`;
+  const response = await apiClient.requestRaw(requestPath, {
+    method: 'GET',
+    headers: authHeaders(accessToken) as Record<string, string>,
+  });
+
+  const endpoint = response.headers.get('X-Bridge-Endpoint') ?? '';
+  const httpStatus = response.status;
+  const contentType = response.headers.get('content-type') ?? '';
+  const responseHeaders = Object.fromEntries(response.headers.entries());
+
+  if (!response.ok) {
+    const text = await response.text();
+    let msg = `HTTP ${response.status}`;
+    try { msg = (JSON.parse(text) as { message?: string }).message ?? msg; } catch { /* noop */ }
+    throw Object.assign(new Error(msg), {
+      endpoint,
+      httpStatus,
+      method: 'GET',
+      contentType,
+      requestUrl,
+      responseHeaders,
+    });
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const nameMatch = /filename="([^"]+)"/.exec(disposition);
+  const filename = nameMatch ? nameMatch[1] : `cdr_${documentId}.zip`;
+  return {
+    blob,
+    filename,
+    endpoint,
+    httpStatus,
+    method: 'GET',
+    contentType,
+    responseHeaders,
+  };
 }

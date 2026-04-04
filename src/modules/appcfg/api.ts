@@ -1,9 +1,12 @@
 import { apiClient } from '../../shared/api/client';
 import type {
+  CommerceSettingsResponse,
   FeatureToggleRow,
+  IgvSettingsResponse,
   ModuleRow,
   OperationalContextResponse,
   OperationalLimitsResponse,
+  UpdateCommerceSettingsPayload,
   UpdateOperationalLimitsPayload,
 } from './types';
 
@@ -71,5 +74,55 @@ export async function updateOperationalLimits(
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchCommerceSettings(
+  accessToken: string,
+  branchId?: number | null
+): Promise<CommerceSettingsResponse> {
+  const query = new URLSearchParams();
+  if (branchId) {
+    query.set('branch_id', String(branchId));
+  }
+
+  const suffix = query.toString();
+  const path = suffix ? `/api/appcfg/commerce-settings?${suffix}` : '/api/appcfg/commerce-settings';
+
+  return apiClient.request<CommerceSettingsResponse>(path, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function updateCommerceSettings(
+  accessToken: string,
+  payload: UpdateCommerceSettingsPayload,
+  branchId?: number | null
+): Promise<CommerceSettingsResponse> {
+  const body = {
+    ...payload,
+    ...(branchId ? { branch_id: branchId } : {}),
+  };
+
+  return apiClient.request<CommerceSettingsResponse>('/api/appcfg/commerce-settings', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchIgvSettings(accessToken: string): Promise<IgvSettingsResponse> {
+  return apiClient.request<IgvSettingsResponse>('/api/appcfg/igv-settings', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function updateIgvSettings(accessToken: string, activeIgvRatePercent: number): Promise<IgvSettingsResponse> {
+  return apiClient.request<IgvSettingsResponse>('/api/appcfg/igv-settings', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ active_igv_rate_percent: activeIgvRatePercent }),
   });
 }

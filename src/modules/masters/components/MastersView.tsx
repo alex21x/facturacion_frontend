@@ -7,14 +7,17 @@ import {
   fetchCommerceSettings,
   createLot,
   createPaymentMethod,
+  createPriceTier,
   createSeries,
   createWarehouse,
+  fetchPriceTiers,
   fetchMastersDashboard,
   updateCommerceSettings,
   updateCashRegister,
   updateDocumentKinds,
   updateInventorySettings,
   updatePaymentMethod,
+  updatePriceTier,
   updateRole,
   updateSeries,
   updateUser,
@@ -33,6 +36,7 @@ import type {
   MasterOptionsResponse,
   MastersDashboardResponse,
   PaymentMethodRow,
+  PriceTierRow,
   SeriesRow,
   UnitRow,
   WarehouseRow,
@@ -45,7 +49,7 @@ type MastersViewProps = {
   currentUserRoleCode: string | null;
 };
 
-type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
+type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'price-tier' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
 
 const DOC_KIND_OPTIONS: Array<SeriesRow['document_kind']> = [
   'QUOTATION',
@@ -73,11 +77,117 @@ const COMMERCE_FEATURE_LABELS: Record<string, string> = {
   PRODUCT_MULTI_UOM: 'Unidades multiples por producto',
   PRODUCT_UOM_CONVERSIONS: 'Conversion entre unidades de producto',
   PRODUCT_WHOLESALE_PRICING: 'Precios mayoristas por volumen',
+  INVENTORY_PRODUCTS_BY_PROFILE: 'Permisos por perfil para guardar productos',
+  INVENTORY_PRODUCT_MASTERS_BY_PROFILE: 'Permisos por perfil para maestros de producto',
+  SALES_CUSTOMER_PRICE_PROFILE: 'Precios por cliente',
   SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja independiente',
+  SALES_ANTICIPO_ENABLED: 'Ventas: Permitir anticipos',
+  SALES_DETRACCION_ENABLED: 'Ventas: Sujeto a detraccion (SUNAT)',
+  SALES_RETENCION_ENABLED: 'Ventas: Sujeto a retencion (SUNAT)',
+  SALES_PERCEPCION_ENABLED: 'Ventas: Sujeto a percepcion (SUNAT)',
+  PURCHASES_DETRACCION_ENABLED: 'Compras: Detraccion del proveedor',
+  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Compras: Retencion al comprador (nosotros retenemos)',
+  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Compras: Retencion del proveedor (nos retienen)',
+  PURCHASES_PERCEPCION_ENABLED: 'Compras: Sujeto a percepcion (SUNAT)',
 };
 
 function commerceFeatureLabel(code: string): string {
   return COMMERCE_FEATURE_LABELS[code] ?? code;
+}
+
+function operationTypesToText(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return '';
+  }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return '';
+      }
+
+      const code = String((item as Record<string, unknown>).code ?? '').trim();
+      const name = String((item as Record<string, unknown>).name ?? '').trim();
+      if (!code || !name) {
+        return '';
+      }
+
+      const regime = String((item as Record<string, unknown>).regime ?? '').trim().toUpperCase();
+      return regime ? `${code}:${name}:${regime}` : `${code}:${name}`;
+    })
+    .filter((row) => row !== '')
+    .join(' | ');
+}
+
+function parseOperationTypesText(value: string): Array<{ code: string; name: string; regime?: string }> {
+  return value
+    .split('|')
+    .map((token) => token.trim())
+    .filter((token) => token !== '')
+    .map((token) => {
+      const [codeRaw, nameRaw = '', regimeRaw = ''] = token.split(':');
+      const code = (codeRaw ?? '').trim().toUpperCase();
+      const name = nameRaw.trim() || code;
+      const regime = regimeRaw.trim().toUpperCase();
+      return { code, name, regime: regime || undefined };
+    })
+    .filter((row) => row.code !== '');
+}
+
+function taxTypesToText(value: unknown): string {
+  if (!Array.isArray(value)) {
+    return '';
+  }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return '';
+      }
+
+      const code = String((item as Record<string, unknown>).code ?? '').trim();
+      const name = String((item as Record<string, unknown>).name ?? '').trim();
+      const rate = String((item as Record<string, unknown>).rate_percent ?? '').trim();
+      if (!code || !name) {
+        return '';
+      }
+
+      return `${code}:${name}:${rate || '0'}`;
+    })
+    .filter((row) => row !== '')
+    .join(' | ');
+}
+
+function parseTaxTypesText(value: string): Array<{ code: string; name: string; rate_percent: number }> {
+  return value
+    .split('|')
+    .map((token) => token.trim())
+    .filter((token) => token !== '')
+    .map((token) => {
+      const [codeRaw, nameRaw = '', rateRaw = '0'] = token.split(':');
+      return {
+        code: (codeRaw ?? '').trim().toUpperCase(),
+        name: nameRaw.trim() || (codeRaw ?? '').trim().toUpperCase(),
+        rate_percent: Number(rateRaw || 0),
+      };
+    })
+    .filter((row) => row.code !== '');
+}
+
+function defaultOperationTypesText(): string {
+  return '0101:Venta interna:NONE | 1001:Operacion sujeta a detraccion:DETRACCION | 2001:Operacion sujeta a retencion:RETENCION | 3001:Operacion sujeta a percepcion:PERCEPCION';
+}
+
+function defaultTaxTypesText(featureCode: string): string {
+  if (featureCode === 'SALES_RETENCION_ENABLED' || featureCode === 'PURCHASES_RETENCION_COMPRADOR_ENABLED' || featureCode === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED') {
+    return 'RET_IGV_3:Retencion IGV:3';
+  }
+
+  if (featureCode === 'SALES_PERCEPCION_ENABLED' || featureCode === 'PURCHASES_PERCEPCION_ENABLED') {
+    return 'PERC_IGV_2:Percepcion IGV:2';
+  }
+
+  return '';
 }
 
 export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode }: MastersViewProps) {
@@ -86,6 +196,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [cashRegisters, setCashRegisters] = useState<CashRegisterRow[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [seriesRows, setSeriesRows] = useState<SeriesRow[]>([]);
+  const [priceTiers, setPriceTiers] = useState<PriceTierRow[]>([]);
   const [lots, setLots] = useState<LotRow[]>([]);
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [inventorySettings, setInventorySettings] = useState<InventorySettings | null>(null);
@@ -139,6 +250,15 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     series: '',
     current_number: 0,
   });
+
+  const [priceTierForm, setPriceTierForm] = useState({
+    code: '',
+    name: '',
+    min_qty: 1,
+    max_qty: '',
+    priority: 1,
+  });
+  const [priceTierEditingId, setPriceTierEditingId] = useState<number | null>(null);
 
   const [lotForm, setLotForm] = useState({
     product_id: 0,
@@ -207,6 +327,18 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     [seriesRows, normalizedSearch]
   );
 
+  const filteredPriceTiers = useMemo(
+    () =>
+      priceTiers.filter(
+        (row) =>
+          includesSearch(row.code)
+          || includesSearch(row.name)
+          || includesSearch(row.min_qty)
+          || includesSearch(row.max_qty)
+      ),
+    [priceTiers, normalizedSearch]
+  );
+
   const filteredLots = useMemo(
     () =>
       lots.filter(
@@ -269,12 +401,15 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
 
+  const canManagePriceTiers = isAdminUser;
+
   const availableSections = useMemo<MasterSection[]>(() => {
     const sections: MasterSection[] = [
       'warehouse',
       'cash',
       'payment',
       'series',
+      'price-tier',
       'lot',
       'settings',
       'units',
@@ -293,6 +428,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     activeSection === 'cash' ||
     activeSection === 'payment' ||
     activeSection === 'series' ||
+    (activeSection === 'price-tier' && canManagePriceTiers) ||
     activeSection === 'lot';
 
   function focusFirstField(formRef: React.RefObject<HTMLFormElement | null>) {
@@ -357,6 +493,22 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             toCsvCell(row.series),
             toCsvCell(row.current_number),
             toCsvCell(row.is_enabled ? 'SI' : 'NO'),
+          ].join(',')
+        ),
+      ];
+    }
+
+    if (activeSection === 'price-tier') {
+      lines = [
+        'codigo,nombre,min_qty,max_qty,prioridad,estado',
+        ...filteredPriceTiers.map((row) =>
+          [
+            toCsvCell(row.code),
+            toCsvCell(row.name),
+            toCsvCell(row.min_qty),
+            toCsvCell(row.max_qty ?? ''),
+            toCsvCell(row.priority),
+            toCsvCell(row.status === 1 ? 'ACTIVO' : 'INACTIVO'),
           ].join(',')
         ),
       ];
@@ -484,6 +636,15 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       return;
     }
 
+    if (activeSection === 'price-tier') {
+      if (!canManagePriceTiers) {
+        return;
+      }
+      setPriceTierForm({ code: '', name: '', min_qty: 1, max_qty: '', priority: 1 });
+      setPriceTierEditingId(null);
+      return;
+    }
+
     if (activeSection === 'lot') {
       setLotForm({
         product_id: 0,
@@ -515,6 +676,11 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
 
     if (activeSection === 'series') {
       seriesFormRef.current?.requestSubmit();
+      return;
+    }
+
+    if (activeSection === 'price-tier') {
+      void savePriceTier();
       return;
     }
 
@@ -599,6 +765,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       setCashRegisters(dashboard.cash_registers);
       setPaymentMethods(dashboard.payment_methods);
       setSeriesRows(dashboard.series);
+      setPriceTiers(dashboard.price_tiers ?? []);
       setLots(dashboard.lots);
       setUnits(dashboard.units);
       setInventorySettings(dashboard.inventory_settings);
@@ -638,6 +805,11 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         setRoleEditorName('');
         setRoleEditorProfile('');
         setRoleEditorPermissions([]);
+      }
+
+      if (!dashboard.price_tiers) {
+        const standalonePriceTiers = await fetchPriceTiers(accessToken);
+        setPriceTiers(standalonePriceTiers);
       }
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo cargar maestros');
@@ -717,6 +889,41 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     }
   }
 
+  async function savePriceTier() {
+    if (!canManagePriceTiers) {
+      setError('No tienes permiso para gestionar escalas de precio.');
+      return;
+    }
+
+    try {
+      if (priceTierEditingId) {
+        await updatePriceTier(accessToken, priceTierEditingId, {
+          code: priceTierForm.code,
+          name: priceTierForm.name,
+          min_qty: Number(priceTierForm.min_qty),
+          max_qty: priceTierForm.max_qty === '' ? null : Number(priceTierForm.max_qty),
+          priority: Number(priceTierForm.priority) || 1,
+        });
+        setMessage('Escala de precio actualizada.');
+      } else {
+        await createPriceTier(accessToken, {
+          code: priceTierForm.code,
+          name: priceTierForm.name,
+          min_qty: Number(priceTierForm.min_qty),
+          max_qty: priceTierForm.max_qty === '' ? null : Number(priceTierForm.max_qty),
+          priority: Number(priceTierForm.priority) || 1,
+          status: 1,
+        });
+        setMessage('Escala de precio creada.');
+      }
+      setPriceTierForm({ code: '', name: '', min_qty: 1, max_qty: '', priority: 1 });
+      setPriceTierEditingId(null);
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo guardar escala de precio');
+    }
+  }
+
   async function saveLot(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
@@ -769,6 +976,36 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo actualizar serie');
     }
+  }
+
+  async function togglePriceTier(row: PriceTierRow) {
+    if (!canManagePriceTiers) {
+      setError('No tienes permiso para gestionar escalas de precio.');
+      return;
+    }
+
+    try {
+      await updatePriceTier(accessToken, row.id, { status: row.status === 1 ? 0 : 1 });
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo actualizar escala de precio');
+    }
+  }
+
+  function editPriceTier(row: PriceTierRow) {
+    if (!canManagePriceTiers) {
+      setError('No tienes permiso para gestionar escalas de precio.');
+      return;
+    }
+
+    setPriceTierEditingId(row.id);
+    setPriceTierForm({
+      code: row.code,
+      name: row.name,
+      min_qty: Number(row.min_qty),
+      max_qty: row.max_qty === null ? '' : String(row.max_qty),
+      priority: Number(row.priority) || 1,
+    });
   }
 
   async function saveInventorySettings(event: React.FormEvent<HTMLFormElement>) {
@@ -966,6 +1203,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
           <article><span>Cajas</span><strong>{stats.cash_registers_total}</strong></article>
           <article><span>Pagos</span><strong>{stats.payment_methods_total}</strong></article>
           <article><span>Series</span><strong>{stats.series_total}</strong></article>
+          <article><span>Escalas</span><strong>{stats.price_tiers_total ?? 0}</strong></article>
           <article><span>Lotes</span><strong>{stats.lots_total}</strong></article>
           <article><span>Unidades habilitadas</span><strong>{stats.units_enabled_total}</strong></article>
         </div>
@@ -993,6 +1231,10 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             <button type="button" className={activeSection === 'series' ? 'active' : ''} onClick={() => setActiveSection('series')}>
               <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6zM15 3v5h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
               Series
+            </button>
+            <button type="button" className={activeSection === 'price-tier' ? 'active' : ''} onClick={() => setActiveSection('price-tier')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 18h16M6 14h4M10 10h4M14 6h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Escalas de precio
             </button>
             <button type="button" className={activeSection === 'doc-kinds' ? 'active' : ''} onClick={() => setActiveSection('doc-kinds')}>
               <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M10 6v12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
@@ -1037,6 +1279,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             <option value="cash">Cajas</option>
             <option value="payment">Tipos de Pago</option>
             <option value="series">Series</option>
+            <option value="price-tier">Escalas de precio</option>
             <option value="lot">Lotes</option>
             <option value="units">Unidades</option>
             <option value="settings">Inventario</option>
@@ -1260,6 +1503,66 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         </div>
       )}
 
+      {activeSection === 'price-tier' && (
+        <div className="master-section-grid">
+          <form className="grid-form master-card" onSubmit={(e) => { e.preventDefault(); void savePriceTier(); }}>
+            <h4>{priceTierEditingId ? `Editar Escala #${priceTierEditingId}` : 'Nueva Escala de Precio'}</h4>
+            <label>
+              Codigo
+              <input value={priceTierForm.code} onChange={(e) => setPriceTierForm((prev) => ({ ...prev, code: e.target.value }))} required disabled={!canManagePriceTiers} />
+            </label>
+            <label>
+              Nombre
+              <input value={priceTierForm.name} onChange={(e) => setPriceTierForm((prev) => ({ ...prev, name: e.target.value }))} required disabled={!canManagePriceTiers} />
+            </label>
+            <label>
+              Cantidad minima
+              <input type="number" min={0.001} step="0.001" value={priceTierForm.min_qty} onChange={(e) => setPriceTierForm((prev) => ({ ...prev, min_qty: Number(e.target.value) || 1 }))} required disabled={!canManagePriceTiers} />
+            </label>
+            <label>
+              Cantidad maxima (opcional)
+              <input type="number" min={0.001} step="0.001" value={priceTierForm.max_qty} onChange={(e) => setPriceTierForm((prev) => ({ ...prev, max_qty: e.target.value }))} disabled={!canManagePriceTiers} />
+            </label>
+            <label>
+              Prioridad
+              <input type="number" min={1} step={1} value={priceTierForm.priority} onChange={(e) => setPriceTierForm((prev) => ({ ...prev, priority: Number(e.target.value) || 1 }))} disabled={!canManagePriceTiers} />
+            </label>
+            <button className="wide" type="submit" disabled={!canManagePriceTiers}>{priceTierEditingId ? 'Guardar cambios' : 'Crear escala'}</button>
+            {priceTierEditingId && (
+              <button type="button" onClick={() => { setPriceTierEditingId(null); setPriceTierForm({ code: '', name: '', min_qty: 1, max_qty: '', priority: 1 }); }} disabled={!canManagePriceTiers}>
+                Cancelar edicion
+              </button>
+            )}
+            {!canManagePriceTiers && (
+              <p className="notice">Solo un perfil autorizado puede crear o editar escalas.</p>
+            )}
+          </form>
+
+          <div className="table-wrap master-card">
+            <h4>Escalas de Precio</h4>
+            <table>
+              <thead><tr><th>Codigo</th><th>Nombre</th><th>Rango</th><th>Prioridad</th><th>Estado</th><th></th><th></th></tr></thead>
+              <tbody>
+                {filteredPriceTiers.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.code}</td>
+                    <td>{row.name}</td>
+                    <td>{Number(row.min_qty)} - {row.max_qty === null ? '...' : Number(row.max_qty)}</td>
+                    <td>{row.priority}</td>
+                    <td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
+                    <td><button type="button" onClick={() => editPriceTier(row)} disabled={!canManagePriceTiers}>Editar</button></td>
+                    <td><button type="button" onClick={() => void togglePriceTier(row)} disabled={!canManagePriceTiers}>{row.status === 1 ? 'Desactivar' : 'Activar'}</button></td>
+                  </tr>
+                ))}
+                {filteredPriceTiers.length === 0 && (
+                  <tr><td colSpan={7}>Sin resultados para la busqueda actual.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {activeSection === 'lot' && (
         <div className="master-section-grid">
           <form ref={lotFormRef} className="grid-form master-card" onSubmit={saveLot}>
@@ -1379,7 +1682,12 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             <input type="checkbox" checked={inventorySettings.enable_advanced_reporting} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_advanced_reporting: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar reportes avanzados
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_graphical_dashboard: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar dashboard grafico
+            <input type="checkbox" checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? {
+              ...prev,
+              enable_graphical_dashboard: e.target.checked,
+              enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro,
+              complexity_mode: e.target.checked ? 'ADVANCED' : prev.complexity_mode,
+            } : prev)} /> Habilitar dashboard grafico
           </label>
           <label>
             <input type="checkbox" checked={inventorySettings.enable_location_control} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_location_control: e.target.checked } : prev)} /> Habilitar control por ubicacion
@@ -1475,6 +1783,41 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                 .filter((row) => includesSearch(row.feature_code) || includesSearch(commerceFeatureLabel(row.feature_code)))
                 .map((row) => {
                   const index = commerceFeatures.findIndex((item) => item.feature_code === row.feature_code);
+                  const profileConfig = (row.feature_code === 'INVENTORY_PRODUCT_MASTERS_BY_PROFILE' || row.feature_code === 'INVENTORY_PRODUCTS_BY_PROFILE')
+                    ? {
+                        allow_seller: row.config?.allow_seller !== false,
+                        allow_cashier: row.config?.allow_cashier !== false,
+                        allow_admin: row.config?.allow_admin !== false,
+                      }
+                    : null;
+                  const isTaxFeature = row.feature_code === 'SALES_DETRACCION_ENABLED'
+                    || row.feature_code === 'SALES_RETENCION_ENABLED'
+                    || row.feature_code === 'SALES_PERCEPCION_ENABLED'
+                    || row.feature_code === 'PURCHASES_DETRACCION_ENABLED'
+                    || row.feature_code === 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
+                    || row.feature_code === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED'
+                    || row.feature_code === 'PURCHASES_PERCEPCION_ENABLED';
+                  const isRetencionFeature = row.feature_code === 'SALES_RETENCION_ENABLED'
+                    || row.feature_code === 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
+                    || row.feature_code === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED';
+                  const isPercepcionFeature = row.feature_code === 'SALES_PERCEPCION_ENABLED'
+                    || row.feature_code === 'PURCHASES_PERCEPCION_ENABLED';
+                  const taxConfig = isTaxFeature
+                    ? {
+                        bank_name: String((row.config?.bank_name ?? '') as string),
+                        account_number: String((row.config?.account_number ?? '') as string),
+                        account_holder: String((row.config?.account_holder ?? '') as string),
+                        min_amount: row.feature_code === 'SALES_DETRACCION_ENABLED' || row.feature_code === 'PURCHASES_DETRACCION_ENABLED'
+                          ? String((row.config?.min_amount ?? '700') as string)
+                          : '',
+                        operation_types_text: operationTypesToText(row.config?.sunat_operation_types) || defaultOperationTypesText(),
+                        tax_types_text: isRetencionFeature
+                          ? (taxTypesToText(row.config?.retencion_types) || defaultTaxTypesText(row.feature_code))
+                          : isPercepcionFeature
+                            ? (taxTypesToText(row.config?.percepcion_types) || defaultTaxTypesText(row.feature_code))
+                            : '',
+                      }
+                    : null;
                   return (
                     <tr key={row.feature_code}>
                       <td>{commerceFeatureLabel(row.feature_code)}</td>
@@ -1488,6 +1831,210 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                             )
                           }
                         />
+                        {taxConfig && (
+                          <details style={{ marginTop: '0.4rem' }}>
+                            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Configurar</summary>
+                            <div style={{ marginTop: '0.4rem', display: 'grid', gap: '0.35rem' }}>
+                              <label style={{ display: 'grid', gap: '0.2rem' }}>
+                                Cuenta
+                                <input
+                                  value={taxConfig.account_number}
+                                  onChange={(e) =>
+                                    setCommerceFeatures((prev) =>
+                                      prev.map((item, i) => i === index
+                                        ? {
+                                            ...item,
+                                            config: {
+                                              ...(item.config ?? {}),
+                                              account_number: e.target.value,
+                                            },
+                                          }
+                                        : item)
+                                    )
+                                  }
+                                  placeholder="Ej. 00-123-456789"
+                                />
+                              </label>
+                              <label style={{ display: 'grid', gap: '0.2rem' }}>
+                                Banco
+                                <input
+                                  value={taxConfig.bank_name}
+                                  onChange={(e) =>
+                                    setCommerceFeatures((prev) =>
+                                      prev.map((item, i) => i === index
+                                        ? {
+                                            ...item,
+                                            config: {
+                                              ...(item.config ?? {}),
+                                              bank_name: e.target.value,
+                                            },
+                                          }
+                                        : item)
+                                    )
+                                  }
+                                  placeholder="Ej. Banco de la Nacion"
+                                />
+                              </label>
+                              <label style={{ display: 'grid', gap: '0.2rem' }}>
+                                Titular
+                                <input
+                                  value={taxConfig.account_holder}
+                                  onChange={(e) =>
+                                    setCommerceFeatures((prev) =>
+                                      prev.map((item, i) => i === index
+                                        ? {
+                                            ...item,
+                                            config: {
+                                              ...(item.config ?? {}),
+                                              account_holder: e.target.value,
+                                            },
+                                          }
+                                        : item)
+                                    )
+                                  }
+                                  placeholder="Titular de la cuenta"
+                                />
+                              </label>
+                              {(row.feature_code === 'SALES_DETRACCION_ENABLED' || row.feature_code === 'PURCHASES_DETRACCION_ENABLED') && (
+                                <label style={{ display: 'grid', gap: '0.2rem' }}>
+                                  Umbral monto (PEN)
+                                  <input
+                                    type="number"
+                                    min={0}
+                                    step="0.01"
+                                    value={taxConfig.min_amount}
+                                    onChange={(e) =>
+                                      setCommerceFeatures((prev) =>
+                                        prev.map((item, i) => i === index
+                                          ? {
+                                              ...item,
+                                              config: {
+                                                ...(item.config ?? {}),
+                                                min_amount: Number(e.target.value || 0),
+                                              },
+                                            }
+                                          : item)
+                                      )
+                                    }
+                                  />
+                                </label>
+                              )}
+                              <label style={{ display: 'grid', gap: '0.2rem' }}>
+                                Tipos operación SUNAT (formato: codigo:nombre:regimen)
+                                <input
+                                  value={taxConfig.operation_types_text}
+                                  onChange={(e) =>
+                                    setCommerceFeatures((prev) =>
+                                      prev.map((item, i) => i === index
+                                        ? {
+                                            ...item,
+                                            config: {
+                                              ...(item.config ?? {}),
+                                              sunat_operation_types: parseOperationTypesText(e.target.value),
+                                            },
+                                          }
+                                        : item)
+                                    )
+                                  }
+                                  placeholder="0101:Venta interna:NONE | 1001:Operacion sujeta a detraccion:DETRACCION"
+                                />
+                              </label>
+                              {(isRetencionFeature || isPercepcionFeature) && (
+                                <label style={{ display: 'grid', gap: '0.2rem' }}>
+                                  Tipos tributarios (formato: codigo:nombre:tasa | codigo:nombre:tasa)
+                                  <input
+                                    value={taxConfig.tax_types_text}
+                                    onChange={(e) =>
+                                      setCommerceFeatures((prev) =>
+                                        prev.map((item, i) => i === index
+                                          ? {
+                                              ...item,
+                                              config: {
+                                                ...(item.config ?? {}),
+                                                [isRetencionFeature ? 'retencion_types' : 'percepcion_types']:
+                                                  parseTaxTypesText(e.target.value),
+                                              },
+                                            }
+                                          : item)
+                                      )
+                                    }
+                                    placeholder="RET_IGV_3:Retencion IGV:3 | PERC_IGV_2:Percepcion IGV:2"
+                                  />
+                                </label>
+                              )}
+                            </div>
+                          </details>
+                        )}
+                        {profileConfig && (
+                          <div style={{ marginTop: '0.45rem', display: 'grid', gap: '0.25rem' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 500 }}>
+                              <input
+                                type="checkbox"
+                                checked={profileConfig.allow_seller}
+                                onChange={(e) =>
+                                  setCommerceFeatures((prev) =>
+                                    prev.map((item, i) => i === index
+                                      ? {
+                                          ...item,
+                                          config: {
+                                            ...(item.config ?? {}),
+                                            allow_seller: e.target.checked,
+                                            allow_cashier: (item.config?.allow_cashier ?? true) !== false,
+                                            allow_admin: (item.config?.allow_admin ?? true) !== false,
+                                          },
+                                        }
+                                      : item)
+                                  )
+                                }
+                              />
+                              Permitir vendedor
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 500 }}>
+                              <input
+                                type="checkbox"
+                                checked={profileConfig.allow_cashier}
+                                onChange={(e) =>
+                                  setCommerceFeatures((prev) =>
+                                    prev.map((item, i) => i === index
+                                      ? {
+                                          ...item,
+                                          config: {
+                                            ...(item.config ?? {}),
+                                            allow_seller: (item.config?.allow_seller ?? true) !== false,
+                                            allow_cashier: e.target.checked,
+                                            allow_admin: (item.config?.allow_admin ?? true) !== false,
+                                          },
+                                        }
+                                      : item)
+                                  )
+                                }
+                              />
+                              Permitir cajero
+                            </label>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 500 }}>
+                              <input
+                                type="checkbox"
+                                checked={profileConfig.allow_admin}
+                                onChange={(e) =>
+                                  setCommerceFeatures((prev) =>
+                                    prev.map((item, i) => i === index
+                                      ? {
+                                          ...item,
+                                          config: {
+                                            ...(item.config ?? {}),
+                                            allow_seller: (item.config?.allow_seller ?? true) !== false,
+                                            allow_cashier: (item.config?.allow_cashier ?? true) !== false,
+                                            allow_admin: e.target.checked,
+                                          },
+                                        }
+                                      : item)
+                                  )
+                                }
+                              />
+                              Permitir admin/general
+                            </label>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

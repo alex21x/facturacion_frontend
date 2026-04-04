@@ -5,7 +5,7 @@ import {
   uploadCompanyCert,
   uploadCompanyLogo,
 } from '../api';
-import type { BankAccount, CompanyProfile } from '../types';
+import type { BankAccount, CompanyCertBridgeDebug, CompanyProfile } from '../types';
 
 type CompanyConfigViewProps = {
   accessToken: string;
@@ -26,8 +26,17 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [tradeName, setTradeName] = useState('');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
+  const [mobilePhone, setMobilePhone] = useState('');
+  const [landlinePhone, setLandlinePhone] = useState('');
   const [email, setEmail] = useState('');
   const [website, setWebsite] = useState('');
+  const [ubigeo, setUbigeo] = useState('');
+  const [departamento, setDepartamento] = useState('');
+  const [provincia, setProvincia] = useState('');
+  const [distrito, setDistrito] = useState('');
+  const [urbanizacion, setUrbanizacion] = useState('');
+  const [sunatSecondaryUser, setSunatSecondaryUser] = useState('');
+  const [sunatSecondaryPass, setSunatSecondaryPass] = useState('');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
   // Logo
@@ -39,6 +48,8 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [certFile, setCertFile] = useState<File | null>(null);
   const [certPassword, setCertPassword] = useState('');
   const [uploadingCert, setUploadingCert] = useState(false);
+  const [certBridgeDebug, setCertBridgeDebug] = useState<CompanyCertBridgeDebug | null>(null);
+  const [certBridgeResponse, setCertBridgeResponse] = useState<unknown>(null);
 
   function populateForm(p: CompanyProfile) {
     setTaxId(p.tax_id ?? '');
@@ -46,8 +57,17 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     setTradeName(p.trade_name ?? '');
     setAddress(p.address ?? '');
     setPhone(p.phone ?? '');
+    setMobilePhone(p.telefono_movil ?? '');
+    setLandlinePhone(p.telefono_fijo ?? p.phone ?? '');
     setEmail(p.email ?? '');
     setWebsite(p.website ?? '');
+    setUbigeo(p.ubigeo ?? '');
+    setDepartamento(p.departamento ?? '');
+    setProvincia(p.provincia ?? '');
+    setDistrito(p.distrito ?? '');
+    setUrbanizacion(p.urbanizacion ?? '');
+    setSunatSecondaryUser(p.sunat_secondary_user ?? '');
+    setSunatSecondaryPass(p.sunat_secondary_pass ?? '');
     setBankAccounts(p.bank_accounts ?? []);
   }
 
@@ -86,9 +106,19 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
 
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault();
+
+    if (certFile && !certPassword) {
+      setIsError(true);
+      setMessage('Si seleccionas certificado, debes ingresar la contrasena para guardarlo.');
+      return;
+    }
+
     setSaving(true);
     setMessage('');
     setIsError(false);
+    setCertBridgeDebug(null);
+    setCertBridgeResponse(null);
+
     try {
       const updated = await updateCompanyProfile(accessToken, {
         tax_id: taxId || undefined,
@@ -96,13 +126,46 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         trade_name: tradeName || undefined,
         address: address || undefined,
         phone: phone || undefined,
+        telefono_movil: mobilePhone || undefined,
+        telefono_fijo: landlinePhone || undefined,
         email: email || undefined,
         website: website || undefined,
+        ubigeo: ubigeo || undefined,
+        departamento: departamento || undefined,
+        provincia: provincia || undefined,
+        distrito: distrito || undefined,
+        urbanizacion: urbanizacion || undefined,
+        sunat_secondary_user: sunatSecondaryUser || undefined,
+        sunat_secondary_pass: sunatSecondaryPass || undefined,
         bank_accounts: bankAccounts,
       });
+
       setProfile(updated);
       populateForm(updated);
-      setMessage('Perfil actualizado correctamente');
+
+      if (certFile) {
+        setUploadingCert(true);
+        try {
+          const certRes = await uploadCompanyCert(accessToken, certFile, certPassword);
+          setCertBridgeDebug(certRes.bridge_debug ?? null);
+          setCertBridgeResponse(certRes.bridge_response ?? null);
+          setCertFile(null);
+          setCertPassword('');
+          setMessage(`Perfil actualizado. ${certRes.message}`);
+          await loadProfile();
+        } catch (certError) {
+          setIsError(true);
+          setMessage(
+            `Perfil actualizado en BD, pero fallo el registro del certificado en puente: ${
+              certError instanceof Error ? certError.message : 'Error al subir certificado'
+            }`
+          );
+        } finally {
+          setUploadingCert(false);
+        }
+      } else {
+        setMessage('Perfil actualizado correctamente');
+      }
     } catch (e) {
       setIsError(true);
       setMessage(e instanceof Error ? e.message : 'Error al guardar');
@@ -127,29 +190,6 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
       setMessage(e instanceof Error ? e.message : 'Error al subir logo');
     } finally {
       setUploadingLogo(false);
-    }
-  }
-
-  async function handleUploadCert() {
-    if (!certFile || !certPassword) {
-      setMessage('Selecciona el certificado y escribe la contrasena');
-      setIsError(true);
-      return;
-    }
-    setUploadingCert(true);
-    setMessage('');
-    setIsError(false);
-    try {
-      const res = await uploadCompanyCert(accessToken, certFile, certPassword);
-      setMessage(res.message);
-      setCertFile(null);
-      setCertPassword('');
-      await loadProfile();
-    } catch (e) {
-      setIsError(true);
-      setMessage(e instanceof Error ? e.message : 'Error al subir certificado');
-    } finally {
-      setUploadingCert(false);
     }
   }
 
@@ -224,12 +264,32 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
               />
             </label>
             <label>
-              Telefono
+              Telefono principal
               <input
                 type="text"
                 maxLength={60}
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
+                placeholder="+51 1 234 5678"
+              />
+            </label>
+            <label>
+              Telefono movil
+              <input
+                type="text"
+                maxLength={60}
+                value={mobilePhone}
+                onChange={(e) => setMobilePhone(e.target.value)}
+                placeholder="+51 999 888 777"
+              />
+            </label>
+            <label>
+              Telefono fijo
+              <input
+                type="text"
+                maxLength={60}
+                value={landlinePhone}
+                onChange={(e) => setLandlinePhone(e.target.value)}
                 placeholder="+51 1 234 5678"
               />
             </label>
@@ -251,6 +311,90 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                 value={website}
                 onChange={(e) => setWebsite(e.target.value)}
                 placeholder="https://www.empresa.com"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* ── UBICACION ── */}
+        <div className="form-card">
+          <h4>Ubicacion Geográfica</h4>
+          <div className="grid-form">
+            <label>
+              UBIGEO (6 dígitos)
+              <input
+                type="text"
+                maxLength={6}
+                value={ubigeo}
+                onChange={(e) => setUbigeo(e.target.value)}
+                placeholder="150131"
+              />
+            </label>
+            <label>
+              Departamento
+              <input
+                type="text"
+                maxLength={100}
+                value={departamento}
+                onChange={(e) => setDepartamento(e.target.value)}
+                placeholder="LIMA"
+              />
+            </label>
+            <label>
+              Provincia
+              <input
+                type="text"
+                maxLength={100}
+                value={provincia}
+                onChange={(e) => setProvincia(e.target.value)}
+                placeholder="LIMA"
+              />
+            </label>
+            <label>
+              Distrito
+              <input
+                type="text"
+                maxLength={100}
+                value={distrito}
+                onChange={(e) => setDistrito(e.target.value)}
+                placeholder="SAN ISIDRO"
+              />
+            </label>
+            <label>
+              Urbanizacion
+              <input
+                type="text"
+                maxLength={100}
+                value={urbanizacion}
+                onChange={(e) => setUrbanizacion(e.target.value)}
+                placeholder="ORRANTIA"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="form-card">
+          <h4>Credenciales SUNAT Secundarias</h4>
+          <div className="grid-form">
+            <label>
+              Usuario secundario SUNAT
+              <input
+                type="text"
+                maxLength={100}
+                value={sunatSecondaryUser}
+                onChange={(e) => setSunatSecondaryUser(e.target.value)}
+                placeholder="MODDATOS"
+              />
+            </label>
+            <label>
+              Password secundario SUNAT
+              <input
+                type="password"
+                maxLength={100}
+                value={sunatSecondaryPass}
+                onChange={(e) => setSunatSecondaryPass(e.target.value)}
+                placeholder="••••••••"
+                autoComplete="new-password"
               />
             </label>
           </div>
@@ -321,8 +465,70 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
           ))}
         </div>
 
-        <button type="submit" disabled={saving || loading}>
-          {saving ? 'Guardando...' : 'Guardar Cambios'}
+        <div className="form-card" style={{ marginTop: '1rem' }}>
+          <h4 style={{ margin: 0 }}>Certificado Digital</h4>
+          <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
+            Estado:{' '}
+            <strong style={{ color: profile?.has_cert ? 'var(--color-ok)' : undefined }}>
+              {profile?.has_cert ? 'Certificado configurado' : 'Sin certificado'}
+            </strong>
+          </p>
+          <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
+            Este bloque usa el mismo boton Guardar Cambios.
+            Si seleccionas certificado: guarda en BD y luego registra en el puente.
+            Si no seleccionas certificado: solo guarda en BD.
+          </p>
+          <div className="grid-form">
+            <label>
+              Archivo del certificado (.p12, .pfx, .pem)
+              <input
+                type="file"
+                accept=".p12,.pfx,.pem"
+                onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label>
+              Contrasena del certificado
+              <input
+                type="password"
+                value={certPassword}
+                autoComplete="new-password"
+                onChange={(e) => setCertPassword(e.target.value)}
+                placeholder="••••••••"
+              />
+            </label>
+          </div>
+
+          {certBridgeDebug && (
+            <div style={{ marginTop: '1rem' }}>
+              <h5 style={{ marginBottom: '0.25rem' }}>Destino del puente</h5>
+              <div className="notice" style={{ overflowX: 'auto' }}>
+                {certBridgeDebug.method} {certBridgeDebug.endpoint}
+              </div>
+
+              <h5 style={{ marginTop: '0.75rem', marginBottom: '0.25rem' }}>Payload enviado</h5>
+              <pre style={{ margin: 0, padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#f8fafc', overflowX: 'auto', fontSize: '0.8rem' }}>
+                {JSON.stringify(certBridgeDebug.payload, null, 2)}
+              </pre>
+
+              {certBridgeResponse !== null && (
+                <>
+                  <h5 style={{ marginTop: '0.75rem', marginBottom: '0.25rem' }}>Respuesta del puente</h5>
+                  <pre style={{ margin: 0, padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#f8fafc', overflowX: 'auto', fontSize: '0.8rem' }}>
+                    {typeof certBridgeResponse === 'string'
+                      ? certBridgeResponse
+                      : JSON.stringify(certBridgeResponse, null, 2)}
+                  </pre>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <button type="submit" disabled={saving || loading || uploadingCert}>
+          <span style={{ display: 'inline-block', padding: '0.5rem 1.2rem' }}>
+            {saving || uploadingCert ? 'Guardando...' : 'Guardar Cambios'}
+          </span>
         </button>
       </form>
 
@@ -369,48 +575,6 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         </button>
       </div>
 
-      {/* ── CERTIFICADO DIGITAL ── */}
-      <div className="form-card" style={{ marginTop: '1.5rem' }}>
-        <h4>Certificado Digital</h4>
-        <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
-          Estado:{' '}
-          <strong style={{ color: profile?.has_cert ? 'var(--color-ok)' : undefined }}>
-            {profile?.has_cert ? 'Certificado configurado' : 'Sin certificado'}
-          </strong>
-        </p>
-        <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
-          Sube tu certificado digital (.p12 / .pfx / .pem) para firma electronica.
-          La contrasena se almacena cifrada con la clave de la aplicacion.
-        </p>
-        <div className="grid-form">
-          <label>
-            Archivo del certificado (.p12, .pfx, .pem)
-            <input
-              type="file"
-              accept=".p12,.pfx,.pem"
-              onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
-            />
-          </label>
-          <label>
-            Contrasena del certificado
-            <input
-              type="password"
-              value={certPassword}
-              autoComplete="new-password"
-              onChange={(e) => setCertPassword(e.target.value)}
-              placeholder="••••••••"
-            />
-          </label>
-        </div>
-        <button
-          type="button"
-          onClick={handleUploadCert}
-          disabled={!certFile || !certPassword || uploadingCert}
-          style={{ marginTop: '0.5rem' }}
-        >
-          {uploadingCert ? 'Subiendo...' : profile?.has_cert ? 'Reemplazar Certificado' : 'Subir Certificado'}
-        </button>
-      </div>
     </section>
   );
 }

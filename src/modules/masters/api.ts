@@ -8,6 +8,7 @@ import type {
   LotRow,
   MasterOptionsResponse,
   PaymentMethodRow,
+  PriceTierRow,
   SeriesRow,
   UnitRow,
   WarehouseRow,
@@ -146,6 +147,34 @@ export async function createSeries(
 
 export async function updateSeries(accessToken: string, id: number, payload: Partial<SeriesRow>) {
   return apiClient.request(`/api/masters/series/${id}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchPriceTiers(accessToken: string): Promise<PriceTierRow[]> {
+  const response = await apiClient.request<{ data: PriceTierRow[] }>('/api/masters/price-tiers', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return response.data;
+}
+
+export async function createPriceTier(
+  accessToken: string,
+  payload: { code: string; name: string; min_qty: number; max_qty?: number | null; priority?: number; status?: number }
+) {
+  return apiClient.request('/api/masters/price-tiers', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePriceTier(accessToken: string, id: number, payload: Partial<PriceTierRow>) {
+  return apiClient.request(`/api/masters/price-tiers/${id}`, {
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),

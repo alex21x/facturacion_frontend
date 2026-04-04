@@ -1,5 +1,5 @@
 import { apiClient } from '../../shared/api/client';
-import type { CompanyProfile, UpdateCompanyProfilePayload } from './types';
+import type { CompanyCertUploadResponse, CompanyProfile, UpdateCompanyProfilePayload } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
   return { Authorization: `Bearer ${accessToken}` };
@@ -53,7 +53,7 @@ export async function uploadCompanyCert(
   accessToken: string,
   file: File,
   certPassword: string
-): Promise<{ message: string; has_cert: boolean }> {
+): Promise<CompanyCertUploadResponse> {
   const formData = new FormData();
   formData.append('cert', file);
   formData.append('cert_password', certPassword);
@@ -70,5 +70,5 @@ export async function uploadCompanyCert(
     throw new Error(`API ${response.status}: ${text}`);
   }
 
-  return response.json() as Promise<{ message: string; has_cert: boolean }>;
+  return response.json() as Promise<CompanyCertUploadResponse>;
 }

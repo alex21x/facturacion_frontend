@@ -27,6 +27,7 @@ export type PrintableSalesDocument = {
   gravadaTotal: number;
   inafectaTotal: number;
   exoneradaTotal: number;
+  metadata?: Record<string, unknown> | null;
   items: PrintableSalesItem[];
 };
 
@@ -111,6 +112,49 @@ export function buildCommercialDocumentA4Html(
       `;
     })
     .join('');
+
+  const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
+  const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
+  const detraccionAmount = Number(metaData.detraccion_amount ?? 0);
+  const detraccionRate = Number(metaData.detraccion_rate_percent ?? 0);
+  const detraccionAccount = String(metaData.detraccion_account_number ?? '').trim();
+  const detraccionBank = String(metaData.detraccion_bank_name ?? '').trim();
+  const detraccionType = String(metaData.detraccion_service_name ?? '').trim();
+  const retencionAmount = Number(metaData.retencion_amount ?? 0);
+  const retencionRate = Number(metaData.retencion_rate_percent ?? 0);
+  const retencionAccount = String(metaData.retencion_account_number ?? '').trim();
+  const retencionBank = String(metaData.retencion_bank_name ?? '').trim();
+  const retencionType = String(metaData.retencion_type_name ?? '').trim();
+  const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
+  const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
+  const percepcionAccount = String(metaData.percepcion_account_number ?? '').trim();
+  const percepcionBank = String(metaData.percepcion_bank_name ?? '').trim();
+  const percepcionType = String(metaData.percepcion_type_name ?? '').trim();
+
+  const tributaryRows = [
+    sunatOpCode
+      ? `<tr><td class="label">Tipo Op. SUNAT:</td><td class="value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</td></tr>`
+      : '',
+    detraccionAmount > 0
+      ? `<tr><td class="label">Detraccion${detraccionType ? ` (${escapeHtml(detraccionType)})` : ''}:</td><td class="value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</td></tr>`
+      : '',
+    detraccionAccount
+      ? `<tr><td class="label">Cta. Detraccion:</td><td class="value">${escapeHtml(detraccionAccount)}${detraccionBank ? ` (${escapeHtml(detraccionBank)})` : ''}</td></tr>`
+      : '',
+    retencionAmount > 0
+      ? `<tr><td class="label">Retencion${retencionType ? ` (${escapeHtml(retencionType)})` : ''}:</td><td class="value">${doc.currencySymbol} ${formatMoney(retencionAmount)} (${formatMoney(retencionRate)}%)</td></tr>`
+      : '',
+    retencionAccount
+      ? `<tr><td class="label">Cta. Retencion:</td><td class="value">${escapeHtml(retencionAccount)}${retencionBank ? ` (${escapeHtml(retencionBank)})` : ''}</td></tr>`
+      : '',
+    percepcionAmount > 0
+      ? `<tr><td class="label">Percepcion${percepcionType ? ` (${escapeHtml(percepcionType)})` : ''}:</td><td class="value">${doc.currencySymbol} ${formatMoney(percepcionAmount)} (${formatMoney(percepcionRate)}%)</td></tr>`
+      : '',
+    percepcionAccount
+      ? `<tr><td class="label">Cta. Percepcion:</td><td class="value">${escapeHtml(percepcionAccount)}${percepcionBank ? ` (${escapeHtml(percepcionBank)})` : ''}</td></tr>`
+      : '',
+  ].filter((row) => row !== '').join('');
 
   return `
     <html>
@@ -238,6 +282,7 @@ export function buildCommercialDocumentA4Html(
                   <tr><td class="label">Op. Inafectas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.inafectaTotal)}</td></tr>
                   <tr><td class="label">Op. Exoneradas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</td></tr>
                   <tr><td class="label">IGV:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</td></tr>
+                  ${tributaryRows}
                   <tr class="total-row"><td class="label">Total a Pagar:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</td></tr>
                 </tbody>
               </table>
@@ -285,6 +330,18 @@ export function buildCommercialDocument80mmHtml(
     .join('');
 
   const subtotalAmount = doc.gravadaTotal + doc.inafectaTotal + doc.exoneradaTotal;
+  const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
+  const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
+  const detraccionAmount = Number(metaData.detraccion_amount ?? 0);
+  const detraccionRate = Number(metaData.detraccion_rate_percent ?? 0);
+  const detraccionAccount = String(metaData.detraccion_account_number ?? '').trim();
+  const retencionAmount = Number(metaData.retencion_amount ?? 0);
+  const retencionRate = Number(metaData.retencion_rate_percent ?? 0);
+  const retencionAccount = String(metaData.retencion_account_number ?? '').trim();
+  const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
+  const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
+  const percepcionAccount = String(metaData.percepcion_account_number ?? '').trim();
 
   return `
     <html>
@@ -520,6 +577,13 @@ export function buildCommercialDocument80mmHtml(
               <div class="summary-label">IGV:</div>
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</div>
             </div>` : ''}
+            ${sunatOpCode ? `<div class="summary-row"><div class="summary-label">Op. SUNAT:</div><div class="summary-value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</div></div>` : ''}
+            ${detraccionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Detraccion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</div></div>` : ''}
+            ${detraccionAccount ? `<div class="summary-row"><div class="summary-label">Cta. Detrac.:</div><div class="summary-value">${escapeHtml(detraccionAccount)}</div></div>` : ''}
+            ${retencionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Retencion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(retencionAmount)} (${formatMoney(retencionRate)}%)</div></div>` : ''}
+            ${retencionAccount ? `<div class="summary-row"><div class="summary-label">Cta. Reten.:</div><div class="summary-value">${escapeHtml(retencionAccount)}</div></div>` : ''}
+            ${percepcionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Percepcion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(percepcionAmount)} (${formatMoney(percepcionRate)}%)</div></div>` : ''}
+            ${percepcionAccount ? `<div class="summary-row"><div class="summary-label">Cta. Percep.:</div><div class="summary-value">${escapeHtml(percepcionAccount)}</div></div>` : ''}
             <div class="total-row">
               <span>TOTAL</span>
               <span>${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</span>

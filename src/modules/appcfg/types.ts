@@ -108,3 +108,45 @@ export type UpdateOperationalLimitsPayload = {
   max_warehouses_enabled?: number;
   max_cash_registers_enabled?: number;
 };
+
+export type CommerceSettingsFeature = {
+  feature_code: string;
+  is_enabled: boolean;
+  config: unknown;
+};
+
+export type SalesTaxBridgeConfig = {
+  bridge_mode?: 'PRODUCTION' | 'BETA';
+  production_url?: string;
+  beta_url?: string;
+  timeout_seconds?: number;
+  auth_scheme?: 'none' | 'bearer';
+  token?: string;
+  auto_send_on_issue?: boolean;
+  sol_user?: string;
+  sol_pass?: string;
+  sunat_secondary_user?: string;
+  sunat_secondary_pass?: string;
+  codigolocal?: string;
+  envio_pse?: string;
+};
+
+export type CommerceSettingsResponse = {
+  company_id: number;
+  branch_id?: number | null;
+  features: CommerceSettingsFeature[];
+};
+
+export type UpdateCommerceSettingsPayload = {
+  features: Array<{ feature_code: string; is_enabled: boolean; config?: unknown }>;
+};
+
+export type IgvSettingsResponse = {
+  company_id: number;
+  active_rate: {
+    id: number | null;
+    name: string;
+    rate_percent: number;
+    is_active: boolean;
+  };
+};

@@ -32,6 +32,51 @@ function isAuthRoute(path: string): boolean {
   return path.includes('/api/auth/login') || path.includes('/api/auth/refresh');
 }
 
+function tryParseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    // Try to recover JSON object when warnings/noise are prepended.
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+
+    if (start >= 0 && end > start) {
+      try {
+        const parsed = JSON.parse(text.slice(start, end + 1));
+        return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    return null;
+  }
+}
+
+function extractFirstValidationError(parsed: Record<string, unknown> | null): string | null {
+  if (!parsed || typeof parsed.errors !== 'object' || parsed.errors === null) {
+    return null;
+  }
+
+  const errors = parsed.errors as Record<string, unknown>;
+
+  for (const value of Object.values(errors)) {
+    if (Array.isArray(value) && value.length > 0) {
+      const first = value[0];
+      if (typeof first === 'string' && first.trim().length > 0) {
+        return first;
+      }
+    }
+
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshingPromise) {
     return refreshingPromise;
@@ -124,17 +169,30 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
       throw new Error('No tienes permiso para acceder a esta sección.');
     }
 
-    let parsed: Record<string, unknown> | null = null;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      // not JSON
+    const parsed = tryParseJsonObject(text);
+
+    const validationMessage = extractFirstValidationError(parsed);
+    if (response.status === 422 && validationMessage) {
+      throw new Error(validationMessage);
     }
 
     const serverMessage = typeof parsed?.message === 'string' ? parsed.message : null;
     const isTechnical = serverMessage
       ? /SQLSTATE|ERROR:|Exception|at line \d+|vendor\/|->|php/i.test(serverMessage)
       : false;
+
+    if (response.status === 422) {
+      if (serverMessage && !isTechnical && serverMessage.toLowerCase() !== 'validation failed') {
+        throw new Error(serverMessage);
+      }
+
+      const compactText = text.replace(/\s+/g, ' ').trim();
+      if (compactText && !/<[a-z][\s\S]*>/i.test(compactText)) {
+        throw new Error(`Error de validacion (422): ${compactText.slice(0, 220)}`);
+      }
+
+      throw new Error('Error de validacion (422). Revisa los campos obligatorios.');
+    }
 
     if (serverMessage && !isTechnical) {
       throw new Error(serverMessage);
@@ -146,9 +204,44 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
   return (await response.json()) as T;
 }
 
+async function requestRaw(path: string, init?: RequestInit, allowRetry = true): Promise<Response> {
+  const baseHeaders = toHeadersObject(init?.headers);
+  const session = loadAuthSession();
+  const authHeader = baseHeaders.Authorization ?? (session ? `Bearer ${session.accessToken}` : undefined);
+
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      ...baseHeaders,
+      ...(authHeader ? { Authorization: authHeader } : {}),
+    },
+  });
+
+  if (response.status === 401 && allowRetry && !isAuthRoute(path) && authHeader) {
+    const newAccessToken = await refreshAccessToken();
+
+    if (newAccessToken) {
+      return requestRaw(
+        path,
+        {
+          ...init,
+          headers: {
+            ...baseHeaders,
+            Authorization: `Bearer ${newAccessToken}`,
+          },
+        },
+        false,
+      );
+    }
+  }
+
+  return response;
+}
+
 export const apiClient = {
   baseUrl,
   request,
+  requestRaw,
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body: unknown, init?: RequestInit) =>
     request<T>(path, {

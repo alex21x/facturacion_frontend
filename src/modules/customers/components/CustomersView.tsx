@@ -4,16 +4,40 @@ import { apiClient } from '../../../shared/api/client';
 type CustomerRow = {
   id: number;
   doc_type: string | null;
+  customer_type_id: number | null;
+  customer_type_name?: string | null;
+  customer_type_sunat_code?: number | null;
   doc_number: string | null;
   name: string;
   trade_name: string | null;
   plate: string | null;
   address: string | null;
   status: number;
+  default_tier_id: number | null;
+  default_tier_code: string | null;
+  default_tier_name: string | null;
+  discount_percent: number;
+  price_profile_status: number;
+};
+
+type PriceTierOption = {
+  id: number;
+  code: string;
+  name: string;
+  status: number;
+};
+
+type CustomerTypeOption = {
+  id: number;
+  name: string;
+  sunat_code: number;
+  sunat_abbr: string | null;
+  is_active: boolean;
 };
 
 type CustomerFormState = {
   doc_type: string;
+  customer_type_id: number | null;
   doc_number: string;
   legal_name: string;
   trade_name: string;
@@ -22,6 +46,9 @@ type CustomerFormState = {
   plate: string;
   address: string;
   status: number;
+  default_tier_id: number | null;
+  discount_percent: number;
+  price_profile_status: number;
 };
 
 type CustomersViewProps = {
@@ -29,7 +56,8 @@ type CustomersViewProps = {
 };
 
 const EMPTY_FORM: CustomerFormState = {
-  doc_type: 'RUC',
+  doc_type: '',
+  customer_type_id: null,
   doc_number: '',
   legal_name: '',
   trade_name: '',
@@ -38,6 +66,9 @@ const EMPTY_FORM: CustomerFormState = {
   plate: '',
   address: '',
   status: 1,
+  default_tier_id: null,
+  discount_percent: 0,
+  price_profile_status: 1,
 };
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -77,6 +108,15 @@ async function createCustomer(accessToken: string, payload: CustomerFormState) {
   });
 }
 
+async function fetchPriceTiers(accessToken: string): Promise<PriceTierOption[]> {
+  const response = await apiClient.request<{ data: PriceTierOption[] }>('/api/sales/price-tiers', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return (response.data ?? []).filter((row) => Number(row.status) === 1);
+}
+
 async function updateCustomer(accessToken: string, id: number, payload: Partial<CustomerFormState>) {
   return apiClient.request(`/api/sales/customers/${id}`, {
     method: 'PUT',
@@ -85,11 +125,22 @@ async function updateCustomer(accessToken: string, id: number, payload: Partial<
   });
 }
 
-function inferFormFromRow(row: CustomerRow): CustomerFormState {
+async function fetchCustomerTypes(accessToken: string): Promise<CustomerTypeOption[]> {
+  const response = await apiClient.request<{ data: CustomerTypeOption[] }>('/api/sales/customer-types', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return response.data ?? [];
+}
+
+function inferFormFromRow(row: CustomerRow, customerTypes: CustomerTypeOption[]): CustomerFormState {
   const nameParts = (row.name ?? '').trim().split(/\s+/).filter(Boolean);
+  const matchedType = customerTypes.find((type) => type.id === row.customer_type_id) ?? null;
 
   return {
-    doc_type: row.doc_type ?? 'RUC',
+    doc_type: row.doc_type ?? (matchedType ? String(matchedType.sunat_code) : ''),
+    customer_type_id: row.customer_type_id ?? null,
     doc_number: row.doc_number ?? '',
     legal_name: row.name ?? '',
     trade_name: row.trade_name ?? '',
@@ -98,6 +149,9 @@ function inferFormFromRow(row: CustomerRow): CustomerFormState {
     plate: row.plate ?? '',
     address: row.address ?? '',
     status: Number(row.status) === 1 ? 1 : 0,
+    default_tier_id: row.default_tier_id ?? null,
+    discount_percent: Number(row.discount_percent ?? 0),
+    price_profile_status: Number(row.price_profile_status) === 0 ? 0 : 1,
   };
 }
 
@@ -109,6 +163,8 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   const [status, setStatus] = useState<'all' | '1' | '0'>('1');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<CustomerFormState>(EMPTY_FORM);
+  const [priceTiers, setPriceTiers] = useState<PriceTierOption[]>([]);
+  const [customerTypes, setCustomerTypes] = useState<CustomerTypeOption[]>([]);
 
   const activeCount = useMemo(() => rows.filter((row) => Number(row.status) === 1).length, [rows]);
 
@@ -134,6 +190,28 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, status]);
 
+  useEffect(() => {
+    (async () => {
+      try {
+        const tiers = await fetchPriceTiers(accessToken);
+        setPriceTiers(tiers);
+      } catch {
+        setPriceTiers([]);
+      }
+    })();
+  }, [accessToken]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const types = await fetchCustomerTypes(accessToken);
+        setCustomerTypes(types);
+      } catch {
+        setCustomerTypes([]);
+      }
+    })();
+  }, [accessToken]);
+
   function resetForm() {
     setEditingId(null);
     setForm(EMPTY_FORM);
@@ -141,13 +219,19 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
   function startEdit(row: CustomerRow) {
     setEditingId(row.id);
-    setForm(inferFormFromRow(row));
+    setForm(inferFormFromRow(row, customerTypes));
   }
 
   async function saveCustomer(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setMessage('');
+
+    if (!form.customer_type_id) {
+      setMessage('Selecciona un tipo de cliente.');
+      setLoading(false);
+      return;
+    }
 
     try {
       if (editingId) {
@@ -219,12 +303,25 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         <h4>{editingId ? `Editar cliente #${editingId}` : 'Nuevo cliente'}</h4>
         <label>
           Tipo documento
-          <select value={form.doc_type} onChange={(event) => setForm((prev) => ({ ...prev, doc_type: event.target.value }))}>
-            <option value="RUC">RUC</option>
-            <option value="DNI">DNI</option>
-            <option value="CE">CE</option>
-            <option value="PASSPORT">Pasaporte</option>
-            <option value="OTRO">Otro</option>
+          <select
+            value={form.customer_type_id ?? ''}
+            onChange={(event) => {
+              const selectedId = Number(event.target.value || 0);
+              const selectedType = customerTypes.find((type) => type.id === selectedId) ?? null;
+
+              setForm((prev) => ({
+                ...prev,
+                customer_type_id: selectedType ? selectedType.id : null,
+                doc_type: selectedType ? String(selectedType.sunat_code) : prev.doc_type,
+              }));
+            }}
+          >
+            <option value="">Selecciona tipo</option>
+            {customerTypes.map((type) => (
+              <option key={type.id} value={type.id}>
+                {type.sunat_code} - {type.name}
+              </option>
+            ))}
           </select>
         </label>
         <label>
@@ -258,6 +355,45 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         <label>
           Estado
           <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: Number(event.target.value) }))}>
+            <option value={1}>ACTIVO</option>
+            <option value={0}>INACTIVO</option>
+          </select>
+        </label>
+        <label>
+          Escala precio cliente
+          <select
+            value={form.default_tier_id ?? ''}
+            onChange={(event) => {
+              const raw = event.target.value;
+              setForm((prev) => ({
+                ...prev,
+                default_tier_id: raw ? Number(raw) : null,
+              }));
+            }}
+          >
+            <option value="">Sin escala</option>
+            {priceTiers.map((tier) => (
+              <option key={tier.id} value={tier.id}>{tier.code} - {tier.name}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Descuento perfil (%)
+          <input
+            type="number"
+            min={0}
+            max={100}
+            step="0.01"
+            value={form.discount_percent}
+            onChange={(event) => setForm((prev) => ({ ...prev, discount_percent: Number(event.target.value || 0) }))}
+          />
+        </label>
+        <label>
+          Estado perfil precio
+          <select
+            value={form.price_profile_status}
+            onChange={(event) => setForm((prev) => ({ ...prev, price_profile_status: Number(event.target.value) }))}
+          >
             <option value={1}>ACTIVO</option>
             <option value={0}>INACTIVO</option>
           </select>
@@ -296,6 +432,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
               <th>Comercial</th>
               <th>Placa</th>
               <th>Direccion</th>
+              <th>Perfil precio</th>
               <th>Estado</th>
               <th></th>
             </tr>
@@ -309,6 +446,13 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                 <td>{row.trade_name ?? '-'}</td>
                 <td>{row.plate ?? '-'}</td>
                 <td>{row.address ?? '-'}</td>
+                <td>
+                  {(row.default_tier_code || row.default_tier_name)
+                    ? `${row.default_tier_code ?? ''} ${row.default_tier_name ?? ''}`.trim()
+                    : 'Sin escala'}
+                  {' | '}Dscto: {Number(row.discount_percent ?? 0).toFixed(2)}%
+                  {' | '}{Number(row.price_profile_status) === 1 ? 'ACTIVO' : 'INACTIVO'}
+                </td>
                 <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
                 <td>
                   <button type="button" onClick={() => startEdit(row)}>Editar</button>{' '}
@@ -320,7 +464,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8}>No hay clientes para el filtro actual.</td>
+                <td colSpan={9}>No hay clientes para el filtro actual.</td>
               </tr>
             )}
           </tbody>

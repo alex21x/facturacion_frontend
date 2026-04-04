@@ -86,6 +86,37 @@ function formatDateTime(value?: string | null): string {
 
 function buildPurchaseDetailHtml(entry: StockEntryRow): string {
   const details = entry.items ?? [];
+  const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
+  const hasDetraccion = Boolean(metadata.has_detraccion);
+  const hasRetencion = Boolean(metadata.has_retencion);
+  const hasPercepcion = Boolean(metadata.has_percepcion);
+  const tributaryRows: string[] = [];
+
+  if (hasDetraccion) {
+    tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
+    tributaryRows.push(`<tr><td>Detraccion</td><td>${String(metadata.detraccion_service_code ?? '-')}: ${String(metadata.detraccion_service_name ?? '-')}</td></tr>`);
+    tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.detraccion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.detraccion_amount ?? 0).toFixed(2)}</td></tr>`);
+    tributaryRows.push(`<tr><td>Cuenta</td><td>${String(metadata.detraccion_account_number ?? '-')} ${String(metadata.detraccion_bank_name ?? '')}</td></tr>`);
+  }
+  if (hasRetencion) {
+    tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
+    tributaryRows.push(`<tr><td>Retencion</td><td>${String(metadata.retencion_type_code ?? '-')}: ${String(metadata.retencion_type_name ?? '-')}</td></tr>`);
+    tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.retencion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.retencion_amount ?? 0).toFixed(2)}</td></tr>`);
+    tributaryRows.push(`<tr><td>Cuenta</td><td>${String(metadata.retencion_account_number ?? '-')} ${String(metadata.retencion_bank_name ?? '')}</td></tr>`);
+  }
+  if (hasPercepcion) {
+    tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
+    tributaryRows.push(`<tr><td>Percepcion</td><td>${String(metadata.percepcion_type_code ?? '-')}: ${String(metadata.percepcion_type_name ?? '-')}</td></tr>`);
+    tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.percepcion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.percepcion_amount ?? 0).toFixed(2)}</td></tr>`);
+    tributaryRows.push(`<tr><td>Cuenta</td><td>${String(metadata.percepcion_account_number ?? '-')} ${String(metadata.percepcion_bank_name ?? '')}</td></tr>`);
+  }
+
+  const tributaryHtml = tributaryRows.length > 0
+    ? `<h3 style="margin:16px 0 8px;">Condiciones tributarias</h3>
+       <table>
+         <tbody>${tributaryRows.join('')}</tbody>
+       </table>`
+    : '';
   const rows = details.length > 0
     ? details.map((item) => {
         return `
@@ -158,6 +189,7 @@ function buildPurchaseDetailHtml(entry: StockEntryRow): string {
         <tr class="total-row"><td>Total ingreso</td><td>${Number(entry.total_amount).toFixed(2)}</td></tr>
       </tbody>
     </table>
+    ${tributaryHtml}
   </body>
 </html>`;
 }
@@ -224,6 +256,14 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
   const [notes, setNotes] = useState('');
   const [rows, setRows] = useState<EntryRowDraft[]>([]);
   const [draftItem, setDraftItem] = useState<EntryRowDraft>(buildEmptyRow(1));
+  const [hasDetraccion, setHasDetraccion] = useState(false);
+  const [detraccionServiceCode, setDetraccionServiceCode] = useState('');
+  const [hasRetencion, setHasRetencion] = useState(false);
+  const [retencionTypeCode, setRetencionTypeCode] = useState('');
+  const [retencionScope, setRetencionScope] = useState<'COMPRADOR' | 'PROVEEDOR'>('COMPRADOR');
+  const [hasPercepcion, setHasPercepcion] = useState(false);
+  const [percepcionTypeCode, setPercepcionTypeCode] = useState('');
+  const [sunatOperationTypeCode, setSunatOperationTypeCode] = useState('');
 
   const totalQty = useMemo(() => {
     return rows.reduce((acc, row) => acc + (Number(row.qty) || 0), 0);
@@ -327,6 +367,106 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
 
     return { netTotal, taxTotal, grandTotal };
   }, [rows]);
+
+  const detraccionServices = lookups?.detraccion_service_codes ?? [];
+  const retencionTypes = lookups?.retencion_types ?? [];
+  const percepcionTypes = lookups?.percepcion_types ?? [];
+  const operationTypes = lookups?.sunat_operation_types ?? [];
+  const canUseRetencionComprador = Boolean(lookups?.retencion_comprador_enabled);
+  const canUseRetencionProveedor = Boolean(lookups?.retencion_proveedor_enabled);
+  const canUsePercepcion = Boolean(lookups?.percepcion_enabled);
+  const selectedDetraccion = detraccionServices.find((row) => row.code === detraccionServiceCode) ?? null;
+  const selectedRetencion = retencionTypes.find((row) => row.code === retencionTypeCode) ?? null;
+  const selectedPercepcion = percepcionTypes.find((row) => row.code === percepcionTypeCode) ?? null;
+  const selectedOperationType = operationTypes.find((row) => row.code === sunatOperationTypeCode) ?? null;
+  const detraccionAmount = hasDetraccion ? (totalsWithTax.grandTotal * Number(selectedDetraccion?.rate_percent ?? 0)) / 100 : 0;
+  const retencionAmount = hasRetencion ? (totalsWithTax.grandTotal * Number(selectedRetencion?.rate_percent ?? 0)) / 100 : 0;
+  const percepcionAmount = hasPercepcion ? (totalsWithTax.grandTotal * Number(selectedPercepcion?.rate_percent ?? 0)) / 100 : 0;
+
+  useEffect(() => {
+    if (entryType !== 'PURCHASE') {
+      setHasDetraccion(false);
+      setHasRetencion(false);
+      setHasPercepcion(false);
+      return;
+    }
+
+    if (!detraccionServiceCode && detraccionServices.length > 0) {
+      setDetraccionServiceCode(detraccionServices[0].code);
+    }
+    if (!retencionTypeCode && retencionTypes.length > 0) {
+      setRetencionTypeCode(retencionTypes[0].code);
+    }
+    if (!percepcionTypeCode && percepcionTypes.length > 0) {
+      setPercepcionTypeCode(percepcionTypes[0].code);
+    }
+    if (!sunatOperationTypeCode && operationTypes.length > 0) {
+      setSunatOperationTypeCode(operationTypes[0].code);
+    }
+  }, [
+    entryType,
+    detraccionServiceCode,
+    detraccionServices,
+    retencionTypeCode,
+    retencionTypes,
+    percepcionTypeCode,
+    percepcionTypes,
+    sunatOperationTypeCode,
+    operationTypes,
+  ]);
+
+  useEffect(() => {
+    if (entryType !== 'PURCHASE') {
+      return;
+    }
+    if (hasRetencion && hasPercepcion) {
+      setHasPercepcion(false);
+    }
+    if (hasDetraccion && hasRetencion) {
+      setHasRetencion(false);
+    }
+    if (hasDetraccion && hasPercepcion) {
+      setHasPercepcion(false);
+    }
+  }, [entryType, hasDetraccion, hasRetencion, hasPercepcion]);
+
+  useEffect(() => {
+    if (entryType !== 'PURCHASE') {
+      return;
+    }
+
+    const minAmount = Number(lookups?.detraccion_min_amount ?? 700);
+    if (!Number.isFinite(minAmount) || minAmount <= 0) {
+      return;
+    }
+
+    if (totalsWithTax.grandTotal >= minAmount && detraccionServices.length > 0) {
+      setHasDetraccion(true);
+      setHasRetencion(false);
+      setHasPercepcion(false);
+    }
+  }, [entryType, totalsWithTax.grandTotal, lookups?.detraccion_min_amount, detraccionServices.length]);
+
+  useEffect(() => {
+    if (!selectedOperationType) {
+      return;
+    }
+
+    const regime = selectedOperationType.regime ?? 'NONE';
+    if (regime === 'DETRACCION') {
+      setHasDetraccion(true);
+      setHasRetencion(false);
+      setHasPercepcion(false);
+    } else if (regime === 'RETENCION') {
+      setHasDetraccion(false);
+      setHasRetencion(true);
+      setHasPercepcion(false);
+    } else if (regime === 'PERCEPCION') {
+      setHasDetraccion(false);
+      setHasRetencion(false);
+      setHasPercepcion(true);
+    }
+  }, [selectedOperationType]);
 
   async function loadData() {
     setIsLoading(true);
@@ -604,6 +744,34 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       return;
     }
 
+    if (entryType === 'PURCHASE') {
+      const selectedTaxConditions = (hasDetraccion ? 1 : 0) + (hasRetencion ? 1 : 0) + (hasPercepcion ? 1 : 0);
+      if (selectedTaxConditions > 1) {
+        setMessage('Solo puedes aplicar una condicion tributaria por compra.');
+        return;
+      }
+
+      if ((hasDetraccion || hasRetencion || hasPercepcion) && !sunatOperationTypeCode) {
+        setMessage('Selecciona el tipo de operacion SUNAT para la condicion tributaria.');
+        return;
+      }
+
+      if (hasDetraccion && !detraccionServiceCode) {
+        setMessage('Selecciona el tipo/codigo de detraccion.');
+        return;
+      }
+
+      if (hasRetencion && !retencionTypeCode) {
+        setMessage('Selecciona el tipo de retencion.');
+        return;
+      }
+
+      if (hasPercepcion && !percepcionTypeCode) {
+        setMessage('Selecciona el tipo de percepcion.');
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     setMessage('');
 
@@ -616,6 +784,18 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
         payment_method_id: paymentMethodId || undefined,
         issue_at: entryDate,
         notes: notes.trim() || undefined,
+        metadata: entryType === 'PURCHASE'
+          ? {
+              has_detraccion: hasDetraccion,
+              detraccion_service_code: hasDetraccion ? detraccionServiceCode : null,
+              has_retencion: hasRetencion,
+              retencion_type_code: hasRetencion ? retencionTypeCode : null,
+              retencion_scope: hasRetencion ? retencionScope : null,
+              has_percepcion: hasPercepcion,
+              percepcion_type_code: hasPercepcion ? percepcionTypeCode : null,
+              sunat_operation_type_code: (hasDetraccion || hasRetencion || hasPercepcion) ? sunatOperationTypeCode : null,
+            }
+          : undefined,
         items: payloadItems,
       });
 
@@ -626,6 +806,13 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       setPaymentMethodId(null);
       setEntryDate(todayAsInputDate());
       setNotes('');
+      setHasDetraccion(false);
+      setHasRetencion(false);
+      setHasPercepcion(false);
+      setDetraccionServiceCode('');
+      setRetencionTypeCode('');
+      setPercepcionTypeCode('');
+      setSunatOperationTypeCode('');
       setMessage('Ingreso registrado correctamente.');
       await loadData();
       if (workspaceMode === 'REPORT') {
@@ -1024,6 +1211,163 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
               <p className="shortcut-hint">La seleccion de IGV viene desde base de datos y se aplica por linea.</p>
             </div>
           </aside>
+        {entryType === 'PURCHASE' && (detraccionServices.length > 0 || canUseRetencionComprador || canUseRetencionProveedor || canUsePercepcion) && (
+          <div className="sales-tributary-slot">
+            <details className="sales-tributary-panel">
+              <summary className="sales-tributary-summary">
+                <strong className="sales-tributary-title">Condiciones tributarias</strong>
+                <span className={`sales-tributary-chip ${hasDetraccion || hasRetencion || hasPercepcion ? 'is-active' : 'is-soft'}`}>
+                  {hasDetraccion ? 'Detraccion' : hasRetencion ? 'Retencion' : hasPercepcion ? 'Percepcion' : 'Sin regimen'}
+                </span>
+                {(hasDetraccion || hasRetencion || hasPercepcion) && (
+                  <span className="sales-tributary-chip is-warning">SUNAT {sunatOperationTypeCode || '-'}</span>
+                )}
+              </summary>
+
+              <div className="sales-tributary-grid">
+                <label className="sales-tributary-field sales-tributary-field-wide">
+                  <span>Tipo de operacion SUNAT</span>
+                  <select
+                    value={sunatOperationTypeCode}
+                    onChange={(e) => setSunatOperationTypeCode(e.target.value)}
+                    disabled={operationTypes.length === 0}
+                  >
+                    <option value="">Selecciona operacion</option>
+                    {operationTypes.map((row) => (
+                      <option key={row.code} value={row.code}>{row.code} - {row.name}</option>
+                    ))}
+                  </select>
+                </label>
+
+                {detraccionServices.length > 0 && (
+                  <>
+                    <label className="sales-tributary-toggle">
+                      <input
+                        type="checkbox"
+                        checked={hasDetraccion}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setHasDetraccion(checked);
+                          if (checked) {
+                            setHasRetencion(false);
+                            setHasPercepcion(false);
+                          }
+                        }}
+                      />
+                      Detraccion
+                    </label>
+                    <label className="sales-tributary-field">
+                      <span>Tipo detraccion</span>
+                      <select
+                        value={detraccionServiceCode}
+                        onChange={(e) => setDetraccionServiceCode(e.target.value)}
+                        disabled={!hasDetraccion}
+                      >
+                        <option value="">Selecciona</option>
+                        {detraccionServices.map((row) => (
+                          <option key={row.code} value={row.code}>{row.code} - {row.name} ({Number(row.rate_percent).toFixed(2)}%)</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+
+                {(canUseRetencionComprador || canUseRetencionProveedor) && (
+                  <>
+                    <label className="sales-tributary-toggle">
+                      <input
+                        type="checkbox"
+                        checked={hasRetencion}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setHasRetencion(checked);
+                          if (checked) {
+                            setHasDetraccion(false);
+                            setHasPercepcion(false);
+                          }
+                        }}
+                      />
+                      Retencion
+                    </label>
+                    <label className="sales-tributary-field">
+                      <span>Tipo retencion</span>
+                      <select
+                        value={retencionTypeCode}
+                        onChange={(e) => setRetencionTypeCode(e.target.value)}
+                        disabled={!hasRetencion}
+                      >
+                        <option value="">Selecciona</option>
+                        {retencionTypes.map((row) => (
+                          <option key={row.code} value={row.code}>{row.code} - {row.name} ({Number(row.rate_percent).toFixed(2)}%)</option>
+                        ))}
+                      </select>
+                    </label>
+                    {(canUseRetencionComprador && canUseRetencionProveedor) && (
+                      <label className="sales-tributary-field">
+                        <span>Escenario retencion</span>
+                        <select value={retencionScope} onChange={(e) => setRetencionScope(e.target.value as 'COMPRADOR' | 'PROVEEDOR')} disabled={!hasRetencion}>
+                          <option value="COMPRADOR">Retencion al comprador</option>
+                          <option value="PROVEEDOR">Retencion del proveedor</option>
+                        </select>
+                      </label>
+                    )}
+                  </>
+                )}
+
+                {canUsePercepcion && (
+                  <>
+                    <label className="sales-tributary-toggle">
+                      <input
+                        type="checkbox"
+                        checked={hasPercepcion}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setHasPercepcion(checked);
+                          if (checked) {
+                            setHasDetraccion(false);
+                            setHasRetencion(false);
+                          }
+                        }}
+                      />
+                      Percepcion
+                    </label>
+                    <label className="sales-tributary-field">
+                      <span>Tipo percepcion</span>
+                      <select
+                        value={percepcionTypeCode}
+                        onChange={(e) => setPercepcionTypeCode(e.target.value)}
+                        disabled={!hasPercepcion}
+                      >
+                        <option value="">Selecciona</option>
+                        {percepcionTypes.map((row) => (
+                          <option key={row.code} value={row.code}>{row.code} - {row.name} ({Number(row.rate_percent).toFixed(2)}%)</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+
+                {(hasDetraccion || hasRetencion || hasPercepcion) && (
+                  <p className="sales-tributary-inline-note">
+                    <strong>Vista previa:</strong>{' '}
+                    {hasDetraccion && `${Number(selectedDetraccion?.rate_percent ?? 0).toFixed(2)}% = ${detraccionAmount.toFixed(2)}`}
+                    {hasRetencion && `${Number(selectedRetencion?.rate_percent ?? 0).toFixed(2)}% = ${retencionAmount.toFixed(2)} (${retencionScope})`}
+                    {hasPercepcion && `${Number(selectedPercepcion?.rate_percent ?? 0).toFixed(2)}% = ${percepcionAmount.toFixed(2)}`}
+                  </p>
+                )}
+              </div>
+            </details>
+
+            {(hasDetraccion || hasRetencion || hasPercepcion) && (
+              <div className="sales-tributary-preview" aria-live="polite">
+                <span>Operacion: {selectedOperationType ? `${selectedOperationType.code} ${selectedOperationType.name}` : '-'}</span>
+                {hasDetraccion && <span>Detraccion: {detraccionAmount.toFixed(2)} ({lookups?.detraccion_account?.account_number ?? 'sin cuenta'})</span>}
+                {hasRetencion && <span>Retencion: {retencionAmount.toFixed(2)} ({lookups?.retencion_account?.account_number ?? 'sin cuenta'})</span>}
+                {hasPercepcion && <span>Percepcion: {percepcionAmount.toFixed(2)} ({lookups?.percepcion_account?.account_number ?? 'sin cuenta'})</span>}
+              </div>
+            )}
+          </div>
+        )}
         </div>
       </form>
       )}

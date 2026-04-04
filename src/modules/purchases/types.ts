@@ -1,24 +1,53 @@
-import type { InventorySettings } from '../masters/types';
+import type { InventorySettings, PaymentMethodRow, TaxCategoryRow } from '../../shared/types/common';
 
 export type StockEntryType = 'PURCHASE' | 'ADJUSTMENT';
-
-export type PaymentMethodRow = {
-  id: number;
-  code: string;
-  name: string;
-};
-
-export type TaxCategoryRow = {
-  id: number;
-  code: string;
-  label: string;
-  rate_percent: number;
-};
 
 export type PurchasesLookups = {
   payment_methods: PaymentMethodRow[];
   tax_categories: TaxCategoryRow[];
+  active_igv_rate_percent?: number;
   inventory_settings: InventorySettings;
+  detraccion_service_codes?: Array<{
+    id: number;
+    code: string;
+    name: string;
+    rate_percent: number;
+  }>;
+  detraccion_min_amount?: number | null;
+  detraccion_account?: {
+    bank_name?: string;
+    account_number?: string;
+    account_holder?: string;
+  } | null;
+  retencion_comprador_enabled?: boolean;
+  retencion_proveedor_enabled?: boolean;
+  retencion_types?: Array<{
+    code: string;
+    name: string;
+    rate_percent: number;
+  }>;
+  retencion_account?: {
+    bank_name?: string;
+    account_number?: string;
+    account_holder?: string;
+  } | null;
+  retencion_percentage?: number;
+  percepcion_enabled?: boolean;
+  percepcion_types?: Array<{
+    code: string;
+    name: string;
+    rate_percent: number;
+  }>;
+  percepcion_account?: {
+    bank_name?: string;
+    account_number?: string;
+    account_holder?: string;
+  } | null;
+  sunat_operation_types?: Array<{
+    code: string;
+    name: string;
+    regime?: 'NONE' | 'DETRACCION' | 'RETENCION' | 'PERCEPCION';
+  }>;
 };
 
 export type StockEntryItemRow = {
@@ -55,6 +84,7 @@ export type StockEntryRow = {
   total_amount: string;
   created_at: string | null;
   payment_method?: string;
+  metadata?: Record<string, unknown> | null;
   items?: StockEntryItemRow[];
 };
 
@@ -91,5 +121,6 @@ export type CreateStockEntryPayload = {
   payment_method_id?: number;
   issue_at?: string;
   notes?: string;
+  metadata?: Record<string, unknown>;
   items: CreateStockEntryItemPayload[];
 };

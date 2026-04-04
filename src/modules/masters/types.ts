@@ -1,3 +1,6 @@
+import type { InventorySettings, PaymentMethodRow } from '../../shared/types/common';
+export type { InventorySettings, PaymentMethodRow } from '../../shared/types/common';
+
 export type MasterOption = {
   id: number;
   code: string;
@@ -30,13 +33,6 @@ export type CashRegisterRow = {
   status: number;
 };
 
-export type PaymentMethodRow = {
-  id: number;
-  code: string;
-  name: string;
-  status: number;
-};
-
 export type SeriesRow = {
   id: number;
   company_id: number;
@@ -50,6 +46,17 @@ export type SeriesRow = {
   is_enabled: boolean;
 };
 
+export type PriceTierRow = {
+  id: number;
+  company_id: number;
+  code: string;
+  name: string;
+  min_qty: number;
+  max_qty: number | null;
+  priority: number;
+  status: number;
+};
+
 export type LotRow = {
   id: number;
   product_id: number;
@@ -61,21 +68,6 @@ export type LotRow = {
   expires_at: string | null;
   unit_cost: string | null;
   status: number;
-};
-
-export type InventorySettings = {
-  company_id?: number;
-  complexity_mode: 'BASIC' | 'ADVANCED';
-  inventory_mode: 'KARDEX_SIMPLE' | 'LOT_TRACKING';
-  lot_outflow_strategy: 'MANUAL' | 'FIFO' | 'FEFO';
-  enable_inventory_pro: boolean;
-  enable_lot_tracking: boolean;
-  enable_expiry_tracking: boolean;
-  enable_advanced_reporting: boolean;
-  enable_graphical_dashboard: boolean;
-  enable_location_control: boolean;
-  allow_negative_stock: boolean;
-  enforce_lot_for_tracked: boolean;
 };
 
 export type DocumentKindRow = {
@@ -99,6 +91,7 @@ export type MastersDashboardResponse = {
   cash_registers: CashRegisterRow[];
   payment_methods: PaymentMethodRow[];
   series: SeriesRow[];
+  price_tiers: PriceTierRow[];
   lots: LotRow[];
   units: UnitRow[];
   inventory_settings: InventorySettings;
@@ -108,6 +101,7 @@ export type MastersDashboardResponse = {
     cash_registers_total: number;
     payment_methods_total: number;
     series_total: number;
+    price_tiers_total: number;
     lots_total: number;
     units_enabled_total: number;
   };
@@ -118,7 +112,18 @@ export type CommerceFeatureRow = {
     | 'PRODUCT_MULTI_UOM'
     | 'PRODUCT_UOM_CONVERSIONS'
     | 'PRODUCT_WHOLESALE_PRICING'
-    | 'SALES_SELLER_TO_CASHIER';
+    | 'INVENTORY_PRODUCTS_BY_PROFILE'
+    | 'INVENTORY_PRODUCT_MASTERS_BY_PROFILE'
+    | 'SALES_CUSTOMER_PRICE_PROFILE'
+    | 'SALES_SELLER_TO_CASHIER'
+    | 'SALES_ANTICIPO_ENABLED'
+    | 'SALES_DETRACCION_ENABLED'
+    | 'SALES_RETENCION_ENABLED'
+    | 'SALES_PERCEPCION_ENABLED'
+    | 'PURCHASES_DETRACCION_ENABLED'
+    | 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
+    | 'PURCHASES_RETENCION_PROVEEDOR_ENABLED'
+    | 'PURCHASES_PERCEPCION_ENABLED';
   is_enabled: boolean;
   config: Record<string, unknown> | null;
 };

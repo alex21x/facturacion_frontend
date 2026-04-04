@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { docKindLabel } from '../../../shared/utils/docKind';
-import { fetchInventoryLots, fetchInventoryProducts } from '../../inventory/api';
-import type { InventoryLotRow, InventoryProduct } from '../../inventory/types';
+import {
+  fetchSalesInventoryLots,
+  fetchSalesInventoryProducts,
+  type InventoryLotRow,
+  type InventoryProduct,
+} from '../api/facade';
 import {
   convertCommercialDocument,
   createCommercialDocument,
@@ -10,11 +14,17 @@ import {
   fetchCommercialDocumentDetails,
   fetchCustomerAutocomplete,
   fetchCommercialDocuments,
+  fetchReferenceDocuments,
   fetchProductCommercialConfig,
   fetchSalesLookups,
   fetchSeriesNumbers,
+  retryTaxBridgeSend,
+  sendSunatVoidCommunication,
+  downloadSunatXml,
+  downloadSunatCdr,
+  updateCommercialDocument,
+  voidCommercialDocument,
 } from '../api';
-import { fetchCommerceSettings } from '../../masters/api';
 import {
   buildCommercialDocument80mmHtml,
   buildCommercialDocumentA4Html,
@@ -28,6 +38,7 @@ import type {
   SalesCustomerSuggestion,
   SalesDraftItem,
   SalesLookups,
+  SalesReferenceDocument,
   SeriesNumber,
 } from '../types';
 
@@ -52,6 +63,7 @@ type ProductCommercialFeatures = {
   PRODUCT_MULTI_UOM: boolean;
   PRODUCT_UOM_CONVERSIONS: boolean;
   PRODUCT_WHOLESALE_PRICING: boolean;
+  SALES_CUSTOMER_PRICE_PROFILE?: boolean;
 };
 
 type ProductCommercialSaleUnit = {
@@ -86,6 +98,22 @@ type ProductCommercialConfig = {
   product_units: ProductCommercialSaleUnit[];
   conversions: ProductCommercialConversion[];
   wholesale_prices: ProductCommercialWholesalePrice[];
+  profile_tier_prices?: Array<{
+    tier_id: number;
+    currency_id: number;
+    unit_price: number;
+    valid_from: string | null;
+    valid_to: string | null;
+    status: number;
+  }>;
+};
+
+type AutoPriceDecision = {
+  price: number;
+  note: string;
+  source: 'MANUAL' | 'TIER' | 'PROFILE';
+  priceTierId: number | null;
+  discountPercent: number;
 };
 
 type DocumentAdvancedFilters = {
@@ -161,14 +189,14 @@ function resolveWholesalePrice(
   qty: number,
   unitId: number | null,
   fallbackPrice: number
-): { price: number; note: string } {
+): AutoPriceDecision {
   if (!config?.features.PRODUCT_WHOLESALE_PRICING || qty <= 0) {
-    return { price: fallbackPrice, note: '' };
+    return { price: fallbackPrice, note: '', source: 'MANUAL', priceTierId: null, discountPercent: 0 };
   }
 
   const activeRows = (config.wholesale_prices ?? []).filter((row) => Number(row.status) === 1);
   if (activeRows.length === 0) {
-    return { price: fallbackPrice, note: '' };
+    return { price: fallbackPrice, note: '', source: 'MANUAL', priceTierId: null, discountPercent: 0 };
   }
 
   const inRange = activeRows.filter((row) => {
@@ -178,7 +206,7 @@ function resolveWholesalePrice(
   });
 
   if (inRange.length === 0) {
-    return { price: fallbackPrice, note: '' };
+    return { price: fallbackPrice, note: '', source: 'MANUAL', priceTierId: null, discountPercent: 0 };
   }
 
   const sameUnit = inRange
@@ -191,13 +219,79 @@ function resolveWholesalePrice(
 
   const picked = sameUnit[0] ?? generic[0] ?? null;
   if (!picked) {
-    return { price: fallbackPrice, note: '' };
+    return { price: fallbackPrice, note: '', source: 'MANUAL', priceTierId: null, discountPercent: 0 };
   }
 
   return {
     price: Number(picked.unit_price),
     note: `Precio por mayor aplicado desde cantidad ${picked.min_qty}${picked.max_qty ? ` hasta ${picked.max_qty}` : '+'}.`,
+    source: 'TIER',
+    priceTierId: Number(picked.price_tier_id),
+    discountPercent: 0,
   };
+}
+
+function resolveCustomerProfilePrice(
+  config: ProductCommercialConfig | null,
+  customer: SalesCustomerSuggestion | null,
+  qty: number,
+  unitId: number | null,
+  currencyId: number,
+  fallbackPrice: number,
+  customerProfileEnabled: boolean
+): AutoPriceDecision {
+  const wholesale = resolveWholesalePrice(config, qty, unitId, fallbackPrice);
+
+  if (!customerProfileEnabled || !customer) {
+    return wholesale;
+  }
+
+  const profileStatus = Number(customer.price_profile_status ?? 1);
+  if (profileStatus !== 1) {
+    return wholesale;
+  }
+
+  const customerTierId = customer.default_tier_id ? Number(customer.default_tier_id) : null;
+  const rows = (config?.profile_tier_prices ?? []).filter((row) => Number(row.status) === 1);
+  if (customerTierId && rows.length > 0) {
+    const now = Date.now();
+    const tierRows = rows
+      .filter((row) => Number(row.tier_id) === customerTierId && Number(row.currency_id) === Number(currencyId))
+      .filter((row) => {
+        const from = row.valid_from ? new Date(row.valid_from).getTime() : null;
+        const to = row.valid_to ? new Date(row.valid_to).getTime() : null;
+        return (from === null || from <= now) && (to === null || to >= now);
+      })
+      .sort((a, b) => {
+        const aFrom = a.valid_from ? new Date(a.valid_from).getTime() : 0;
+        const bFrom = b.valid_from ? new Date(b.valid_from).getTime() : 0;
+        return bFrom - aFrom;
+      });
+
+    if (tierRows.length > 0) {
+      return {
+        price: Number(tierRows[0].unit_price),
+        note: 'Precio por perfil de cliente aplicado.',
+        source: 'PROFILE',
+        priceTierId: customerTierId,
+        discountPercent: 0,
+      };
+    }
+  }
+
+  const discountPercent = Math.max(0, Number(customer.discount_percent ?? 0));
+  if (discountPercent > 0) {
+    const discounted = Number(wholesale.price) * (1 - (discountPercent / 100));
+    return {
+      price: Math.max(0, Number(discounted.toFixed(6))),
+      note: `Descuento por perfil de cliente aplicado (${discountPercent.toFixed(2)}%).`,
+      source: 'PROFILE',
+      priceTierId: customerTierId,
+      discountPercent,
+    };
+  }
+
+  return wholesale;
 }
 
 function todayAsInputDate(): string {
@@ -274,6 +368,14 @@ function normalizePrintableTotals(lookups: SalesLookups | null, items: SalesDraf
 
 const TODAY = todayAsInputDate();
 
+function createCreditInstallmentRow(dueDate: string, amount = 0, observation = '') {
+  return {
+    amount: Number(amount.toFixed(2)),
+    dueDate,
+    observation,
+  };
+}
+
 const initialForm: CreateDocumentForm = {
   documentKind: 'RECEIPT',
   customerId: 0,
@@ -291,6 +393,18 @@ const initialForm: CreateDocumentForm = {
   issueDate: TODAY,
   dueDate: TODAY,
   series: '',
+  noteAffectedDocumentId: null,
+  noteReasonCode: '',
+  hasDetraccion: false,
+  detraccionServiceCode: '',
+  hasRetencion: false,
+  retencionTypeCode: '',
+  hasPercepcion: false,
+  percepcionTypeCode: '',
+  sunatOperationTypeCode: '',
+  isCreditSale: false,
+  creditInstallments: [],
+  advanceAmount: 0,
   qty: 1,
   unitPrice: 0,
 };
@@ -343,9 +457,366 @@ function buildDocumentFilterParams(filter: DocumentViewFilter): {
   return {};
 }
 
+function shouldApplyCashRegisterFilter(mode: SalesFlowMode, viewFilter: DocumentViewFilter): boolean {
+  if (mode !== 'SELLER_TO_CASHIER') {
+    return true;
+  }
+
+  // In separated mode, commercial-order/source views should not be tied to a single cash register.
+  return viewFilter === 'TRIBUTARY';
+}
+
+function commercialStatusLabel(status: string): string {
+  const normalized = String(status || '').toUpperCase();
+
+  if (normalized === 'DRAFT') return 'Borrador';
+  if (normalized === 'APPROVED') return 'Aprobado';
+  if (normalized === 'ISSUED') return 'Emitido';
+  if (normalized === 'VOID') return 'Anulado';
+  if (normalized === 'CANCELED') return 'Cancelado';
+
+  return status;
+}
+
+function sunatStatusLabel(status: string | null | undefined): string {
+  const normalized = String(status || '').toUpperCase();
+
+  if (!normalized) return 'No enviado';
+  if (normalized === 'ACCEPTED') return 'Aceptado';
+  if (normalized === 'REJECTED') return 'Rechazado';
+  if (normalized === 'SENDING') return 'Enviando';
+  if (normalized === 'PENDING_MANUAL') return 'Pendiente manual';
+  if (normalized === 'CONFIG_INCOMPLETE') return 'Config incompleta';
+  if (normalized === 'HTTP_ERROR') return 'Error HTTP';
+  if (normalized === 'NETWORK_ERROR') return 'Error red';
+  if (normalized === 'ERROR') return 'Error';
+  if (normalized === 'SENT') return 'Enviado';
+
+  return normalized;
+}
+
+type SunatUiState = {
+  statusKey: string;
+  label: string;
+  className: string;
+  isFinal: boolean;
+};
+
+type SunatToastState = {
+  tone: 'ok' | 'warn' | 'bad';
+  title: string;
+  detail: string;
+};
+
+type EditingDocumentContext = {
+  id: number;
+  documentKind: string;
+  series: string;
+  number: number;
+};
+
+function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFilter {
+  const normalized = String(documentKind || '').toUpperCase();
+
+  if (['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(normalized)) {
+    return 'TRIBUTARY';
+  }
+
+  if (normalized === 'QUOTATION') {
+    return 'QUOTATION';
+  }
+
+  if (normalized === 'SALES_ORDER') {
+    return 'SALES_ORDER';
+  }
+
+  return 'ALL';
+}
+
+function resolveSunatUiState(row: CommercialDocumentListItem): SunatUiState {
+  const commercialStatus = String(row.status ?? '').toUpperCase();
+  if (commercialStatus === 'VOID' || commercialStatus === 'CANCELED') {
+    return {
+      statusKey: 'VOIDED',
+      label: 'Anulado',
+      className: 'is-neutral',
+      isFinal: true,
+    };
+  }
+
+  const normalized = String(row.sunat_status ?? '').trim().toUpperCase();
+  const label = sunatStatusLabel(normalized);
+  const className = sunatStatusClass(normalized);
+
+  return {
+    statusKey: normalized || 'NO_ENVIADO',
+    label,
+    className,
+    isFinal: normalized === 'ACCEPTED',
+  };
+}
+
+function sunatStatusClass(status: string | null | undefined): string {
+  const normalized = String(status || '').toUpperCase();
+
+  if (normalized === 'ACCEPTED') return 'is-ok';
+  if (normalized === 'REJECTED') return 'is-bad';
+  if (normalized === 'SENDING' || normalized === 'SENT') return 'is-progress';
+  if (normalized === 'HTTP_ERROR' || normalized === 'NETWORK_ERROR' || normalized === 'ERROR' || normalized === 'CONFIG_INCOMPLETE') return 'is-warn';
+
+  return 'is-neutral';
+}
+
+function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: boolean): boolean {
+  if (!bridgeEnabled) {
+    return false;
+  }
+
+  if (!['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(String(row.document_kind).toUpperCase())) {
+    return false;
+  }
+
+  if (String(row.status).toUpperCase() !== 'ISSUED') {
+    return false;
+  }
+
+  const sunatUi = resolveSunatUiState(row);
+  return !sunatUi.isFinal && sunatUi.statusKey !== 'SENDING';
+}
+
+function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocuments: boolean): boolean {
+  if (!canVoidDocuments) {
+    return false;
+  }
+
+  if (!isTributaryDocumentKind(row.document_kind)) {
+    return false;
+  }
+
+  if (String(row.status).toUpperCase() !== 'ISSUED') {
+    return false;
+  }
+
+  const status = String(row.sunat_status ?? '').trim().toUpperCase();
+  return status === '' || status === 'PENDING_MANUAL' || status === 'CONFIG_INCOMPLETE';
+}
+
+function canRequestSunatVoidCommunication(
+  row: CommercialDocumentListItem
+): boolean {
+  if (!['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(String(row.document_kind).toUpperCase())) {
+    return false;
+  }
+
+  if (String(row.status).toUpperCase() !== 'ISSUED') {
+    return false;
+  }
+
+  const sunatStatus = String(row.sunat_status ?? '').trim().toUpperCase();
+  return sunatStatus === 'ACCEPTED';
+}
+
+function canOpenSunatActionsMenu(
+  row: CommercialDocumentListItem,
+  bridgeEnabled: boolean,
+  canVoidDocuments: boolean
+): boolean {
+  // Any ISSUED tributary doc that is ACCEPTED should always open (XML/CDR/NC/ND options)
+  if (isTributaryDocumentKind(row.document_kind)
+    && String(row.status).toUpperCase() === 'ISSUED'
+    && String(row.sunat_status ?? '').toUpperCase() === 'ACCEPTED') {
+    return true;
+  }
+  return canSendSunatManually(row, bridgeEnabled)
+    || canVoidBeforeSunatSend(row, canVoidDocuments)
+    || canRequestSunatVoidCommunication(row);
+}
+
+function isTributaryDocumentKind(kind: string | null | undefined): boolean {
+  const normalized = String(kind ?? '').toUpperCase();
+  return ['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(normalized);
+}
+
+function canEditCommercialDocument(
+  row: CommercialDocumentListItem,
+  allowDraftEdit: boolean,
+  allowIssuedBeforeFinalSunatEdit: boolean
+): boolean {
+  const status = String(row.status ?? '').toUpperCase();
+
+  if (status === 'DRAFT') {
+    return allowDraftEdit;
+  }
+
+  if (status === 'ISSUED' && isTributaryDocumentKind(row.document_kind)) {
+    return allowIssuedBeforeFinalSunatEdit && !resolveSunatUiState(row).isFinal;
+  }
+
+  return false;
+}
+
+function hasActiveCommercialConversion(row: CommercialDocumentListItem): boolean {
+  return toBooleanFlag(row.has_tributary_conversion) || toBooleanFlag(row.has_order_conversion);
+}
+
+function resolveEditControlState(
+  row: CommercialDocumentListItem,
+  allowDraftEdit: boolean,
+  allowIssuedBeforeFinalSunatEdit: boolean
+): { visible: boolean; enabled: boolean; reason: string } {
+  const status = String(row.status ?? '').toUpperCase();
+
+  if (status === 'DRAFT') {
+    return {
+      visible: true,
+      enabled: allowDraftEdit,
+      reason: allowDraftEdit ? 'Editar comprobante' : 'Edicion de borradores deshabilitada por configuracion',
+    };
+  }
+
+  if (status === 'ISSUED' && isTributaryDocumentKind(row.document_kind)) {
+    const sunatUi = resolveSunatUiState(row);
+    if (sunatUi.isFinal) {
+      return {
+        visible: true,
+        enabled: false,
+        reason: 'SUNAT en estado final: no se puede editar',
+      };
+    }
+
+    return {
+      visible: true,
+      enabled: true,
+      reason: 'Editar comprobante emitido (SUNAT no final)',
+    };
+  }
+
+  const kind = String(row.document_kind ?? '').toUpperCase();
+  if (['QUOTATION', 'SALES_ORDER'].includes(kind) && ['DRAFT', 'APPROVED', 'ISSUED'].includes(status)) {
+    if (hasActiveCommercialConversion(row)) {
+      return {
+        visible: true,
+        enabled: false,
+        reason: 'Documento ya convertido: no se puede editar',
+      };
+    }
+
+    return {
+      visible: true,
+      enabled: allowDraftEdit,
+      reason: allowDraftEdit ? 'Editar pedido comercial' : 'Edicion de pedidos comerciales deshabilitada por configuracion',
+    };
+  }
+
+  return {
+    visible: false,
+    enabled: false,
+    reason: '',
+  };
+}
+
+function manualSunatButtonLabel(status: string | null | undefined): string {
+  const normalized = String(status ?? '').trim().toUpperCase();
+  return normalized === 'PENDING_MANUAL' || normalized === '' ? 'Enviar SUNAT' : 'Reenviar SUNAT';
+}
+
+function summarizeBridgeResponse(response: unknown): string {
+  if (typeof response === 'string') {
+    const compact = response.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (compact !== '') {
+      return compact.length > 240 ? `${compact.slice(0, 240)}...` : compact;
+    }
+    return '';
+  }
+
+  if (!response || typeof response !== 'object') {
+    return '';
+  }
+
+  const data = response as Record<string, unknown>;
+  const sunatCode = data.cod_sunat ?? data.codigo ?? data.error_code ?? null;
+  const bridgeRes = data.res ?? data.status ?? null;
+  const message = data.msj_sunat ?? data.msg ?? data.message ?? data.descripcion ?? null;
+
+  const parts: string[] = [];
+  if (bridgeRes !== null && bridgeRes !== undefined && String(bridgeRes).trim() !== '') {
+    parts.push(`res=${String(bridgeRes).trim()}`);
+  }
+  if (sunatCode !== null && sunatCode !== undefined && String(sunatCode).trim() !== '') {
+    parts.push(`cod_sunat=${String(sunatCode).trim()}`);
+  }
+  if (message !== null && message !== undefined && String(message).trim() !== '') {
+    parts.push(String(message).trim());
+  }
+
+  if (parts.length === 0) {
+    const raw = data.raw;
+    if (typeof raw === 'string' && raw.trim() !== '') {
+      const compactRaw = raw.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      if (compactRaw !== '') {
+        return compactRaw.length > 240 ? `${compactRaw.slice(0, 240)}...` : compactRaw;
+      }
+    }
+
+    const serialized = JSON.stringify(data);
+    if (serialized && serialized !== '{}') {
+      return serialized.length > 240 ? `${serialized.slice(0, 240)}...` : serialized;
+    }
+  }
+
+  return parts.join(' | ');
+}
+
+function formatStoredDateTime(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) {
+    return '-';
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    const parts = new Intl.DateTimeFormat('es-PE', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(parsed);
+
+    const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+    const day = pick('day');
+    const month = pick('month');
+    const year = pick('year');
+    const hour = pick('hour');
+    const minute = pick('minute');
+    const second = pick('second');
+
+    if (day && month && year && hour && minute && second) {
+      return `${day}/${month}/${year}, ${hour}:${minute}:${second}`;
+    }
+
+    return new Intl.DateTimeFormat('es-PE', {
+      timeZone: 'America/Lima',
+      dateStyle: 'short',
+      timeStyle: 'medium',
+      hour12: false,
+    }).format(parsed);
+  }
+
+  return raw;
+}
+
 function resolveSalesFlowMode(features: Array<{ feature_code: string; is_enabled: boolean }>): SalesFlowMode {
   const row = features.find((item) => item.feature_code === 'SALES_SELLER_TO_CASHIER');
   return row?.is_enabled ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER';
+}
+
+function featureEnabled(features: Array<{ feature_code: string; is_enabled: boolean }> | undefined, code: string, defaultValue = false): boolean {
+  const row = (features ?? []).find((item) => item.feature_code === code);
+  return row ? Boolean(row.is_enabled) : defaultValue;
 }
 
 export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, currentUserRoleCode, currentUserRoleProfile }: SalesViewProps) {
@@ -358,14 +829,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [customerSuggestions, setCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [productSuggestions, setProductSuggestions] = useState<InventoryProduct[]>([]);
   const [lots, setLots] = useState<InventoryLotRow[]>([]);
+  const [referenceDocuments, setReferenceDocuments] = useState<SalesReferenceDocument[]>([]);
+  const [loadingReferenceDocument, setLoadingReferenceDocument] = useState(false);
   const [form, setForm] = useState<CreateDocumentForm>(initialForm);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string>('');
+  const [sunatToast, setSunatToast] = useState<SunatToastState | null>(null);
+  const [sunatSendingDocumentId, setSunatSendingDocumentId] = useState<number | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<SalesCustomerSuggestion | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<InventoryProduct | null>(null);
   const [selectedProductCommercialConfig, setSelectedProductCommercialConfig] = useState<ProductCommercialConfig | null>(null);
   const [selectedProductUnitOptions, setSelectedProductUnitOptions] = useState<SalesLookups['units']>([]);
+  const [customerProfilePricingEnabled, setCustomerProfilePricingEnabled] = useState(false);
   const [autoPriceHint, setAutoPriceHint] = useState('');
+  const [autoPriceSource, setAutoPriceSource] = useState<'MANUAL' | 'TIER' | 'PROFILE'>('MANUAL');
+  const [autoPriceTierId, setAutoPriceTierId] = useState<number | null>(null);
+  const [autoPriceDiscountPercent, setAutoPriceDiscountPercent] = useState(0);
   const [cart, setCart] = useState<SalesDraftItem[]>([]);
   const [showTaxBreakdown, setShowTaxBreakdown] = useState(false);
   const [activeCustomerIndex, setActiveCustomerIndex] = useState(-1);
@@ -385,6 +864,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     html: string;
     variant: 'compact' | 'wide';
   }>(null);
+  const [creditPlanModalOpen, setCreditPlanModalOpen] = useState(false);
   const [convertPreviewModal, setConvertPreviewModal] = useState<null | {
     source: CommercialDocumentListItem;
     targetDocumentKind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER';
@@ -456,7 +936,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [seriesExpanded, setSeriesExpanded] = useState(false);
   const [cashierDefaultApplied, setCashierDefaultApplied] = useState(false);
   const [showModeSummaryDetails, setShowModeSummaryDetails] = useState(false);
+  const [showRuntimeConfig, setShowRuntimeConfig] = useState(false);
   const [priceTaxMode, setPriceTaxMode] = useState<PriceTaxMode>('INCLUSIVE');
+  const [editingDocumentId, setEditingDocumentId] = useState<number | null>(null);
+  const [editingDocumentContext, setEditingDocumentContext] = useState<EditingDocumentContext | null>(null);
+  const [focusDocumentId, setFocusDocumentId] = useState<number | null>(null);
+  const [highlightedDocumentId, setHighlightedDocumentId] = useState<number | null>(null);
+  const [pinnedDocumentId, setPinnedDocumentId] = useState<number | null>(null);
 
   const normalizedRoleCode = (currentUserRoleCode ?? '').toUpperCase();
   const normalizedRoleProfile = (currentUserRoleProfile ?? '').toUpperCase();
@@ -467,6 +953,26 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const canUseSellWorkspace = true;
   const shouldPrioritizePendingOrders = isSeparatedMode && isCashierUser;
   const canConvertInCurrentMode = !isSeparatedMode || (isCashierUser && !isAdminUser);
+  const canEditDraftInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DRAFT_EDIT', true);
+  const canEditIssuedBeforeSunatFinalInCurrentMode = featureEnabled(
+    lookups?.commerce_features,
+    'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
+    true
+  );
+  const allowVoidForSeller = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_VOID_FOR_SELLER', true);
+  const allowVoidForCashier = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_VOID_FOR_CASHIER', true);
+  const allowVoidForAdmin = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_VOID_FOR_ADMIN', true);
+  const canVoidByProfile = isAdminUser
+    ? allowVoidForAdmin
+    : isCashierUser
+      ? allowVoidForCashier
+      : isSellerUser
+        ? allowVoidForSeller
+        : false;
+  const canVoidDocumentsInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID', true) && canVoidByProfile;
+  const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
+  const advancesEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ANTICIPO_ENABLED', false);
+  const taxBridgeEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE', false);
 
   const salesFlowModeLabel = salesFlowMode === 'SELLER_TO_CASHIER'
     ? 'Vendedor -> Caja independiente'
@@ -481,13 +987,77 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productInputRef = useRef<HTMLInputElement | null>(null);
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
+  const focusedReportRowRef = useRef<HTMLTableRowElement | null>(null);
+  const suppressNextPinnedResetRef = useRef(false);
+
+  useEffect(() => {
+    if (!sunatToast) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSunatToast(null);
+    }, 9000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [sunatToast]);
+
+  useEffect(() => {
+    if (salesWorkspaceMode !== 'REPORT' || focusDocumentId === null) {
+      return;
+    }
+
+    const existsInCurrentPage = documents.some((row) => Number(row.id) === focusDocumentId);
+    if (!existsInCurrentPage) {
+      return;
+    }
+
+    const rowEl = focusedReportRowRef.current;
+    if (!rowEl) {
+      return;
+    }
+
+    rowEl.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
+    setHighlightedDocumentId(focusDocumentId);
+    setFocusDocumentId(null);
+  }, [documents, focusDocumentId, salesWorkspaceMode]);
+
+  useEffect(() => {
+    if (highlightedDocumentId === null) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedDocumentId(null);
+    }, 3400);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [highlightedDocumentId]);
+
+  useEffect(() => {
+    if (suppressNextPinnedResetRef.current) {
+      suppressNextPinnedResetRef.current = false;
+      return;
+    }
+
+    setPinnedDocumentId(null);
+  }, [documentViewFilter, documentsPage]);
 
   const isTributaryDocument = useMemo(() => {
     return TRIBUTARY_DOCUMENTS.includes(form.documentKind);
   }, [form.documentKind]);
   const effectiveDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
+  const isCreditNote = effectiveDocumentKind === 'CREDIT_NOTE';
+  const isDebitNote = effectiveDocumentKind === 'DEBIT_NOTE';
+  const isNoteDocument = isCreditNote || isDebitNote;
   const isCurrentPreDocument = effectiveDocumentKind === 'QUOTATION' || effectiveDocumentKind === 'SALES_ORDER';
   const canCreateDocumentInCurrentMode = !isSeparatedMode || !isCashierUser || !isCurrentPreDocument;
+  const activeNoteReasons = isCreditNote
+    ? (lookups?.credit_note_reasons ?? [])
+    : isDebitNote
+      ? (lookups?.debit_note_reasons ?? [])
+      : [];
+  const selectedReferenceDocument = referenceDocuments.find((row) => row.id === Number(form.noteAffectedDocumentId ?? 0)) ?? null;
 
   const selectedTaxCategory = useMemo(() => {
     return lookups?.tax_categories.find((row) => row.id === form.taxCategoryId) ?? null;
@@ -540,6 +1110,134 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }, 0);
   }, [cart]);
   const grandTotal = useMemo(() => subtotal + taxTotal, [subtotal, taxTotal]);
+  const creditInstallments = form.creditInstallments ?? [];
+  const normalizedAdvanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
+  const cappedAdvanceAmount = Math.min(normalizedAdvanceAmount, grandTotal);
+  const creditPendingTotal = Math.max(0, Number((grandTotal - cappedAdvanceAmount).toFixed(2)));
+  const creditInstallmentsTotal = creditInstallments.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
+  const creditObservationCount = creditInstallments.filter((row) => String(row.observation ?? '').trim() !== '').length;
+  const isPaymentMethodCredit = useMemo(() => {
+    const row = (lookups?.payment_methods ?? []).find((item) => item.id === form.paymentMethodId);
+    const code = String(row?.code ?? '').toUpperCase();
+    const name = String(row?.name ?? '').toUpperCase();
+    return code.includes('CREDIT') || code.includes('CREDITO') || name.includes('CREDITO') || name.includes('CRÉDITO');
+  }, [lookups?.payment_methods, form.paymentMethodId]);
+
+  const isInvoiceDocument = effectiveDocumentKind === 'INVOICE';
+  const selectedDetractionService = useMemo(() => {
+    if (!isInvoiceDocument || !form.hasDetraccion || !form.detraccionServiceCode) {
+      return null;
+    }
+    return (lookups?.detraccion_service_codes ?? []).find((row) => row.code === form.detraccionServiceCode) ?? null;
+  }, [isInvoiceDocument, form.hasDetraccion, form.detraccionServiceCode, lookups?.detraccion_service_codes]);
+
+  const detraccionRate = useMemo(() => selectedDetractionService?.rate_percent ?? 0, [selectedDetractionService]);
+  const detraccionAmount = useMemo(() => {
+    return form.hasDetraccion && detraccionRate > 0 ? Number((grandTotal * detraccionRate / 100).toFixed(2)) : 0;
+  }, [form.hasDetraccion, detraccionRate, grandTotal]);
+
+  const retencionTypes = lookups?.retencion_types ?? [];
+  const percepcionTypes = lookups?.percepcion_types ?? [];
+  const sunatOperationTypes = lookups?.sunat_operation_types ?? [];
+  const pickOperationTypeCode = (regime: 'NONE' | 'DETRACCION' | 'RETENCION' | 'PERCEPCION'): string => {
+    return (
+      sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === regime)?.code
+      ?? sunatOperationTypes[0]?.code
+      ?? ''
+    );
+  };
+  const selectedRetencionType = useMemo(() => {
+    if (!form.hasRetencion) {
+      return null;
+    }
+
+    if (!form.retencionTypeCode) {
+      return retencionTypes[0] ?? null;
+    }
+
+    return retencionTypes.find((row) => row.code === form.retencionTypeCode) ?? retencionTypes[0] ?? null;
+  }, [form.hasRetencion, form.retencionTypeCode, retencionTypes]);
+
+  const retencionPercentage = selectedRetencionType?.rate_percent ?? lookups?.retencion_percentage ?? 3.00;
+  const retencionAmount = useMemo(() => {
+    return form.hasRetencion ? Number((grandTotal * retencionPercentage / 100).toFixed(2)) : 0;
+  }, [form.hasRetencion, retencionPercentage, grandTotal]);
+
+  const selectedPercepcionType = useMemo(() => {
+    if (!form.hasPercepcion) {
+      return null;
+    }
+
+    if (!form.percepcionTypeCode) {
+      return percepcionTypes[0] ?? null;
+    }
+
+    return percepcionTypes.find((row) => row.code === form.percepcionTypeCode) ?? percepcionTypes[0] ?? null;
+  }, [form.hasPercepcion, form.percepcionTypeCode, percepcionTypes]);
+
+  const percepcionPercentage = selectedPercepcionType?.rate_percent ?? 2.00;
+  const percepcionAmount = useMemo(() => {
+    return form.hasPercepcion ? Number((grandTotal * percepcionPercentage / 100).toFixed(2)) : 0;
+  }, [form.hasPercepcion, percepcionPercentage, grandTotal]);
+
+  const selectedSunatOperationType = useMemo(() => {
+    if (!(form.hasDetraccion || form.hasRetencion || form.hasPercepcion)) {
+      return null;
+    }
+
+    if (!form.sunatOperationTypeCode) {
+      if (form.hasDetraccion) {
+        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'DETRACCION') ?? sunatOperationTypes[0] ?? null;
+      }
+      if (form.hasRetencion) {
+        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'RETENCION') ?? sunatOperationTypes[0] ?? null;
+      }
+      if (form.hasPercepcion) {
+        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'PERCEPCION') ?? sunatOperationTypes[0] ?? null;
+      }
+      return sunatOperationTypes[0] ?? null;
+    }
+
+    return sunatOperationTypes.find((row) => row.code === form.sunatOperationTypeCode) ?? sunatOperationTypes[0] ?? null;
+  }, [form.hasDetraccion, form.hasRetencion, form.hasPercepcion, form.sunatOperationTypeCode, sunatOperationTypes]);
+
+  useEffect(() => {
+    if (!selectedSunatOperationType) {
+      return;
+    }
+
+    const regime = selectedSunatOperationType.regime ?? 'NONE';
+
+    setForm((prev) => {
+      const nextState = {
+        ...prev,
+        hasDetraccion: regime === 'DETRACCION',
+        hasRetencion: regime === 'RETENCION',
+        hasPercepcion: regime === 'PERCEPCION',
+        detraccionServiceCode: regime === 'DETRACCION' ? prev.detraccionServiceCode : '',
+        retencionTypeCode: regime === 'RETENCION' ? (prev.retencionTypeCode || (retencionTypes[0]?.code ?? '')) : '',
+        percepcionTypeCode: regime === 'PERCEPCION' ? (prev.percepcionTypeCode || (percepcionTypes[0]?.code ?? '')) : '',
+      };
+
+      if (
+        nextState.hasDetraccion === prev.hasDetraccion &&
+        nextState.hasRetencion === prev.hasRetencion &&
+        nextState.hasPercepcion === prev.hasPercepcion &&
+        nextState.detraccionServiceCode === prev.detraccionServiceCode &&
+        nextState.retencionTypeCode === prev.retencionTypeCode &&
+        nextState.percepcionTypeCode === prev.percepcionTypeCode
+      ) {
+        return prev;
+      }
+
+      return nextState;
+    });
+  }, [selectedSunatOperationType, retencionTypes, percepcionTypes]);
+
+  const detractionMinAmount = lookups?.detraccion_min_amount ?? 700;
+  const detractionAutoEligible = isInvoiceDocument
+    && (lookups?.detraccion_service_codes ?? []).length > 0
+    && grandTotal >= detractionMinAmount;
 
   const selectedCurrency = useMemo(() => {
     return lookups?.currencies.find((row) => row.id === form.currencyId) ?? null;
@@ -556,7 +1254,97 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return lookups?.units?.[0] ?? null;
   }, [lookups]);
 
+  useEffect(() => {
+    if (!detractionAutoEligible) {
+      return;
+    }
+
+    setForm((prev) => {
+      if (prev.hasDetraccion) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        hasDetraccion: true,
+        sunatOperationTypeCode: prev.sunatOperationTypeCode || pickOperationTypeCode('DETRACCION'),
+      };
+    });
+  }, [detractionAutoEligible, sunatOperationTypes]);
+
+  useEffect(() => {
+    setForm((prev) => {
+      if (isPaymentMethodCredit) {
+        if (prev.isCreditSale) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          isCreditSale: true,
+        };
+      }
+
+      if (!prev.isCreditSale && (prev.creditInstallments ?? []).length === 0) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        isCreditSale: false,
+        creditInstallments: [],
+      };
+    });
+  }, [isPaymentMethodCredit]);
+
+  useEffect(() => {
+    if (advancesEnabled) {
+      return;
+    }
+
+    setForm((prev) => {
+      if (!prev.advanceAmount) {
+        return prev;
+      }
+      return {
+        ...prev,
+        advanceAmount: 0,
+      };
+    });
+  }, [advancesEnabled]);
+
+  useEffect(() => {
+    if (!form.isCreditSale) {
+      return;
+    }
+
+    const current = form.creditInstallments ?? [];
+    if (current.length > 0) {
+      return;
+    }
+
+    setForm((prev) => ({
+      ...prev,
+      creditInstallments: [createCreditInstallmentRow(
+        prev.dueDate || prev.issueDate || TODAY,
+        Math.max(0, grandTotal - Math.max(0, Number(prev.advanceAmount ?? 0)))
+      )],
+    }));
+  }, [form.isCreditSale, form.creditInstallments, grandTotal]);
+
+  useEffect(() => {
+    if (form.isCreditSale) {
+      return;
+    }
+
+    setCreditPlanModalOpen(false);
+  }, [form.isCreditSale]);
+
   const canAddDraftItem = useMemo(() => {
+    if (isNoteDocument) {
+      return false;
+    }
+
     const validTax = !isTributaryDocument || Boolean(form.taxCategoryId);
 
     if (!validTax || form.qty <= 0 || Number(form.unitPrice) < 0) {
@@ -581,6 +1369,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     lots.length,
     resolvedDraftLotId,
     selectedProduct,
+    isNoteDocument,
   ]);
 
   const canSubmitDocument = useMemo(() => {
@@ -617,6 +1406,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         productId: form.isManualItem ? null : form.productId,
         unitId: form.unitId,
         lotId: resolvedDraftLotId,
+        priceTierId: form.isManualItem ? null : autoPriceTierId,
+        wholesaleDiscountPercent: form.isManualItem ? null : autoPriceDiscountPercent,
+        priceSource: form.isManualItem ? 'MANUAL' : autoPriceSource,
         taxCategoryId: isTributaryDocument ? form.taxCategoryId : null,
         priceIncludesTax: isDraftPriceTaxInclusive,
         qtyBase: form.isManualItem ? null : Number(draftQtyBase),
@@ -658,13 +1450,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   ]);
 
   const tributaryPreview = useMemo(() => {
+    const activeIgvRate = Number(lookups?.active_igv_rate_percent ?? 18);
     const base = {
       discountTotal: 0,
       inafectaTotal: 0,
       exoneradaTotal: 0,
       gravadaTotal: 0,
       igvTotal: 0,
-      igvRateLabel: 18,
+      igvRateLabel: activeIgvRate,
       icbperTotal: 0,
       gratuitaTotal: 0,
       otherChargesTotal: 0,
@@ -719,7 +1512,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       }
     }
 
-    base.igvRateLabel = firstGravadaRate !== null ? firstGravadaRate : 18;
+    base.igvRateLabel = firstGravadaRate !== null ? firstGravadaRate : activeIgvRate;
     base.grandTotal =
       base.gravadaTotal +
       base.exoneradaTotal +
@@ -730,20 +1523,42 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return base;
   }, [isTributaryDocument, lookups, previewItems]);
 
+  const previewSummaryTotals = useMemo(() => {
+    return previewItems.reduce((acc, item) => {
+      const line = computeLineTotals(
+        Number(item.qty),
+        Number(item.unitPrice),
+        Number(item.taxRate ?? 0),
+        Boolean(item.priceIncludesTax)
+      );
+
+      acc.subtotal += line.subtotal;
+      acc.tax += line.tax;
+      acc.total += line.total;
+      return acc;
+    }, { subtotal: 0, tax: 0, total: 0 });
+  }, [previewItems]);
+
   async function loadData() {
     setLoading(true);
     setMessage('');
 
     try {
-      const filterParams = buildDocumentFilterParams(documentViewFilter);
-      const [lookupRows, seriesRows, docs, commerceResult] = await Promise.all([
-        fetchSalesLookups(accessToken),
-        fetchSeriesNumbers(accessToken, { documentKind: effectiveDocumentKind, branchId, warehouseId }),
+      const isCashierPendingQueue =
+        shouldPrioritizePendingOrders
+        && cashierReportPanelMode === 'PENDING'
+        && documentViewFilter === 'PENDING_CONVERSION';
+      const filterParams = isCashierPendingQueue
+        ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
+        : buildDocumentFilterParams(documentViewFilter);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter(salesFlowMode, documentViewFilter);
+      const [lookupRows, docs] = await Promise.all([
+        fetchSalesLookups(accessToken, { branchId }),
         salesWorkspaceMode === 'REPORT'
           ? fetchCommercialDocuments(accessToken, {
               branchId,
               warehouseId,
-              cashRegisterId,
+              cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
               documentKind: filterParams.documentKind,
               conversionState: filterParams.conversionState,
               status: documentFiltersApplied.status || undefined,
@@ -756,12 +1571,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               perPage: documentsMeta.per_page,
             })
           : Promise.resolve(null),
-        fetchCommerceSettings(accessToken).catch(() => null),
       ]);
 
       setLookups(lookupRows);
-      setSeries(seriesRows);
-      setSalesFlowMode(resolveSalesFlowMode(commerceResult?.features ?? []));
+      const commerceFeatures = lookupRows.commerce_features ?? [];
+      const nextSalesFlowMode = resolveSalesFlowMode(commerceFeatures);
+      setSalesFlowMode(nextSalesFlowMode);
+      setCustomerProfilePricingEnabled(
+        Boolean(commerceFeatures.find((row) => row.feature_code === 'SALES_CUSTOMER_PRICE_PROFILE')?.is_enabled)
+      );
       if (docs) {
         setDocuments(docs.data);
         setDocumentsMeta(docs.meta);
@@ -779,16 +1597,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         paymentMethodId: prev.paymentMethodId || defaultPayment?.id || 1,
         unitId: prev.unitId || lookupRows.units?.[0]?.id || null,
         taxCategoryId: prev.taxCategoryId || defaultTaxCategory?.id || null,
-        series:
-          seriesRows.find((row) => row.series === prev.series)?.series ??
-          seriesRows[0]?.series ??
-          '',
-        documentKind: salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
+        documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
       }));
-
-      if (seriesRows.length === 0) {
-        setMessage(`No hay series activas para ${effectiveDocumentKind} en la sucursal/almacen seleccionados. Configura la serie en Maestros > Series.`);
-      }
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo cargar Sales';
       setMessage(text);
@@ -873,7 +1683,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           return;
         }
 
-        const rows = await fetchInventoryProducts(accessToken, {
+        const rows = await fetchSalesInventoryProducts(accessToken, {
           search: form.productQuery.trim(),
           warehouseId,
         });
@@ -890,6 +1700,81 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [accessToken, form.productQuery, warehouseId]);
 
   useEffect(() => {
+    if (!isNoteDocument || !form.customerId) {
+      setReferenceDocuments([]);
+      setLoadingReferenceDocument(false);
+      setForm((prev) => ({
+        ...prev,
+        noteAffectedDocumentId: null,
+        noteReasonCode: '',
+      }));
+      return;
+    }
+
+    let cancelled = false;
+
+    setLoadingReferenceDocument(true);
+    void (async () => {
+      try {
+        const rows = await fetchReferenceDocuments(accessToken, {
+          customerId: Number(form.customerId),
+          branchId,
+          noteKind: isCreditNote ? 'CREDIT_NOTE' : isDebitNote ? 'DEBIT_NOTE' : null,
+          limit: 120,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        setReferenceDocuments(rows);
+        const hasCurrent = rows.some((row) => row.id === Number(form.noteAffectedDocumentId ?? 0));
+        const autoId = hasCurrent ? Number(form.noteAffectedDocumentId ?? 0) : (rows[0]?.id ?? 0);
+
+        setForm((prev) => ({
+          ...prev,
+          noteAffectedDocumentId: autoId > 0 ? autoId : null,
+        }));
+
+        if (autoId > 0) {
+          void chooseReferenceDocument(autoId);
+        } else {
+          setCart([]);
+        }
+      } catch {
+        if (!cancelled) {
+          setReferenceDocuments([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingReferenceDocument(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, branchId, form.customerId, isCreditNote, isDebitNote, isNoteDocument]);
+
+  useEffect(() => {
+    if (!isNoteDocument) {
+      return;
+    }
+
+    setForm((prev) => {
+      if (prev.noteReasonCode && activeNoteReasons.some((row) => row.code === prev.noteReasonCode)) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        noteReasonCode: activeNoteReasons[0]?.code ?? '',
+      };
+    });
+  }, [activeNoteReasons, isNoteDocument]);
+
+  useEffect(() => {
     if (!manualLotSelectionEnabled || form.isManualItem) {
       setLots([]);
       setForm((prev) => ({ ...prev, lotId: null }));
@@ -903,7 +1788,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     void (async () => {
       try {
-        const rows = await fetchInventoryLots(accessToken, { warehouseId });
+        const rows = await fetchSalesInventoryLots(accessToken, { warehouseId });
         const byProduct = rows.filter((row) => row.product_id === form.productId);
         setLots(byProduct);
 
@@ -917,29 +1802,46 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [accessToken, form.isManualItem, form.productId, manualLotSelectionEnabled, warehouseId]);
 
   useEffect(() => {
+    let cancelled = false;
+    const requestedDocumentKind = effectiveDocumentKind;
+
     void (async () => {
       try {
         const rows = await fetchSeriesNumbers(accessToken, {
-          documentKind: form.documentKind,
+          documentKind: requestedDocumentKind,
           branchId,
           warehouseId,
         });
 
-        setSeries(rows);
+        if (cancelled) {
+          return;
+        }
+
+        const filteredRows = rows.filter((row) => row.document_kind === requestedDocumentKind);
+        setSeries(filteredRows);
 
         setForm((prev) => ({
           ...prev,
-          series: rows.find((row) => row.series === prev.series)?.series ?? rows[0]?.series ?? '',
+          series: filteredRows.find((row) => row.series === prev.series)?.series ?? filteredRows[0]?.series ?? '',
         }));
 
-        if (rows.length === 0) {
-          setMessage(`No hay series activas para ${form.documentKind} en la sucursal/almacen seleccionados. Configura la serie en Maestros > Series.`);
+        if (filteredRows.length === 0) {
+          setMessage(`No hay series activas para ${requestedDocumentKind} en la sucursal/almacen seleccionados. Configura la serie en Maestros > Series.`);
+        } else {
+          setMessage('');
         }
       } catch {
+        if (cancelled) {
+          return;
+        }
         setSeries([]);
       }
     })();
-  }, [accessToken, form.documentKind, branchId, warehouseId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, effectiveDocumentKind, branchId, warehouseId]);
 
   useEffect(() => {
     if (!isTributaryDocument) {
@@ -991,9 +1893,43 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       customerId: customer.id,
       customerQuery: `${customer.doc_number ?? 'SIN-DOC'} - ${customer.name}`,
       customerAddress: customer.address ?? '',
+      noteAffectedDocumentId: null,
+      noteReasonCode: '',
+      hasDetraccion: false,
+      detraccionServiceCode: '',
+      hasRetencion: false,
+      retencionTypeCode: '',
+      hasPercepcion: false,
+      percepcionTypeCode: '',
+      sunatOperationTypeCode: '',
+      isCreditSale: false,
+      creditInstallments: [],
+      advanceAmount: 0,
     }));
+    if (isNoteDocument) {
+      setCart([]);
+    }
     setCustomerSuggestions([]);
     setActiveCustomerIndex(-1);
+
+    if (selectedProduct && !form.isManualItem) {
+      const basePrice = Number(selectedProduct.sale_price || 0);
+      const auto = resolveCustomerProfilePrice(
+        selectedProductCommercialConfig,
+        customer,
+        Number(form.qty || 1),
+        form.unitId,
+        Number(form.currencyId || 1),
+        basePrice,
+        customerProfilePricingEnabled
+      );
+
+      setAutoPriceHint(auto.note);
+      setAutoPriceSource(auto.source);
+      setAutoPriceTierId(auto.priceTierId);
+      setAutoPriceDiscountPercent(auto.discountPercent);
+      setForm((prev) => ({ ...prev, unitPrice: auto.price }));
+    }
   }
 
   async function chooseProduct(product: InventoryProduct) {
@@ -1031,27 +1967,52 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         setSelectedProductUnitOptions(mappedUnits);
 
         const baseUnitId = productUnitsActive.find((row) => row.is_base)?.unit_id ?? mappedUnits[0]?.id ?? fallbackUnitId;
-        const wholesale = resolveWholesalePrice(config, Number(form.qty || 1), baseUnitId, basePrice);
-        setAutoPriceHint(wholesale.note);
+        const auto = resolveCustomerProfilePrice(
+          config,
+          selectedCustomer,
+          Number(form.qty || 1),
+          baseUnitId,
+          Number(form.currencyId || 1),
+          basePrice,
+          customerProfilePricingEnabled
+        );
+        setAutoPriceHint(auto.note);
+        setAutoPriceSource(auto.source);
+        setAutoPriceTierId(auto.priceTierId);
+        setAutoPriceDiscountPercent(auto.discountPercent);
 
         setForm((prev) => ({
           ...prev,
           unitId: baseUnitId,
-          unitPrice: wholesale.price,
+          unitPrice: auto.price,
         }));
       } else {
         setSelectedProductUnitOptions(lookups?.units ?? []);
-        const wholesale = resolveWholesalePrice(config, Number(form.qty || 1), fallbackUnitId, basePrice);
-        setAutoPriceHint(wholesale.note);
+        const auto = resolveCustomerProfilePrice(
+          config,
+          selectedCustomer,
+          Number(form.qty || 1),
+          fallbackUnitId,
+          Number(form.currencyId || 1),
+          basePrice,
+          customerProfilePricingEnabled
+        );
+        setAutoPriceHint(auto.note);
+        setAutoPriceSource(auto.source);
+        setAutoPriceTierId(auto.priceTierId);
+        setAutoPriceDiscountPercent(auto.discountPercent);
         setForm((prev) => ({
           ...prev,
-          unitPrice: wholesale.price,
+          unitPrice: auto.price,
         }));
       }
     } catch {
       setSelectedProductCommercialConfig(null);
       setSelectedProductUnitOptions(lookups?.units ?? []);
       setAutoPriceHint('');
+      setAutoPriceSource('MANUAL');
+      setAutoPriceTierId(null);
+      setAutoPriceDiscountPercent(0);
     }
   }
 
@@ -1071,6 +2032,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setSelectedProductCommercialConfig(null);
       setSelectedProductUnitOptions(lookups?.units ?? []);
       setAutoPriceHint('');
+      setAutoPriceSource('MANUAL');
+      setAutoPriceTierId(null);
+      setAutoPriceDiscountPercent(0);
       setProductSuggestions([]);
       setActiveProductIndex(-1);
       setLots([]);
@@ -1184,12 +2148,100 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }));
 
     setAutoPriceHint('');
+    setAutoPriceSource('MANUAL');
+    setAutoPriceTierId(null);
+    setAutoPriceDiscountPercent(0);
 
     // Keep cashier speed high: return focus to product search for next item.
     setTimeout(() => {
       productInputRef.current?.focus();
       productInputRef.current?.select();
     }, 0);
+  }
+
+  async function chooseReferenceDocument(documentId: number) {
+    setForm((prev) => ({
+      ...prev,
+      noteAffectedDocumentId: documentId,
+    }));
+
+    if (!documentId) {
+      setCart([]);
+      return;
+    }
+
+    setLoading(true);
+    setMessage('');
+
+    try {
+      const details = await fetchCommercialDocumentDetails(accessToken, documentId) as PrintableSalesDocument & {
+        items?: Array<{
+          productId?: number | null;
+          unitId?: number | null;
+          priceTierId?: number | null;
+          qty: number;
+          qtyBase?: number;
+          conversionFactor?: number;
+          baseUnitPrice?: number;
+          description: string;
+          unitPrice: number;
+          wholesaleDiscountPercent?: number;
+          priceSource?: 'MANUAL' | 'TIER' | 'PROFILE';
+          taxCategoryId?: number | null;
+          taxLabel?: string;
+          taxRate?: number;
+          metadata?: Record<string, unknown> | null;
+          lots?: Array<{ lot_id: number; qty: number }>;
+        }>;
+      };
+
+      const detailsItems = (details.items ?? []) as Array<{
+        productId?: number | null;
+        unitId?: number | null;
+        priceTierId?: number | null;
+        qty: number;
+        qtyBase?: number;
+        conversionFactor?: number;
+        baseUnitPrice?: number;
+        description: string;
+        unitPrice: number;
+        wholesaleDiscountPercent?: number;
+        priceSource?: 'MANUAL' | 'TIER' | 'PROFILE';
+        taxCategoryId?: number | null;
+        taxLabel?: string;
+        taxRate?: number;
+        metadata?: Record<string, unknown> | null;
+        lots?: Array<{ lot_id: number; qty: number }>;
+      }>;
+
+      const rows = detailsItems.map((item) => ({
+        productId: item.productId ?? null,
+        unitId: item.unitId ?? null,
+        lotId: item.lots && item.lots.length > 0 ? Number(item.lots[0].lot_id) : null,
+        priceTierId: item.priceTierId ?? null,
+        wholesaleDiscountPercent: item.wholesaleDiscountPercent ?? null,
+        priceSource: item.priceSource ?? 'MANUAL',
+        taxCategoryId: item.taxCategoryId ?? null,
+        priceIncludesTax: Boolean(item.metadata && (item.metadata as Record<string, unknown>).price_includes_tax === true),
+        qtyBase: item.qtyBase ?? null,
+        conversionFactor: item.conversionFactor ?? null,
+        baseUnitPrice: item.baseUnitPrice ?? null,
+        taxRate: Number(item.taxRate ?? 0),
+        taxLabel: item.taxLabel ?? 'Sin IGV',
+        isManual: !(item.productId && Number(item.productId) > 0),
+        description: item.description,
+        qty: Number(item.qty),
+        unitPrice: Number(item.unitPrice),
+      }));
+
+      setCart(rows);
+      setMessage(rows.length > 0 ? 'Items cargados desde el documento afectado.' : 'El documento afectado no tiene items.');
+    } catch (error) {
+      setCart([]);
+      setMessage(error instanceof Error ? error.message : 'No se pudo cargar items del documento afectado');
+    } finally {
+      setLoading(false);
+    }
   }
 
   function handleQuickAddItem(event: React.KeyboardEvent<HTMLInputElement>) {
@@ -1211,11 +2263,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     const basePrice = Number(selectedProduct.sale_price || 0);
-    const auto = resolveWholesalePrice(
+    const auto = resolveCustomerProfilePrice(
       selectedProductCommercialConfig,
+      selectedCustomer,
       Number(form.qty || 0),
       form.unitId,
-      basePrice
+      Number(form.currencyId || 1),
+      basePrice,
+      customerProfilePricingEnabled
     );
 
     if (!Number.isFinite(auto.price)) {
@@ -1223,6 +2278,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     setAutoPriceHint(auto.note);
+    setAutoPriceSource(auto.source);
+    setAutoPriceTierId(auto.priceTierId);
+    setAutoPriceDiscountPercent(auto.discountPercent);
     setForm((prev) => {
       if (Number(prev.unitPrice) === Number(auto.price)) {
         return prev;
@@ -1233,7 +2291,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         unitPrice: Number(auto.price),
       };
     });
-  }, [form.qty, form.unitId, form.isManualItem, selectedProduct, selectedProductCommercialConfig]);
+  }, [
+    form.qty,
+    form.unitId,
+    form.currencyId,
+    form.isManualItem,
+    selectedProduct,
+    selectedCustomer,
+    selectedProductCommercialConfig,
+    customerProfilePricingEnabled,
+  ]);
 
   function removeDraftItem(index: number) {
     setCart((prev) => prev.filter((_, i) => i !== index));
@@ -1252,6 +2319,39 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         };
       })
     );
+  }
+
+  function updateCreditInstallment(index: number, patch: Partial<NonNullable<CreateDocumentForm['creditInstallments']>[number]>) {
+    setForm((prev) => ({
+      ...prev,
+      creditInstallments: (prev.creditInstallments ?? []).map((item, itemIndex) => (
+        itemIndex === index ? { ...item, ...patch } : item
+      )),
+    }));
+  }
+
+  function removeCreditInstallment(index: number) {
+    setForm((prev) => {
+      const rows = prev.creditInstallments ?? [];
+      if (rows.length <= 1) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        creditInstallments: rows.filter((_, itemIndex) => itemIndex !== index),
+      };
+    });
+  }
+
+  function addCreditInstallment() {
+    setForm((prev) => ({
+      ...prev,
+      creditInstallments: [
+        ...(prev.creditInstallments ?? []),
+        createCreditInstallmentRow(prev.dueDate || prev.issueDate || TODAY),
+      ],
+    }));
   }
 
   function printIssuedPreview() {
@@ -1281,6 +2381,49 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  async function handleManualSunatSend(row: CommercialDocumentListItem) {
+    setSunatSendingDocumentId(row.id);
+    setMessage('');
+
+    try {
+      const response = await retryTaxBridgeSend(accessToken, row.id);
+      const responseSummary = summarizeBridgeResponse(response.bridge_response);
+      const httpSummary = response.bridge_http_code ? `HTTP ${response.bridge_http_code}` : '';
+      const detailSummary = [httpSummary, responseSummary].filter((part) => part !== '').join(' | ');
+
+      setMessage(
+        detailSummary
+          ? `${response.message || `Envio tributario ejecutado para ${row.series}-${row.number}.`} (${detailSummary})`
+          : (response.message || `Envio tributario ejecutado para ${row.series}-${row.number}.`)
+      );
+
+      const nextSunatStatus = String(response.sunat_status ?? '').toUpperCase();
+      const toastTone: SunatToastState['tone'] = nextSunatStatus === 'ACCEPTED'
+        ? 'ok'
+        : nextSunatStatus === 'REJECTED' || nextSunatStatus === 'HTTP_ERROR' || nextSunatStatus === 'NETWORK_ERROR'
+          ? 'bad'
+          : 'warn';
+
+      setSunatToast({
+        tone: toastTone,
+        title: `SUNAT: ${sunatStatusLabel(nextSunatStatus)}`,
+        detail: detailSummary || 'Sin detalle adicional del puente.',
+      });
+
+      await loadData();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo enviar el comprobante a SUNAT');
+
+      setSunatToast({
+        tone: 'bad',
+        title: 'SUNAT: Error de envio',
+        detail: error instanceof Error ? error.message : 'No se pudo enviar el comprobante a SUNAT',
+      });
+    } finally {
+      setSunatSendingDocumentId(null);
+    }
+  }
+
   function applyAdvancedDocumentFilters() {
     setDocumentFiltersApplied({ ...documentFiltersDraft });
     setDocumentsPage(1);
@@ -1297,11 +2440,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setMessage('');
 
     try {
-      const filterParams = buildDocumentFilterParams(documentViewFilter);
+      const isCashierPendingQueue =
+        shouldPrioritizePendingOrders
+        && cashierReportPanelMode === 'PENDING'
+        && documentViewFilter === 'PENDING_CONVERSION';
+      const filterParams = isCashierPendingQueue
+        ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
+        : buildDocumentFilterParams(documentViewFilter);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter(salesFlowMode, documentViewFilter);
       const result = await exportCommercialDocumentsExcel(accessToken, {
         branchId,
         warehouseId,
-        cashRegisterId,
+        cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
         documentKind: filterParams.documentKind,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
@@ -1333,11 +2483,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setMessage('');
 
     try {
-      const filterParams = buildDocumentFilterParams(documentViewFilter);
+      const isCashierPendingQueue =
+        shouldPrioritizePendingOrders
+        && cashierReportPanelMode === 'PENDING'
+        && documentViewFilter === 'PENDING_CONVERSION';
+      const filterParams = isCashierPendingQueue
+        ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
+        : buildDocumentFilterParams(documentViewFilter);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter(salesFlowMode, documentViewFilter);
       const rows = await exportCommercialDocumentsJson(accessToken, {
         branchId,
         warehouseId,
-        cashRegisterId,
+        cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
         documentKind: filterParams.documentKind,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
@@ -1357,7 +2514,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         FechaEmision: row.issue_at,
         Cliente: row.customer_name,
         FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
-        Estado: row.status,
+        Estado: commercialStatusLabel(row.status),
         Total: Number(row.total ?? 0),
         Saldo: Number(row.balance_due ?? 0),
       }));
@@ -1383,6 +2540,92 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setMessage('');
 
     try {
+      const selectedTaxConditions = [form.hasDetraccion, form.hasRetencion, form.hasPercepcion].filter(Boolean).length;
+      if (selectedTaxConditions > 1) {
+        setMessage('Solo puede aplicar una condicion tributaria entre detracción, retención o percepción.');
+        setLoading(false);
+        return;
+      }
+
+      if (isNoteDocument) {
+        if (!form.noteAffectedDocumentId) {
+          setMessage('Seleccione el documento afectado para la nota.');
+          setLoading(false);
+          return;
+        }
+
+        if (!form.noteReasonCode) {
+          setMessage('Seleccione el tipo de nota.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (isInvoiceDocument && form.hasDetraccion) {
+        if (!form.detraccionServiceCode) {
+          setMessage('Seleccione el código de bien/servicio sujeto a detracción.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (isInvoiceDocument && form.hasRetencion) {
+        const availableTypes = lookups?.retencion_types ?? [];
+        if (availableTypes.length > 0 && !form.retencionTypeCode) {
+          setMessage('Seleccione el tipo de retención.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (isInvoiceDocument && form.hasPercepcion) {
+        const availableTypes = lookups?.percepcion_types ?? [];
+        if (availableTypes.length > 0 && !form.percepcionTypeCode) {
+          setMessage('Seleccione el tipo de percepción.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      if (isInvoiceDocument && (form.hasDetraccion || form.hasRetencion || form.hasPercepcion)) {
+        const availableOpTypes = lookups?.sunat_operation_types ?? [];
+        if (availableOpTypes.length > 0 && !form.sunatOperationTypeCode) {
+          setMessage('Seleccione el tipo de operación SUNAT.');
+          setLoading(false);
+          return;
+        }
+      }
+
+      const computedAdvance = advancesEnabled ? Math.min(Math.max(0, Number(form.advanceAmount ?? 0)), grandTotal) : 0;
+      if (form.isCreditSale) {
+        const installments = (form.creditInstallments ?? []).map((row) => ({
+          amount: Number(row.amount ?? 0),
+          dueDate: String(row.dueDate ?? '').trim(),
+          observation: String(row.observation ?? '').trim(),
+        }));
+
+        if (installments.length === 0) {
+          setMessage('Debes registrar al menos una cuota para venta al crédito.');
+          setLoading(false);
+          return;
+        }
+
+        const hasInvalidInstallment = installments.some((row) => row.amount <= 0 || row.dueDate === '');
+        if (hasInvalidInstallment) {
+          setMessage('Cada cuota debe tener monto mayor a cero y fecha de pago.');
+          setLoading(false);
+          return;
+        }
+
+        const installmentTotal = installments.reduce((acc, row) => acc + row.amount, 0);
+        const expectedCreditTotal = Math.max(0, Number((grandTotal - computedAdvance).toFixed(2)));
+        if (Math.abs(installmentTotal - expectedCreditTotal) > 0.01) {
+          setMessage(`La suma de cuotas debe ser ${expectedCreditTotal.toFixed(2)}.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const payloadItems = cart.length > 0
         ? cart.map((item) => ({
             ...item,
@@ -1424,9 +2667,88 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
+      if (editingDocumentId) {
+        const currentEditingContext = editingDocumentContext;
+        const targetDocumentId = currentEditingContext?.id ?? editingDocumentId;
+        const itemsPayload = payloadItems.map((item) => {
+          const qty = Number(item.qty);
+          const unitPrice = Number(item.unitPrice);
+          const taxRate = Number(item.taxRate ?? 0);
+          const includesTax = Boolean(item.priceIncludesTax) && taxRate > 0;
+          const divisor = 1 + (taxRate / 100);
+          const grossLine = qty * unitPrice;
+          const subtotal = includesTax ? +(grossLine / divisor).toFixed(2) : +(grossLine).toFixed(2);
+          const taxTotal = includesTax ? +(grossLine - subtotal).toFixed(2) : +(subtotal * (taxRate / 100)).toFixed(2);
+          const total = includesTax ? +(grossLine).toFixed(2) : +(subtotal + taxTotal).toFixed(2);
+
+          return {
+            description: item.description,
+            product_id: item.productId ? Number(item.productId) : null,
+            unit_id: item.unitId ? Number(item.unitId) : null,
+            price_tier_id: item.priceTierId ? Number(item.priceTierId) : undefined,
+            wholesale_discount_percent: item.wholesaleDiscountPercent != null ? Number(item.wholesaleDiscountPercent) : undefined,
+            price_source: item.priceSource ?? undefined,
+            tax_category_id: item.taxCategoryId ? Number(item.taxCategoryId) : null,
+            qty,
+            qty_base: item.qtyBase != null ? Number(item.qtyBase) : undefined,
+            conversion_factor: item.conversionFactor != null ? Number(item.conversionFactor) : undefined,
+            base_unit_price: item.baseUnitPrice != null ? Number(item.baseUnitPrice) : undefined,
+            unit_price: unitPrice,
+            unit_cost: 0,
+            subtotal,
+            tax_total: taxTotal,
+            total,
+            metadata: {
+              price_includes_tax: includesTax,
+            },
+            lots: item.lotId ? [{ lot_id: Number(item.lotId), qty }] : undefined,
+          };
+        });
+
+        await updateCommercialDocument(accessToken, editingDocumentId, {
+          branch_id: branchId,
+          warehouse_id: warehouseId,
+          cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
+          customer_id: Number(form.customerId),
+          currency_id: Number(form.currencyId),
+          payment_method_id: Number(form.paymentMethodId),
+          due_at: form.dueDate || null,
+          metadata: {
+            customer_address: form.customerAddress?.trim() || null,
+          },
+          items: itemsPayload,
+        });
+
+        const nextFilter = resolveViewFilterForDocumentKind(
+          currentEditingContext?.documentKind ?? effectiveDocumentKind
+        );
+        const nextAdvancedFilters: DocumentAdvancedFilters = {
+          ...initialDocumentAdvancedFilters,
+          series: currentEditingContext?.series ?? form.series ?? '',
+          number: currentEditingContext?.number != null ? String(currentEditingContext.number) : '',
+        };
+
+        setMessage('Documento comercial actualizado correctamente. Mostrando el comprobante editado en reportes.');
+        setEditingDocumentId(null);
+        setEditingDocumentContext(null);
+        setCart([]);
+        setSalesWorkspaceMode('REPORT');
+        setCashierReportPanelMode('FULL');
+        setDocumentViewFilter(nextFilter);
+        setDocumentFiltersDraft(nextAdvancedFilters);
+        setDocumentFiltersApplied(nextAdvancedFilters);
+        suppressNextPinnedResetRef.current = true;
+        setPinnedDocumentId(targetDocumentId);
+        setFocusDocumentId(targetDocumentId);
+        setDocumentsPage(1);
+        return;
+      }
+
       const response = await createCommercialDocument(accessToken, {
         ...form,
         documentKind: effectiveDocumentKind,
+        noteAffectedDocumentId: form.noteAffectedDocumentId ?? null,
+        noteReasonCode: form.noteReasonCode ?? '',
         items: payloadItems,
         branchId,
         warehouseId,
@@ -1466,6 +2788,45 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           gravadaTotal: printTotals.gravadaTotal,
           inafectaTotal: printTotals.inafectaTotal,
           exoneradaTotal: printTotals.exoneradaTotal,
+          metadata: {
+            has_detraccion: form.hasDetraccion ?? false,
+            detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
+            detraccion_service_name: selectedDetractionService?.name ?? null,
+            detraccion_rate_percent: form.hasDetraccion ? detraccionRate : null,
+            detraccion_amount: form.hasDetraccion ? detraccionAmount : null,
+            detraccion_account_number: lookups?.detraccion_account?.account_number ?? null,
+            detraccion_bank_name: lookups?.detraccion_account?.bank_name ?? null,
+            has_retencion: form.hasRetencion ?? false,
+            retencion_type_code: form.hasRetencion ? (form.retencionTypeCode ?? null) : null,
+            retencion_type_name: selectedRetencionType?.name ?? null,
+            retencion_rate_percent: form.hasRetencion ? retencionPercentage : null,
+            retencion_amount: form.hasRetencion ? retencionAmount : null,
+            retencion_account_number: lookups?.retencion_account?.account_number ?? null,
+            retencion_bank_name: lookups?.retencion_account?.bank_name ?? null,
+            has_percepcion: form.hasPercepcion ?? false,
+            percepcion_type_code: form.hasPercepcion ? (form.percepcionTypeCode ?? null) : null,
+            percepcion_type_name: selectedPercepcionType?.name ?? null,
+            percepcion_rate_percent: form.hasPercepcion ? percepcionPercentage : null,
+            percepcion_amount: form.hasPercepcion ? percepcionAmount : null,
+            percepcion_account_number: lookups?.percepcion_account?.account_number ?? null,
+            percepcion_bank_name: lookups?.percepcion_account?.bank_name ?? null,
+            payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
+            credit_installments: form.isCreditSale
+              ? (form.creditInstallments ?? []).map((row, index) => ({
+                  installment_no: index + 1,
+                  amount: Number(Number(row.amount ?? 0).toFixed(2)),
+                  due_at: row.dueDate,
+                  notes: String(row.observation ?? '').trim() || null,
+                }))
+              : [],
+            credit_total: form.isCreditSale ? Number(creditPendingTotal.toFixed(2)) : 0,
+            has_advance: advancesEnabled && cappedAdvanceAmount > 0,
+            advance_amount: advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
+            sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion)
+              ? (form.sunatOperationTypeCode || selectedSunatOperationType?.code || null)
+              : null,
+            sunat_operation_type_name: selectedSunatOperationType?.name ?? null,
+          },
           items: payloadItems.map((item, index) => ({
             lineNo: index + 1,
             qty: Number(item.qty),
@@ -1502,12 +2863,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           ? 'Pedido comercial generado. Caja puede convertirlo a nota de pedido o comprobante tributario.'
           : 'Documento comercial creado correctamente.'
       );
+
+      if (salesFlowMode === 'DIRECT_CASHIER' && (effectiveDocumentKind === 'RECEIPT' || effectiveDocumentKind === 'INVOICE')) {
+        setSalesWorkspaceMode('REPORT');
+        setCashierReportPanelMode('FULL');
+        setDocumentViewFilter('TRIBUTARY');
+        setDocumentFiltersDraft(initialDocumentAdvancedFilters);
+        setDocumentFiltersApplied(initialDocumentAdvancedFilters);
+      }
+
       setCart([]);
       setForm((prev) => ({
         ...prev,
         productId: prev.isManualItem ? null : prev.productId,
         lotId: !manualLotSelectionEnabled || prev.isManualItem ? null : prev.lotId,
         manualDescription: '',
+        hasDetraccion: false,
+        detraccionServiceCode: '',
+        hasRetencion: false,
+        retencionTypeCode: '',
+        hasPercepcion: false,
+        percepcionTypeCode: '',
+        sunatOperationTypeCode: '',
+        isCreditSale: false,
+        creditInstallments: [],
+        advanceAmount: 0,
         qty: 1,
         unitPrice: prev.unitPrice,
       }));
@@ -1650,6 +3030,451 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  async function handleVoidDocument(row: CommercialDocumentListItem) {
+    if (!canVoidDocumentsInCurrentMode) {
+      setMessage('La anulacion de documentos esta deshabilitada en la configuracion actual.');
+      return;
+    }
+
+    const accepted = window.confirm(`Se anulara ${docKindLabel(row.document_kind)} ${row.series}-${row.number}. Desea continuar?`);
+    if (!accepted) {
+      return;
+    }
+
+    const reason = window.prompt('Motivo de anulacion (opcional):', '') ?? '';
+
+    setLoading(true);
+    setMessage('');
+    try {
+      await voidCommercialDocument(accessToken, row.id, {
+        reason: reason.trim() || undefined,
+        notes: reason.trim() || undefined,
+        void_at: new Date().toISOString(),
+      });
+      setMessage(`Documento ${row.series}-${row.number} anulado correctamente.`);
+      await loadData();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSunatVoidCommunication(row: CommercialDocumentListItem) {
+    const accepted = window.confirm(
+      `Se enviara comunicacion de baja SUNAT para ${row.series}-${row.number}. Desea continuar?`
+    );
+    if (!accepted) {
+      return;
+    }
+
+    const reason = window.prompt('Motivo de baja SUNAT (opcional):', '') ?? '';
+
+    setLoading(true);
+    setMessage('');
+    try {
+      const response = await sendSunatVoidCommunication(accessToken, row.id, {
+        reason: reason.trim() || undefined,
+        notes: reason.trim() || undefined,
+      });
+
+      const responseSummary = summarizeBridgeResponse(response.bridge_response);
+      const httpSummary = response.bridge_http_code ? `HTTP ${response.bridge_http_code}` : '';
+      const endpointSummary = response.debug?.endpoint ? `endpoint=${response.debug.endpoint}` : '';
+      const payloadHashSummary = response.debug?.payload_sha1 ? `payload_sha1=${response.debug.payload_sha1}` : '';
+      const detailSummary = [httpSummary, responseSummary, endpointSummary, payloadHashSummary]
+        .filter((part) => part !== '')
+        .join(' | ');
+
+      setMessage(
+        detailSummary
+          ? `${response.message || 'Comunicacion de baja SUNAT ejecutada.'} (${detailSummary})`
+          : (response.message || 'Comunicacion de baja SUNAT ejecutada.')
+      );
+
+      setSunatToast({
+        tone: response.sunat_void_status === 'ACCEPTED' ? 'ok' : response.sunat_void_status === 'REJECTED' ? 'bad' : 'warn',
+        title: `Baja SUNAT: ${response.sunat_void_label || response.sunat_void_status}`,
+        detail: detailSummary || 'Sin detalle adicional del puente.',
+      });
+
+      await loadData();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo comunicar la baja SUNAT';
+      setMessage(text);
+      setSunatToast({
+        tone: 'bad',
+        title: 'Baja SUNAT: Error',
+        detail: text,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDownloadXml(row: CommercialDocumentListItem) {
+    setLoading(true);
+    setMessage('');
+    try {
+      const { blob, filename, endpoint, httpStatus, method, contentType, responseHeaders } = await downloadSunatXml(accessToken, row.id);
+      console.groupCollapsed(`[SUNAT][XML] ${row.series}-${String(row.number).padStart(6, '0')}`);
+      console.log('frontend_request', {
+        method,
+        url: `${window.location.origin}/api/sales/commercial-documents/${row.id}/download-xml`,
+      });
+      console.log('backend_response', {
+        httpStatus,
+        contentType,
+        bridgeEndpoint: endpoint,
+        filename,
+        blobSize: blob.size,
+      });
+      console.log('response_headers', responseHeaders);
+      console.groupEnd();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      const detail = [
+        `Metodo: GET`,
+        `HTTP: ${httpStatus}`,
+        endpoint ? `Endpoint: ${endpoint}` : '',
+        `Archivo: ${filename}`,
+      ].filter(Boolean).join('\n');
+      setSunatToast({ tone: 'ok', title: 'XML descargado correctamente', detail });
+      setMessage(`XML descargado: ${filename}`);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo descargar el XML';
+      const endpoint = (error as Record<string, unknown>).endpoint as string | undefined;
+      const httpStatus = (error as Record<string, unknown>).httpStatus as number | undefined;
+      const contentType = (error as Record<string, unknown>).contentType as string | undefined;
+      const responseHeaders = (error as Record<string, unknown>).responseHeaders as Record<string, unknown> | undefined;
+      console.groupCollapsed(`[SUNAT][XML][ERROR] ${row.series}-${String(row.number).padStart(6, '0')}`);
+      console.log('error', {
+        method: 'GET',
+        endpoint,
+        httpStatus,
+        contentType,
+        message: text,
+      });
+      console.log('response_headers', responseHeaders ?? {});
+      console.groupEnd();
+      const detail = [
+        `Metodo: GET`,
+        httpStatus ? `HTTP: ${httpStatus}` : '',
+        endpoint ? `Endpoint: ${endpoint}` : '',
+        `Error: ${text}`,
+      ].filter(Boolean).join('\n');
+      setSunatToast({ tone: 'bad', title: 'Error al descargar XML', detail });
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDownloadCdr(row: CommercialDocumentListItem) {
+    setLoading(true);
+    setMessage('');
+    try {
+      const { blob, filename, endpoint, httpStatus, method, contentType, responseHeaders } = await downloadSunatCdr(accessToken, row.id);
+      console.groupCollapsed(`[SUNAT][CDR] ${row.series}-${String(row.number).padStart(6, '0')}`);
+      console.log('frontend_request', {
+        method,
+        url: `${window.location.origin}/api/sales/commercial-documents/${row.id}/download-cdr`,
+      });
+      console.log('backend_response', {
+        httpStatus,
+        contentType,
+        bridgeEndpoint: endpoint,
+        filename,
+        blobSize: blob.size,
+      });
+      console.log('response_headers', responseHeaders);
+      console.groupEnd();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      const detail = [
+        `Metodo: GET`,
+        `HTTP: ${httpStatus}`,
+        endpoint ? `Endpoint: ${endpoint}` : '',
+        `Archivo: ${filename}`,
+      ].filter(Boolean).join('\n');
+      setSunatToast({ tone: 'ok', title: 'CDR descargado correctamente', detail });
+      setMessage(`CDR descargado: ${filename}`);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo descargar el CDR';
+      const endpoint = (error as Record<string, unknown>).endpoint as string | undefined;
+      const httpStatus = (error as Record<string, unknown>).httpStatus as number | undefined;
+      const contentType = (error as Record<string, unknown>).contentType as string | undefined;
+      const responseHeaders = (error as Record<string, unknown>).responseHeaders as Record<string, unknown> | undefined;
+      console.groupCollapsed(`[SUNAT][CDR][ERROR] ${row.series}-${String(row.number).padStart(6, '0')}`);
+      console.log('error', {
+        method: 'GET',
+        endpoint,
+        httpStatus,
+        contentType,
+        message: text,
+      });
+      console.log('response_headers', responseHeaders ?? {});
+      console.groupEnd();
+      const detail = [
+        `Metodo: GET`,
+        httpStatus ? `HTTP: ${httpStatus}` : '',
+        endpoint ? `Endpoint: ${endpoint}` : '',
+        `Error: ${text}`,
+      ].filter(Boolean).join('\n');
+      setSunatToast({ tone: 'bad', title: 'Error al descargar CDR', detail });
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleOpenNoteFromDocument(
+    row: CommercialDocumentListItem,
+    noteKind: 'CREDIT_NOTE' | 'DEBIT_NOTE'
+  ) {
+    setLoading(true);
+    setMessage('');
+    try {
+      const details = await fetchCommercialDocumentDetails(accessToken, row.id) as PrintableSalesDocument & {
+        customerId?: number;
+        currencyId?: number;
+        paymentMethodId?: number | null;
+        customerDocNumber?: string;
+        customerAddress?: string;
+        items?: Array<{
+          productId?: number | null;
+          unitId?: number | null;
+          priceTierId?: number | null;
+          qty: number;
+          qtyBase?: number;
+          conversionFactor?: number;
+          baseUnitPrice?: number;
+          description: string;
+          unitPrice: number;
+          wholesaleDiscountPercent?: number;
+          priceSource?: 'MANUAL' | 'TIER' | 'PROFILE';
+          taxCategoryId?: number | null;
+          taxLabel?: string;
+          taxRate?: number;
+          metadata?: Record<string, unknown> | null;
+          lots?: Array<{ lot_id: number; qty: number }>;
+        }>;
+      };
+
+      const detailsItems = (details.items ?? []) as NonNullable<typeof details.items>;
+
+      const editableItems: SalesDraftItem[] = detailsItems.map((item) => ({
+        productId: item.productId ?? null,
+        unitId: item.unitId ?? null,
+        lotId: item.lots && item.lots.length > 0 ? Number(item.lots[0].lot_id) : null,
+        priceTierId: item.priceTierId ?? null,
+        wholesaleDiscountPercent: item.wholesaleDiscountPercent ?? null,
+        priceSource: item.priceSource ?? 'MANUAL',
+        taxCategoryId: item.taxCategoryId ?? null,
+        priceIncludesTax: Boolean(
+          item.metadata && (item.metadata as Record<string, unknown>).price_includes_tax === true
+        ),
+        qtyBase: item.qtyBase ?? null,
+        conversionFactor: item.conversionFactor ?? null,
+        baseUnitPrice: item.baseUnitPrice ?? null,
+        taxRate: Number(item.taxRate ?? 0),
+        taxLabel: item.taxLabel ?? 'Sin IGV',
+        isManual: !(item.productId && Number(item.productId) > 0),
+        description: item.description,
+        qty: Number(item.qty),
+        unitPrice: Number(item.unitPrice),
+      }));
+
+      setCart(editableItems);
+      setForm((prev) => ({
+        ...initialForm,
+        documentKind: noteKind,
+        customerId: Number(details.customerId ?? 0),
+        currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
+        paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
+        customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
+        customerAddress: details.customerAddress ?? '',
+        issueDate: TODAY,
+        series: '',
+        noteAffectedDocumentId: row.id,
+        noteReasonCode: '',
+        productId: null,
+        productQuery: '',
+        lotId: null,
+        manualDescription: '',
+        isManualItem: false,
+      }));
+
+      setSelectedCustomer(null);
+      setSelectedProduct(null);
+      setSelectedProductCommercialConfig(null);
+      setSelectedProductUnitOptions(lookups?.units ?? []);
+      setEditingDocumentId(null);
+      setEditingDocumentContext(null);
+      setSalesWorkspaceMode('SELL');
+
+      const noteLabel = noteKind === 'CREDIT_NOTE' ? 'Nota de Credito' : 'Nota de Debito';
+      setMessage(
+        `${noteLabel} pre-cargada desde ${row.series}-${String(row.number).padStart(6, '0')}. ` +
+        `Verifica la serie, selecciona el motivo y ajusta los items si corresponde.`
+      );
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo cargar el documento';
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startEditDraft(row: CommercialDocumentListItem) {
+    if (!canEditCommercialDocument(row, canEditDraftInCurrentMode, canEditIssuedBeforeSunatFinalInCurrentMode)) {
+      setMessage('La edicion no esta permitida para este comprobante en la configuracion actual.');
+      return;
+    }
+
+    setLoading(true);
+    setMessage('');
+    try {
+      const details = await fetchCommercialDocumentDetails(accessToken, row.id) as PrintableSalesDocument & {
+        customerId?: number;
+        currencyId?: number;
+        paymentMethodId?: number | null;
+        items?: Array<{
+          productId?: number | null;
+          unitId?: number | null;
+          priceTierId?: number | null;
+          qty: number;
+          qtyBase?: number;
+          conversionFactor?: number;
+          baseUnitPrice?: number;
+          description: string;
+          unitPrice: number;
+          wholesaleDiscountPercent?: number;
+          priceSource?: 'MANUAL' | 'TIER' | 'PROFILE';
+          taxCategoryId?: number | null;
+          taxLabel?: string;
+          taxRate?: number;
+          metadata?: Record<string, unknown> | null;
+          lots?: Array<{ lot_id: number; qty: number }>;
+        }>;
+      };
+
+      const detailsItems = (details.items ?? []) as Array<{
+        productId?: number | null;
+        unitId?: number | null;
+        priceTierId?: number | null;
+        qty: number;
+        qtyBase?: number;
+        conversionFactor?: number;
+        baseUnitPrice?: number;
+        description: string;
+        unitPrice: number;
+        wholesaleDiscountPercent?: number;
+        priceSource?: 'MANUAL' | 'TIER' | 'PROFILE';
+        taxCategoryId?: number | null;
+        taxLabel?: string;
+        taxRate?: number;
+        metadata?: Record<string, unknown> | null;
+        lots?: Array<{ lot_id: number; qty: number }>;
+      }>;
+
+      const editableItems: SalesDraftItem[] = detailsItems.map((item) => ({
+        productId: item.productId ?? null,
+        unitId: item.unitId ?? null,
+        lotId: item.lots && item.lots.length > 0 ? Number(item.lots[0].lot_id) : null,
+        priceTierId: item.priceTierId ?? null,
+        wholesaleDiscountPercent: item.wholesaleDiscountPercent ?? null,
+        priceSource: item.priceSource ?? 'MANUAL',
+        taxCategoryId: item.taxCategoryId ?? null,
+        priceIncludesTax: Boolean(item.metadata && (item.metadata as Record<string, unknown>).price_includes_tax === true),
+        qtyBase: item.qtyBase ?? null,
+        conversionFactor: item.conversionFactor ?? null,
+        baseUnitPrice: item.baseUnitPrice ?? null,
+        taxRate: Number(item.taxRate ?? 0),
+        taxLabel: item.taxLabel ?? 'Sin IGV',
+        isManual: !(item.productId && Number(item.productId) > 0),
+        description: item.description,
+        qty: Number(item.qty),
+        unitPrice: Number(item.unitPrice),
+      }));
+
+      setCart(editableItems);
+      setForm((prev) => ({
+        ...prev,
+        documentKind: details.documentKind,
+        customerId: Number(details.customerId ?? prev.customerId ?? 0),
+        currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
+        paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
+        customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
+        customerAddress: details.customerAddress ?? '',
+        issueDate: details.issueDate ? String(details.issueDate).slice(0, 10) : prev.issueDate,
+        dueDate: details.dueDate ? String(details.dueDate).slice(0, 10) : '',
+        series: details.series ?? prev.series,
+        productId: null,
+        productQuery: '',
+        lotId: null,
+        manualDescription: '',
+        isManualItem: false,
+        qty: 1,
+      }));
+
+      setSelectedCustomer(null);
+      setSelectedProduct(null);
+      setSelectedProductCommercialConfig(null);
+      setSelectedProductUnitOptions(lookups?.units ?? []);
+      setAutoPriceHint('');
+      setAutoPriceSource('MANUAL');
+      setAutoPriceTierId(null);
+      setAutoPriceDiscountPercent(0);
+
+      setEditingDocumentId(row.id);
+      setEditingDocumentContext({
+        id: row.id,
+        documentKind: row.document_kind,
+        series: String(row.series ?? ''),
+        number: Number(row.number ?? 0),
+      });
+      setSalesWorkspaceMode('SELL');
+      setMessage(`Editando ${docKindLabel(row.document_kind)} ${row.series}-${row.number}.`);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo cargar el documento para edicion';
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function cancelEditingDraft() {
+    setEditingDocumentId(null);
+    setEditingDocumentContext(null);
+    setCart([]);
+    setSelectedProduct(null);
+    setSelectedProductCommercialConfig(null);
+    setSelectedProductUnitOptions(lookups?.units ?? []);
+    setForm((prev) => ({
+      ...initialForm,
+      currencyId: prev.currencyId,
+      paymentMethodId: prev.paymentMethodId,
+      taxCategoryId: prev.taxCategoryId,
+      documentKind: salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
+      series: prev.series,
+    }));
+    setMessage('Edicion cancelada.');
+  }
+
   async function confirmConvertFromPreview() {
     if (!convertPreviewModal) {
       return;
@@ -1709,6 +3534,54 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       <div className="sales-mode-summary" aria-live="polite">
         <span className="sales-mode-chip">Modo: {salesFlowModeLabel}</span>
         {isSeparatedMode && <span className="sales-mode-chip">Perfil: {activeProfileLabel}</span>}
+        <div style={{ position: 'relative' }}>
+          <button
+            type="button"
+            className="sales-mode-toggle"
+            onClick={() => setShowRuntimeConfig((prev) => !prev)}
+          >
+            Configuracion activa
+          </button>
+          {showRuntimeConfig && (
+            <div
+              style={{
+                position: 'absolute',
+                top: 'calc(100% + 6px)',
+                right: 0,
+                zIndex: 20,
+                minWidth: '320px',
+                maxWidth: 'min(90vw, 520px)',
+                padding: '10px',
+                border: '1px solid #dbe4f0',
+                borderRadius: '10px',
+                background: '#ffffff',
+                boxShadow: '0 14px 30px rgba(15, 23, 42, 0.16)',
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '0.4rem',
+              }}
+            >
+              <span className="sales-mode-chip" style={{ background: canEditDraftInCurrentMode ? '#d1fae5' : '#fee2e2', color: canEditDraftInCurrentMode ? '#065f46' : '#991b1b' }}>
+                Edicion borrador: {canEditDraftInCurrentMode ? 'Habilitada' : 'Deshabilitada'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: canVoidDocumentsInCurrentMode ? '#d1fae5' : '#fee2e2', color: canVoidDocumentsInCurrentMode ? '#065f46' : '#991b1b' }}>
+                Anulacion: {canVoidDocumentsInCurrentMode ? 'Habilitada' : 'Deshabilitada'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: allowVoidForSeller ? '#ecfeff' : '#fee2e2', color: allowVoidForSeller ? '#155e75' : '#991b1b' }}>
+                Vendedor: {allowVoidForSeller ? 'Puede anular' : 'Sin anulacion'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: allowVoidForCashier ? '#ecfeff' : '#fee2e2', color: allowVoidForCashier ? '#155e75' : '#991b1b' }}>
+                Caja: {allowVoidForCashier ? 'Puede anular' : 'Sin anulacion'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: allowVoidForAdmin ? '#ecfeff' : '#fee2e2', color: allowVoidForAdmin ? '#155e75' : '#991b1b' }}>
+                Admin: {allowVoidForAdmin ? 'Puede anular' : 'Sin anulacion'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: reverseStockOnVoidEnabled ? '#dbeafe' : '#fef3c7', color: reverseStockOnVoidEnabled ? '#1e3a8a' : '#92400e' }}>
+                Reversa stock al anular: {reverseStockOnVoidEnabled ? 'Activa' : 'Inactiva'}
+              </span>
+            </div>
+          )}
+        </div>
         <button
           type="button"
           className="sales-mode-toggle"
@@ -1725,7 +3598,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       )}
 
       {message && <p className="notice">{message}</p>}
-
       {salesWorkspaceMode === 'SELL' && canUseSellWorkspace && (
         <>
       <form className="sales-form" onSubmit={handleSubmit}>
@@ -1851,6 +3723,443 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               onChange={(e) => setForm((prev) => ({ ...prev, dueDate: e.target.value || prev.issueDate || TODAY }))}
             />
           </label>
+
+          {(effectiveDocumentKind === 'INVOICE' || effectiveDocumentKind === 'RECEIPT') && (
+            <div className="sales-tributary-slot">
+              <details className="sales-tributary-panel sales-credit-summary-panel">
+                <summary className="sales-tributary-summary sales-credit-summary-bar">
+                  <div className="sales-credit-summary-left">
+                    <span className="sales-tributary-title">Condición de pago SUNAT</span>
+                    <span className={`sales-tributary-chip ${form.isCreditSale ? 'is-active' : ''}`}>
+                      {form.isCreditSale ? 'Crédito' : 'Contado'}
+                    </span>
+                    {form.isCreditSale && (
+                      <span className="sales-tributary-chip is-warning">Cuotas {creditInstallments.length}</span>
+                    )}
+                    {form.isCreditSale && creditObservationCount > 0 && (
+                      <span className="sales-tributary-chip is-soft">Obs. {creditObservationCount}</span>
+                    )}
+                    {advancesEnabled && cappedAdvanceAmount > 0 && (
+                      <span className="sales-tributary-chip is-soft">Anticipo {selectedCurrency?.symbol ?? ''} {cappedAdvanceAmount.toFixed(2)}</span>
+                    )}
+                  </div>
+
+                  {form.isCreditSale && (
+                    <div className="sales-credit-summary-right">
+                      <span className="sales-credit-total-pill">
+                        <strong>Cuotas</strong>
+                        <span>{selectedCurrency?.symbol ?? ''} {creditInstallmentsTotal.toFixed(2)}</span>
+                      </span>
+                      <span className="sales-credit-total-pill is-highlight">
+                        <strong>Saldo</strong>
+                        <span>{selectedCurrency?.symbol ?? ''} {creditPendingTotal.toFixed(2)}</span>
+                      </span>
+                    </div>
+                  )}
+                </summary>
+
+                <div className="sales-tributary-grid sales-credit-summary-grid">
+                  <label className="sales-tributary-toggle">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.isCreditSale)}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm((prev) => ({
+                          ...prev,
+                          isCreditSale: checked,
+                          creditInstallments: checked
+                            ? (prev.creditInstallments && prev.creditInstallments.length > 0
+                              ? prev.creditInstallments
+                              : [createCreditInstallmentRow(
+                                  prev.dueDate || prev.issueDate || TODAY,
+                                  Math.max(0, grandTotal - Math.max(0, Number(prev.advanceAmount ?? 0)))
+                                )])
+                            : [],
+                        }));
+
+                        setCreditPlanModalOpen(checked);
+                      }}
+                    />
+                    <span>Venta al crédito</span>
+                  </label>
+
+                  {advancesEnabled && (
+                    <label className="sales-tributary-field">
+                      <span>Anticipo aplicado</span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={grandTotal}
+                        step="0.01"
+                        value={form.advanceAmount ?? 0}
+                        onChange={(e) => {
+                          const next = Math.max(0, Number(e.target.value || 0));
+                          setForm((prev) => ({ ...prev, advanceAmount: next }));
+                        }}
+                      />
+                    </label>
+                  )}
+
+                  {form.isCreditSale && (
+                    <>
+                      <div className="sales-credit-config-bar">
+                        <div className="sales-credit-config-inline">
+                          <button
+                            className="sales-credit-config-button"
+                            type="button"
+                            onClick={() => setCreditPlanModalOpen(true)}
+                          >
+                            {creditInstallments.length > 0 ? 'Editar cuotas' : 'Configurar cuotas'}
+                          </button>
+                          <span>
+                            {creditInstallments.length} cuota(s) registradas{creditObservationCount > 0 ? ` • ${creditObservationCount} con observación` : ''}
+                          </span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </details>
+            </div>
+          )}
+
+          {isNoteDocument && (
+            <>
+              <label className="sales-field-customer-meta">
+                Documento afectado
+                <select
+                  value={form.noteAffectedDocumentId ?? ''}
+                  onChange={(e) => {
+                    const value = e.target.value ? Number(e.target.value) : null;
+                    setForm((prev) => ({ ...prev, noteAffectedDocumentId: value }));
+                    if (value) {
+                      void chooseReferenceDocument(value);
+                    } else {
+                      setCart([]);
+                    }
+                  }}
+                  disabled={loadingReferenceDocument || !form.customerId}
+                >
+                  <option value="">Seleccionar comprobante</option>
+                  {referenceDocuments.map((row) => {
+                    const sourceTotal = Number(row.total ?? 0);
+                    const appliedTotal = isCreditNote
+                      ? Number(row.applied_credit_total ?? 0)
+                      : Number(row.applied_debit_total ?? 0);
+                    const remainingTotal = Math.max(0, sourceTotal - appliedTotal);
+
+                    return (
+                      <option key={row.id} value={row.id}>
+                        {docKindLabel(row.document_kind)} {row.series}-{String(row.number).padStart(6, '0')} | Disponible: {remainingTotal.toFixed(2)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+
+              <label className="sales-field-address">
+                Tipo de {isCreditNote ? 'nota de credito' : 'nota de debito'}
+                <select
+                  value={form.noteReasonCode ?? ''}
+                  onChange={(e) => setForm((prev) => ({ ...prev, noteReasonCode: e.target.value }))}
+                >
+                  <option value="">Seleccionar tipo</option>
+                  {activeNoteReasons.map((row) => (
+                    <option key={row.id} value={row.code}>
+                      {row.code} - {row.description}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {selectedReferenceDocument && (
+                <p className="notice" style={{ margin: 0 }}>
+                  Afectando: {docKindLabel(selectedReferenceDocument.document_kind)} {selectedReferenceDocument.series}-{String(selectedReferenceDocument.number).padStart(6, '0')}
+                </p>
+              )}
+            </>
+          )}
+
+          {isInvoiceDocument && ((lookups?.detraccion_service_codes ?? []).length > 0 || (lookups?.retencion_types ?? []).length > 0 || (lookups?.percepcion_types ?? []).length > 0 || (lookups?.retencion_percentage ?? null) !== null) && (
+            <div className="sales-tributary-slot">
+              <details className="sales-tributary-panel">
+                <summary className="sales-tributary-summary">
+                  <span className="sales-tributary-title">Condiciones tributarias</span>
+                  <span className={`sales-tributary-chip ${form.hasDetraccion ? 'is-active' : ''}`}>
+                    Detracción {form.hasDetraccion ? 'activa' : 'off'}
+                  </span>
+                  <span className={`sales-tributary-chip ${form.hasRetencion ? 'is-active' : ''}`}>
+                    Retención {form.hasRetencion ? 'activa' : 'off'}
+                  </span>
+                  <span className={`sales-tributary-chip ${form.hasPercepcion ? 'is-active' : ''}`}>
+                    Percepción {form.hasPercepcion ? 'activa' : 'off'}
+                  </span>
+                  {!form.hasDetraccion && grandTotal >= detractionMinAmount && (
+                    <span className="sales-tributary-chip is-warning">Umbral S/ {detractionMinAmount.toFixed(2)}</span>
+                  )}
+                  {selectedSunatOperationType && (
+                    <span className="sales-tributary-chip is-soft">
+                      Op. SUNAT {selectedSunatOperationType.code}
+                    </span>
+                  )}
+                  {lookups?.detraccion_account?.account_number && (
+                    <span className="sales-tributary-chip is-soft">Cta Detr. {lookups.detraccion_account.account_number}</span>
+                  )}
+                  {lookups?.retencion_account?.account_number && (
+                    <span className="sales-tributary-chip is-soft">Cta Ret. {lookups.retencion_account.account_number}</span>
+                  )}
+                  {lookups?.percepcion_account?.account_number && (
+                    <span className="sales-tributary-chip is-soft">Cta Perc. {lookups.percepcion_account.account_number}</span>
+                  )}
+                  {form.hasDetraccion && detraccionAmount > 0 && (
+                    <span className="sales-tributary-chip is-soft">Detr. {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}</span>
+                  )}
+                  {form.hasRetencion && retencionAmount > 0 && (
+                    <span className="sales-tributary-chip is-soft">Ret. {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}</span>
+                  )}
+                  {form.hasPercepcion && percepcionAmount > 0 && (
+                    <span className="sales-tributary-chip is-soft">Perc. {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}</span>
+                  )}
+                </summary>
+
+                <div className="sales-tributary-grid">
+                  {(lookups?.detraccion_service_codes ?? []).length > 0 && (
+                    <label className="sales-tributary-toggle">
+                      <input
+                        type="checkbox"
+                        checked={form.hasDetraccion ?? false}
+                        onChange={(e) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            hasDetraccion: e.target.checked,
+                            detraccionServiceCode: e.target.checked ? prev.detraccionServiceCode : '',
+                            hasRetencion: e.target.checked ? false : prev.hasRetencion,
+                            retencionTypeCode: e.target.checked ? '' : prev.retencionTypeCode,
+                            hasPercepcion: e.target.checked ? false : prev.hasPercepcion,
+                            percepcionTypeCode: e.target.checked ? '' : prev.percepcionTypeCode,
+                            sunatOperationTypeCode:
+                              e.target.checked
+                                ? pickOperationTypeCode('DETRACCION')
+                                : prev.hasRetencion
+                                  ? pickOperationTypeCode('RETENCION')
+                                  : prev.hasPercepcion
+                                    ? pickOperationTypeCode('PERCEPCION')
+                                : '',
+                          }));
+                        }}
+                      />
+                      <span>Detracción SPOT</span>
+                    </label>
+                  )}
+
+                  {((lookups?.retencion_types ?? []).length > 0 || (lookups?.retencion_percentage ?? null) !== null) && (
+                    <label className="sales-tributary-toggle">
+                      <input
+                        type="checkbox"
+                        checked={form.hasRetencion ?? false}
+                        onChange={(e) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            hasRetencion: e.target.checked,
+                            retencionTypeCode: e.target.checked ? (prev.retencionTypeCode || (retencionTypes[0]?.code ?? '')) : '',
+                            hasDetraccion: e.target.checked ? false : prev.hasDetraccion,
+                            detraccionServiceCode: e.target.checked ? '' : prev.detraccionServiceCode,
+                            hasPercepcion: e.target.checked ? false : prev.hasPercepcion,
+                            percepcionTypeCode: e.target.checked ? '' : prev.percepcionTypeCode,
+                            sunatOperationTypeCode:
+                              e.target.checked
+                                ? pickOperationTypeCode('RETENCION')
+                                : prev.hasDetraccion
+                                  ? pickOperationTypeCode('DETRACCION')
+                                  : prev.hasPercepcion
+                                    ? pickOperationTypeCode('PERCEPCION')
+                                : '',
+                          }));
+                        }}
+                      />
+                      <span>Retención</span>
+                    </label>
+                  )}
+
+                  {(lookups?.percepcion_types ?? []).length > 0 && (
+                    <label className="sales-tributary-toggle">
+                      <input
+                        type="checkbox"
+                        checked={form.hasPercepcion ?? false}
+                        onChange={(e) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            hasPercepcion: e.target.checked,
+                            percepcionTypeCode: e.target.checked ? (prev.percepcionTypeCode || (percepcionTypes[0]?.code ?? '')) : '',
+                            hasDetraccion: e.target.checked ? false : prev.hasDetraccion,
+                            detraccionServiceCode: e.target.checked ? '' : prev.detraccionServiceCode,
+                            hasRetencion: e.target.checked ? false : prev.hasRetencion,
+                            retencionTypeCode: e.target.checked ? '' : prev.retencionTypeCode,
+                            sunatOperationTypeCode:
+                              e.target.checked
+                                ? pickOperationTypeCode('PERCEPCION')
+                                : prev.hasDetraccion
+                                  ? pickOperationTypeCode('DETRACCION')
+                                  : prev.hasRetencion
+                                    ? pickOperationTypeCode('RETENCION')
+                                : '',
+                          }));
+                        }}
+                      />
+                      <span>Percepción</span>
+                    </label>
+                  )}
+
+                  {sunatOperationTypes.length > 0 && (
+                    <label className="sales-tributary-field">
+                      <span>Operación SUNAT</span>
+                      <select
+                        value={form.sunatOperationTypeCode ?? ''}
+                        onChange={(e) => setForm((prev) => ({ ...prev, sunatOperationTypeCode: e.target.value }))}
+                      >
+                        <option value="">Seleccionar tipo</option>
+                        {sunatOperationTypes.map((row) => (
+                          <option key={row.code} value={row.code}>
+                            {row.code} - {row.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+
+                  {form.hasDetraccion && (
+                    <>
+                      <label className="sales-tributary-field sales-tributary-field-wide">
+                        <span>Tipo de detracción</span>
+                        <select
+                          value={form.detraccionServiceCode ?? ''}
+                          onChange={(e) => setForm((prev) => ({ ...prev, detraccionServiceCode: e.target.value }))}
+                        >
+                          <option value="">Seleccionar código</option>
+                          {(lookups?.detraccion_service_codes ?? []).map((row) => (
+                            <option key={row.id} value={row.code}>
+                              {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <div className="sales-tributary-inline-note sales-tributary-field-wide">
+                        <span>SPOT aplica según código SUNAT para bienes y servicios.</span>
+                        {selectedDetractionService && detraccionAmount > 0 && (
+                          <strong>{selectedDetractionService.rate_percent.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}</strong>
+                        )}
+                        {lookups?.detraccion_account?.account_number && (
+                          <span>
+                            Cta: {lookups.detraccion_account.account_number}
+                            {lookups.detraccion_account.bank_name ? ` (${lookups.detraccion_account.bank_name})` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {form.hasRetencion && (
+                    <>
+                      {retencionTypes.length > 0 && (
+                        <label className="sales-tributary-field">
+                          <span>Tipo de retención</span>
+                          <select
+                            value={form.retencionTypeCode ?? ''}
+                            onChange={(e) => setForm((prev) => ({ ...prev, retencionTypeCode: e.target.value }))}
+                          >
+                            <option value="">Seleccionar tipo</option>
+                            {retencionTypes.map((row) => (
+                              <option key={row.code} value={row.code}>
+                                {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+
+                      <div className="sales-tributary-inline-note sales-tributary-field-wide">
+                        {retencionAmount > 0 && (
+                          <strong>
+                            {selectedRetencionType ? `${selectedRetencionType.name} ` : 'Retención '}| {retencionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}
+                          </strong>
+                        )}
+                        {lookups?.retencion_account?.account_number && (
+                          <span>
+                            Cta: {lookups.retencion_account.account_number}
+                            {lookups.retencion_account.bank_name ? ` (${lookups.retencion_account.bank_name})` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  {form.hasPercepcion && (
+                    <>
+                      {percepcionTypes.length > 0 && (
+                        <label className="sales-tributary-field">
+                          <span>Tipo de percepción</span>
+                          <select
+                            value={form.percepcionTypeCode ?? ''}
+                            onChange={(e) => setForm((prev) => ({ ...prev, percepcionTypeCode: e.target.value }))}
+                          >
+                            <option value="">Seleccionar tipo</option>
+                            {percepcionTypes.map((row) => (
+                              <option key={row.code} value={row.code}>
+                                {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+
+                      <div className="sales-tributary-inline-note sales-tributary-field-wide">
+                        {percepcionAmount > 0 && (
+                          <strong>
+                            {selectedPercepcionType ? `${selectedPercepcionType.name} ` : 'Percepción '}| {percepcionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}
+                          </strong>
+                        )}
+                        {lookups?.percepcion_account?.account_number && (
+                          <span>
+                            Cta: {lookups.percepcion_account.account_number}
+                            {lookups.percepcion_account.bank_name ? ` (${lookups.percepcion_account.bank_name})` : ''}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </details>
+
+              <div className="sales-tributary-preview" role="status" aria-live="polite">
+                <span>
+                  Op. SUNAT: {selectedSunatOperationType ? `${selectedSunatOperationType.code} - ${selectedSunatOperationType.name}` : '-'}
+                </span>
+                <span>
+                  Régimen: {form.hasDetraccion ? 'Detracción' : form.hasRetencion ? 'Retención' : form.hasPercepcion ? 'Percepción' : 'Ninguno'}
+                </span>
+                {form.hasDetraccion && (
+                  <span>
+                    Detracción: {selectedDetractionService?.rate_percent?.toFixed(2) ?? '0.00'}% | {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}
+                    {lookups?.detraccion_account?.account_number ? ` | Cta ${lookups.detraccion_account.account_number}` : ''}
+                  </span>
+                )}
+                {form.hasRetencion && (
+                  <span>
+                    Retención: {retencionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}
+                    {lookups?.retencion_account?.account_number ? ` | Cta ${lookups.retencion_account.account_number}` : ''}
+                  </span>
+                )}
+                {form.hasPercepcion && (
+                  <span>
+                    Percepción: {percepcionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}
+                    {lookups?.percepcion_account?.account_number ? ` | Cta ${lookups.percepcion_account.account_number}` : ''}
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="sales-concepts-shell">
@@ -1869,7 +4178,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   </label>
                 </div>
               </div>
-              <p>Agrega productos o items manuales y arma el detalle antes de emitir.</p>
+              <p>{isNoteDocument ? 'Los items se cargan automaticamente desde el documento afectado.' : 'Agrega productos o items manuales y arma el detalle antes de emitir.'}</p>
             </header>
 
             <div className="sales-grid-main">
@@ -2020,7 +4329,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <button
                     type="button"
                     onClick={addDraftItem}
-                    disabled={loading || !canAddDraftItem}
+                    disabled={loading || !canAddDraftItem || isNoteDocument}
                   >
                     Agregar item
                   </button>
@@ -2109,26 +4418,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <aside className="sales-concepts-side" aria-live="polite">
             <header className="sales-section-head">
               <h4>Montos del comprobante</h4>
-              <p>Vista previa consolidada en tiempo real.</p>
+              <p className="sales-live-caption">
+                <span className="sales-live-dot" aria-hidden="true" />
+                Resumen automatico al escribir.
+              </p>
             </header>
 
             <div className="sales-summary">
               <article>
                 <span>Subtotal</span>
                 <strong>
-                  {selectedCurrency?.symbol ?? ''} {(cart.length > 0 ? subtotal : draftSubtotal).toFixed(2)}
+                  {selectedCurrency?.symbol ?? ''} {previewSummaryTotals.subtotal.toFixed(2)}
                 </strong>
               </article>
               <article>
                 <span>Impuestos</span>
                 <strong>
-                  {selectedCurrency?.symbol ?? ''} {(cart.length > 0 ? taxTotal : draftTaxTotal).toFixed(2)}
+                  {selectedCurrency?.symbol ?? ''} {previewSummaryTotals.tax.toFixed(2)}
                 </strong>
               </article>
               <article>
                 <span>Total</span>
                 <strong>
-                  {selectedCurrency?.symbol ?? ''} {(cart.length > 0 ? grandTotal : draftGrandTotal).toFixed(2)}
+                  {selectedCurrency?.symbol ?? ''} {previewSummaryTotals.total.toFixed(2)}
                 </strong>
               </article>
             </div>
@@ -2155,6 +4467,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   )}
                   <article><span>Total Ope. Gravada</span><strong>{selectedCurrency?.symbol ?? ''} {tributaryPreview.gravadaTotal.toFixed(2)}</strong></article>
                   <article><span>Total IGV ({tributaryPreview.igvRateLabel.toFixed(2)}%)</span><strong>{selectedCurrency?.symbol ?? ''} {tributaryPreview.igvTotal.toFixed(2)}</strong></article>
+                  {form.hasDetraccion && detraccionAmount > 0 && (
+                    <article><span>Detracción ({detraccionRate.toFixed(2)}%)</span><strong>{selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}</strong></article>
+                  )}
+                  {form.hasRetencion && retencionAmount > 0 && (
+                    <article><span>Retención {selectedRetencionType ? `${selectedRetencionType.name} ` : 'de IGV '}({retencionPercentage.toFixed(2)}%)</span><strong>{selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}</strong></article>
+                  )}
+                  {form.hasPercepcion && percepcionAmount > 0 && (
+                    <article><span>Percepción {selectedPercepcionType ? `${selectedPercepcionType.name} ` : ''}({percepcionPercentage.toFixed(2)}%)</span><strong>{selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}</strong></article>
+                  )}
                   {showTaxBreakdown && (
                     <>
                       <article><span>ICBPER</span><strong>{selectedCurrency?.symbol ?? ''} {tributaryPreview.icbperTotal.toFixed(2)}</strong></article>
@@ -2168,6 +4489,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             )}
 
             <div className="sales-side-actions">
+              {editingDocumentId && (
+                <p className="shortcut-hint" style={{ marginBottom: '0.35rem' }}>
+                  Modo edicion activo para documento #{editingDocumentId}.
+                </p>
+              )}
               <button
                 ref={submitButtonRef}
                 type="submit"
@@ -2176,8 +4502,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   !canSubmitDocument
                 }
               >
-                {loading ? 'Procesando...' : salesFlowMode === 'SELLER_TO_CASHIER' ? 'Generar pedido comercial' : 'Emitir comprobante'}
+                {loading
+                  ? 'Procesando...'
+                  : editingDocumentId
+                    ? 'Guardar cambios'
+                    : salesFlowMode === 'SELLER_TO_CASHIER'
+                      ? 'Generar pedido comercial'
+                      : 'Emitir comprobante'}
               </button>
+              {editingDocumentId && (
+                <button type="button" onClick={cancelEditingDraft} disabled={loading}>
+                  Cancelar edicion
+                </button>
+              )}
               {salesFlowMode === 'SELLER_TO_CASHIER' && (
                 <p className="shortcut-hint">Modo vendedor activo: se genera pedido comercial (cotizacion/proforma) y caja convierte a nota de pedido o comprobante tributario.</p>
               )}
@@ -2195,7 +4532,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <h4>Vista previa de emision</h4>
           <p>
             {docKindLabel(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
-            {issuedPreview.total.toFixed(2)} | Estado: {issuedPreview.status}
+            {issuedPreview.total.toFixed(2)} | Estado: {commercialStatusLabel(issuedPreview.status)}
           </p>
           <button type="button" onClick={printIssuedPreview}>
             Imprimir A4 / PDF
@@ -2257,10 +4594,20 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <td>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                       <button type="button" className="btn-mini" disabled={loading} onClick={() => void showDocumentPreview(row.id)}>Ver</button>
-                      <button type="button" className="btn-mini" disabled={loading || !canConvertInCurrentMode} onClick={() => void openConvertPreview(row, 'INVOICE')}>Factura</button>
-                      <button type="button" className="btn-mini" disabled={loading || !canConvertInCurrentMode} onClick={() => void openConvertPreview(row, 'RECEIPT')}>Boleta</button>
-                      {row.document_kind === 'QUOTATION' && (
-                        <button type="button" className="btn-mini" disabled={loading || !canConvertInCurrentMode} onClick={() => void openConvertPreview(row, 'SALES_ORDER')}>Nota de pedido</button>
+                      {canConvertInCurrentMode && (
+                        <>
+                          <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'INVOICE')}>Factura</button>
+                          <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'RECEIPT')}>Boleta</button>
+                          {row.document_kind === 'QUOTATION' && (
+                            <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'SALES_ORDER')}>Nota de pedido</button>
+                          )}
+                        </>
+                      )}
+                      {canEditDraftInCurrentMode && String(row.status).toUpperCase() === 'DRAFT' && (
+                        <button type="button" className="btn-mini" disabled={loading} onClick={() => void startEditDraft(row)}>Editar</button>
+                      )}
+                      {canVoidDocumentsInCurrentMode && !['VOID', 'CANCELED'].includes(String(row.status).toUpperCase()) && (
+                        <button type="button" className="btn-mini danger" disabled={loading} onClick={() => void handleVoidDocument(row)}>Anular</button>
                       )}
                     </div>
                   </td>
@@ -2423,6 +4770,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </button>
           </div>
         </div>
+        {sunatToast && (
+          <div className="sales-sunat-toast-anchor">
+            <div className={`sales-sunat-toast ${sunatToast.tone}`} role="status" aria-live="polite">
+              <strong>{sunatToast.title}</strong>
+              <span>{sunatToast.detail}</span>
+              <button type="button" onClick={() => setSunatToast(null)} aria-label="Cerrar notificacion SUNAT">Cerrar</button>
+            </div>
+          </div>
+        )}
         <table>
           <thead>
             <tr>
@@ -2435,16 +4791,32 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <th>Estado</th>
               <th>Total</th>
               <th>Acciones</th>
+              <th>SUNAT</th>
             </tr>
           </thead>
           <tbody>
-            {documents.map((row) => (
-              <tr key={row.id}>
+            {documents.map((row) => {
+              const sunatUi = resolveSunatUiState(row);
+              const editControl = resolveEditControlState(
+                row,
+                canEditDraftInCurrentMode,
+                canEditIssuedBeforeSunatFinalInCurrentMode
+              );
+
+              return (
+              <tr
+                key={row.id}
+                ref={Number(row.id) === focusDocumentId ? focusedReportRowRef : null}
+                className={[
+                  Number(row.id) === highlightedDocumentId ? 'sales-row-focused' : '',
+                  Number(row.id) === pinnedDocumentId ? 'sales-row-selected' : '',
+                ].filter(Boolean).join(' ')}
+              >
                 <td>{row.id}</td>
                 <td>
                   {docKindLabel(row.document_kind)} {row.series}-{row.number}
                 </td>
-                <td>{row.issue_at ? new Date(row.issue_at).toLocaleString() : '-'}</td>
+                <td>{row.issue_at ? formatStoredDateTime(row.issue_at) : '-'}</td>
                 <td>{row.customer_name}</td>
                 <td>{row.payment_method_name ?? 'Sin metodo de pago'}</td>
                 <td>
@@ -2493,59 +4865,224 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>—</span>
                     )}
                 </td>
-                <td>{row.status}</td>
+                <td>{commercialStatusLabel(row.status)}</td>
                 <td>{row.total}</td>
                 <td>
                   {(row.document_kind === 'QUOTATION' || row.document_kind === 'SALES_ORDER') ? (
-                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
                       <button
                         type="button"
-                        className="btn-mini"
+                        className="btn-mini sales-action-btn sales-action-view"
                         disabled={loading}
                         onClick={() => void showDocumentPreview(row.id)}
+                        title="Ver comprobante"
                       >
-                        👁 Ver
+                        👁️
                       </button>
-                      <button
-                        type="button"
-                        className="btn-mini"
-                        disabled={loading || !canConvertInCurrentMode}
-                        onClick={() => void openConvertPreview(row, 'INVOICE')}
-                      >
-                        Convertir a Factura
-                      </button>
-                      <button
-                        type="button"
-                        className="btn-mini"
-                        disabled={loading || !canConvertInCurrentMode}
-                        onClick={() => void openConvertPreview(row, 'RECEIPT')}
-                      >
-                        Convertir a Boleta
-                      </button>
-                      {row.document_kind === 'QUOTATION' && (
+                      {canConvertInCurrentMode && (
+                        <details className="sales-actions-dropdown">
+                          <summary title="Opciones de conversion">⇄</summary>
+                          <div className="sales-actions-dropdown-menu">
+                            <button
+                              type="button"
+                              className="btn-mini"
+                              disabled={loading}
+                              onClick={() => void openConvertPreview(row, 'INVOICE')}
+                            >
+                              Factura
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-mini"
+                              disabled={loading}
+                              onClick={() => void openConvertPreview(row, 'RECEIPT')}
+                            >
+                              Boleta
+                            </button>
+                            {row.document_kind === 'QUOTATION' && (
+                              <button
+                                type="button"
+                                className="btn-mini"
+                                disabled={loading}
+                                onClick={() => void openConvertPreview(row, 'SALES_ORDER')}
+                              >
+                                Nota pedido
+                              </button>
+                            )}
+                          </div>
+                        </details>
+                      )}
+                      {editControl.visible && (
                         <button
                           type="button"
-                          className="btn-mini"
-                          disabled={loading || !canConvertInCurrentMode}
-                          onClick={() => void openConvertPreview(row, 'SALES_ORDER')}
+                          className="btn-mini sales-action-btn sales-action-edit"
+                          disabled={loading || !editControl.enabled}
+                          onClick={() => void startEditDraft(row)}
+                          title={editControl.reason}
                         >
-                          Convertir a Nota de pedido
+                          📝
+                        </button>
+                      )}
+                      {canVoidDocumentsInCurrentMode && !['VOID', 'CANCELED'].includes(String(row.status).toUpperCase()) && (
+                        <button
+                          type="button"
+                          className="btn-mini sales-action-btn sales-action-void"
+                          disabled={loading}
+                          onClick={() => void handleVoidDocument(row)}
+                          title="Anular comprobante"
+                        >
+                          🗑️
                         </button>
                       )}
                     </div>
                   ) : (
-                    <button
-                      type="button"
-                      className="btn-mini"
-                      disabled={loading}
-                      onClick={() => void showDocumentPreview(row.id)}
+                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        className="btn-mini sales-action-btn sales-action-view"
+                        disabled={loading}
+                        onClick={() => void showDocumentPreview(row.id)}
+                        title="Ver comprobante"
+                      >
+                        👁️
+                      </button>
+                      {editControl.visible && (
+                        <button
+                          type="button"
+                          className="btn-mini sales-action-btn sales-action-edit"
+                          disabled={loading || !editControl.enabled}
+                          onClick={() => void startEditDraft(row)}
+                          title={editControl.reason}
+                        >
+                          📝
+                        </button>
+                      )}
+                      {!isTributaryDocumentKind(row.document_kind)
+                        && canVoidDocumentsInCurrentMode
+                        && !['VOID', 'CANCELED'].includes(String(row.status).toUpperCase()) && (
+                          <button
+                            type="button"
+                            className="btn-mini sales-action-btn sales-action-void"
+                            disabled={loading}
+                            onClick={() => void handleVoidDocument(row)}
+                            title="Anular comprobante"
+                          >
+                            🗑️
+                          </button>
+                        )}
+                    </div>
+                  )}
+                </td>
+                <td>
+                  {isTributaryDocumentKind(row.document_kind) ? (
+                    <details
+                      className={`sales-sunat-dropdown ${canOpenSunatActionsMenu(row, taxBridgeEnabled, canVoidDocumentsInCurrentMode) ? '' : 'is-locked'}`}
                     >
-                      👁 Ver
-                    </button>
+                      <summary className={`sales-sunat-badge ${sunatUi.className}`}>
+                        {sunatUi.label}
+                      </summary>
+                      <div className="sales-sunat-dropdown-menu">
+                        {/* ── DOCS ACEPTADOS: Descargas + Notas ─────────────── */}
+                        {String(row.sunat_status ?? '').toUpperCase() === 'ACCEPTED' && (
+                          <>
+                            <p className="sunat-menu-section-label">Descargar</p>
+                            <div className="sunat-menu-row">
+                              <button
+                                type="button"
+                                className="sunat-menu-btn sunat-menu-btn--download"
+                                disabled={loading || !taxBridgeEnabled}
+                                onClick={() => void handleDownloadXml(row)}
+                                title={taxBridgeEnabled ? 'Descargar XML — GET bridge/dowload_xml/{ruc}/{tipo}/{serie}/{numero}' : 'Puente tributario no habilitado'}
+                              >
+                                🗂️ XML
+                              </button>
+                              <button
+                                type="button"
+                                className="sunat-menu-btn sunat-menu-btn--download"
+                                disabled={loading || !taxBridgeEnabled}
+                                onClick={() => void handleDownloadCdr(row)}
+                                title={taxBridgeEnabled ? 'Descargar CDR ZIP — GET bridge/dowload_cdr/{ruc}/{tipo}/{serie}/{numero}' : 'Puente tributario no habilitado'}
+                              >
+                                📦 CDR
+                              </button>
+                            </div>
+                            {['INVOICE', 'RECEIPT'].includes(String(row.document_kind).toUpperCase()) && (
+                              <>
+                                <div className="sunat-menu-divider" />
+                                <p className="sunat-menu-section-label">Notas</p>
+                                <button
+                                  type="button"
+                                  className="sunat-menu-btn sunat-menu-btn--note"
+                                  disabled={loading}
+                                  onClick={() => void handleOpenNoteFromDocument(row, 'CREDIT_NOTE')}
+                                  title="Pre-carga los datos del comprobante en el formulario"
+                                >
+                                  📉 Nota de Credito
+                                </button>
+                                <button
+                                  type="button"
+                                  className="sunat-menu-btn sunat-menu-btn--note"
+                                  disabled={loading}
+                                  onClick={() => void handleOpenNoteFromDocument(row, 'DEBIT_NOTE')}
+                                  title="Pre-carga los datos del comprobante en el formulario"
+                                >
+                                  📈 Nota de Debito
+                                </button>
+                              </>
+                            )}
+                            <div className="sunat-menu-divider" />
+                          </>
+                        )}
+                        {canSendSunatManually(row, taxBridgeEnabled) && (
+                          <button
+                            type="button"
+                            className="sunat-menu-btn"
+                            disabled={loading || sunatSendingDocumentId === row.id}
+                            onClick={() => void handleManualSunatSend(row)}
+                          >
+                            🚀 {sunatSendingDocumentId === row.id ? 'Enviando...' : 'Enviar a SUNAT'}
+                          </button>
+                        )}
+                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode) && (
+                          <button
+                            type="button"
+                            className="sunat-menu-btn sunat-menu-btn--danger"
+                            disabled={loading}
+                            onClick={() => void handleVoidDocument(row)}
+                            title="Anular internamente sin enviar a SUNAT"
+                          >
+                            🗑️ Anular (sin envio SUNAT)
+                          </button>
+                        )}
+                        {canRequestSunatVoidCommunication(row) && (
+                          <>
+                            <button
+                              type="button"
+                              className="sunat-menu-btn sunat-menu-btn--danger"
+                              disabled={loading || !taxBridgeEnabled || !canVoidDocumentsInCurrentMode}
+                              onClick={() => void handleSunatVoidCommunication(row)}
+                              title={!taxBridgeEnabled
+                                ? 'Puente tributario no habilitado'
+                                : (!canVoidDocumentsInCurrentMode
+                                  ? 'Sin permiso de anulacion'
+                                  : 'Envia comunicacion de baja a SUNAT')}
+                            >
+                              📤 Comunicar baja SUNAT
+                            </button>
+                            {String(row.document_kind).toUpperCase() === 'RECEIPT' && (
+                              <small className="sunat-menu-note">Boleta: via resumen (proxima version)</small>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </details>
+                  ) : (
+                    <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>—</span>
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.75rem' }}>
@@ -2574,6 +5111,104 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       )}
 
         </>
+      )}
+
+      {creditPlanModalOpen && form.isCreditSale && (
+        <div
+          className="sales-credit-modal-backdrop"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setCreditPlanModalOpen(false);
+            }
+          }}
+        >
+          <div className="sales-credit-modal">
+            <div className="sales-credit-modal-header">
+              <div>
+                <h3>Plan de cuotas</h3>
+                <p>Configura monto, fecha y observación por cuota sin ocupar la pantalla principal de venta.</p>
+              </div>
+              <button type="button" className="sales-credit-modal-close" onClick={() => setCreditPlanModalOpen(false)}>
+                Cerrar
+              </button>
+            </div>
+
+            <div className="sales-credit-modal-summary">
+              <span className="sales-tributary-chip is-warning">Cuotas {creditInstallments.length}</span>
+              <span className="sales-tributary-chip is-soft">Saldo {selectedCurrency?.symbol ?? ''} {creditPendingTotal.toFixed(2)}</span>
+              {advancesEnabled && cappedAdvanceAmount > 0 && (
+                <span className="sales-tributary-chip is-soft">Anticipo {selectedCurrency?.symbol ?? ''} {cappedAdvanceAmount.toFixed(2)}</span>
+              )}
+            </div>
+
+            <div className="sales-credit-installment-list">
+              {creditInstallments.map((row, index) => (
+                <div className="sales-credit-installment-card" key={`credit-installment-modal-${index}`}>
+                  <div className="sales-credit-installment-head">
+                    <div className="sales-credit-installment-meta">
+                      <span className="sales-credit-installment-index">Cuota {index + 1}</span>
+                      <span className="sales-credit-installment-caption">Programa el compromiso de cobro y agrega contexto para el vendedor.</span>
+                    </div>
+                    <button
+                      className="sales-credit-installment-remove"
+                      type="button"
+                      onClick={() => removeCreditInstallment(index)}
+                      disabled={creditInstallments.length <= 1}
+                    >
+                      Quitar cuota
+                    </button>
+                  </div>
+
+                  <div className="sales-credit-installment-grid">
+                    <label className="sales-credit-installment-field">
+                      <span>Monto</span>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={row.amount}
+                        onChange={(e) => updateCreditInstallment(index, { amount: Math.max(0, Number(e.target.value || 0)) })}
+                      />
+                    </label>
+
+                    <label className="sales-credit-installment-field">
+                      <span>Fecha pago</span>
+                      <input
+                        type="date"
+                        value={row.dueDate}
+                        onChange={(e) => updateCreditInstallment(index, { dueDate: e.target.value })}
+                      />
+                    </label>
+
+                    <label className="sales-credit-installment-field is-wide">
+                      <span>Observación</span>
+                      <textarea
+                        rows={2}
+                        maxLength={300}
+                        value={row.observation ?? ''}
+                        onChange={(e) => updateCreditInstallment(index, { observation: e.target.value })}
+                        placeholder="Ej. Cliente deposita después de recibir mercadería"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="sales-credit-installment-toolbar">
+              <button className="sales-credit-installment-add" type="button" onClick={addCreditInstallment}>
+                Agregar otra cuota
+              </button>
+              <span className="sales-credit-installment-help">La suma de cuotas debe coincidir con el saldo pendiente del comprobante.</span>
+            </div>
+
+            <div className="sales-credit-modal-footer">
+              <button type="button" className="sales-credit-modal-close" onClick={() => setCreditPlanModalOpen(false)}>
+                Listo
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {previewDialog && (
@@ -2629,7 +5264,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
                     <article><strong>Cliente</strong><div>{convertPreviewModal.details.customerName}</div></article>
                     <article><strong>Total</strong><div>{convertPreviewModal.details.currencySymbol} {Number(convertPreviewModal.details.grandTotal ?? 0).toFixed(2)}</div></article>
-                    <article><strong>Estado origen</strong><div>{convertPreviewModal.details.status}</div></article>
+                    <article><strong>Estado origen</strong><div>{commercialStatusLabel(convertPreviewModal.details.status)}</div></article>
                   </div>
                   <div style={{
                     border: '1px solid #e2e8f0',
