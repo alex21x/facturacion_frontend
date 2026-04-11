@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { checkoutRestaurantOrder, fetchComandas, updateComandaStatus } from '../api';
 import type { CheckoutRestaurantOrderPayload, ComandaKitchenStatus, ComandaRow } from '../types';
 import { fetchSalesLookups, fetchSeriesNumbers } from '../../sales/api';
 import type { SalesLookups, SeriesNumber } from '../../sales/types';
+
+const POLLING_INTERVAL_MS = 30_000;
 
 type Props = {
   accessToken: string;
@@ -26,9 +28,9 @@ const BOARD_COLUMNS: Array<{
   tone: 'pending' | 'prep' | 'ready' | 'served' | 'cancelled';
 }> = [
   { status: 'PENDING', title: 'Pendientes', hint: 'Ingresan a cocina', tone: 'pending' },
-  { status: 'IN_PREP', title: 'En preparacion', hint: 'Produccion activa', tone: 'prep' },
-  { status: 'READY', title: 'Listas', hint: 'Esperando pase', tone: 'ready' },
-  { status: 'SERVED', title: 'Entregadas', hint: 'Cierre de atencion', tone: 'served' },
+  { status: 'IN_PREP', title: 'En preparación', hint: 'Producción activa', tone: 'prep' },
+  { status: 'READY', title: 'Listas para servir', hint: 'Esperando pase', tone: 'ready' },
+  { status: 'SERVED', title: 'Entregadas', hint: 'Cierre de atención', tone: 'served' },
 ];
 
 function kitchenBadgeClass(status: ComandaKitchenStatus): string {
@@ -39,29 +41,31 @@ function kitchenBadgeClass(status: ComandaKitchenStatus): string {
   return 'sales-sunat-badge is-warn';
 }
 
-function formatIssueAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat('es-PE', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(date);
-}
-
 function formatTotal(value: string): string {
   const amount = Number(value);
-  if (!Number.isFinite(amount)) {
-    return value;
-  }
-
+  if (!Number.isFinite(amount)) return value;
   return new Intl.NumberFormat('es-PE', {
     style: 'currency',
     currency: 'PEN',
     minimumFractionDigits: 2,
   }).format(amount);
+}
+
+function formatQty(value: number): string {
+  if (!Number.isFinite(value)) return '0';
+  if (Math.abs(value - Math.round(value)) < 0.001) return String(Math.round(value));
+  return value.toFixed(2);
+}
+
+function timeAgo(isoStr: string): string {
+  const diffMs = Date.now() - new Date(isoStr).getTime();
+  if (diffMs < 0) return 'Ahora';
+  const mins = Math.floor(diffMs / 60_000);
+  if (mins < 1) return 'Ahora';
+  if (mins < 60) return `${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem > 0 ? `${hrs}h ${rem}m` : `${hrs}h`;
 }
 
 export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterId }: Props) {
@@ -71,6 +75,8 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   const [statusFilter, setStatusFilter] = useState<ComandaKitchenStatus | ''>('');
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [modifiedOrderIds, setModifiedOrderIds] = useState<Set<number>>(new Set());
+  const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
 
   // Checkout modal state
   const [checkoutTarget, setCheckoutTarget] = useState<ComandaRow | null>(null);
@@ -82,6 +88,10 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState('');
   const [lookups, setLookups] = useState<SalesLookups | null>(null);
+
+  // Ticker for time-ago refresh (every minute)
+  const [tick, setTick] = useState(0);
+  const loadRef = useRef<() => void>(() => {});
 
   const summary = useMemo(() => {
     return {
@@ -98,8 +108,8 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     }));
   }, [rows]);
 
-  async function load() {
-    setLoading(true);
+  async function load(silent = false) {
+    if (!silent) setLoading(true);
     setMessage('');
     try {
       const res = await fetchComandas(accessToken, {
@@ -108,17 +118,53 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
         search,
       });
       setRows(res.data ?? []);
+      setLastRefreshed(new Date());
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo cargar comandas');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }
 
+  // Keep loadRef current so interval always calls latest version
+  loadRef.current = () => void load(true);
+
+  // Initial load + reload when filters change
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, branchId, statusFilter]);
+
+  // Silent auto-polling every 30 s
+  useEffect(() => {
+    const id = setInterval(() => loadRef.current(), POLLING_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, []);
+
+  // Tick every 60 s to re-render time-ago labels
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // BroadcastChannel — receives ORDER_MODIFIED from RestaurantOrderView in same browser
+  useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('restaurant_orders');
+      bc.onmessage = (ev: MessageEvent<{ type: string; orderId: number }>) => {
+        if (ev.data?.type === 'ORDER_MODIFIED') {
+          const modifiedId = Number(ev.data.orderId);
+          setModifiedOrderIds((prev) => new Set(prev).add(modifiedId));
+          // Immediate silent reload so the card shows updated items
+          loadRef.current();
+        }
+      };
+    } catch {
+      // BroadcastChannel not supported — polling covers it
+    }
+    return () => { bc?.close(); };
+  }, []);
 
   // Prefetch lookups (payment methods + series) for the checkout modal
   useEffect(() => {
@@ -143,11 +189,33 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
         table_label: row.table_label || undefined,
       });
       setRows((prev) => prev.map((item) => (item.id === row.id ? { ...item, kitchen_status: nextStatus } : item)));
+      // Acknowledge modification badge when staff acts on the order
+      setModifiedOrderIds((prev) => { const s = new Set(prev); s.delete(row.id); return s; });
+      // Notify RestaurantOrderView (waiter screen) when a comanda is ready to serve
+      if (nextStatus === 'READY') {
+        try {
+          const bc = new BroadcastChannel('restaurant_orders');
+          bc.postMessage({
+            type: 'ORDER_READY',
+            orderId: row.id,
+            tableLabel: row.table_label || '',
+            series: row.series,
+            number: row.number,
+          });
+          bc.close();
+        } catch {
+          // BroadcastChannel unavailable
+        }
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo actualizar estado');
     } finally {
       setBusyId(null);
     }
+  }
+
+  function dismissModified(orderId: number) {
+    setModifiedOrderIds((prev) => { const s = new Set(prev); s.delete(orderId); return s; });
   }
 
   function openCheckout(row: ComandaRow) {
@@ -196,15 +264,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     }
   }
 
-  const statusOptions: Array<{ value: ComandaKitchenStatus | ''; label: string }> = [
-    { value: '', label: 'Todos los estados' },
-    { value: 'PENDING', label: 'Pendiente' },
-    { value: 'IN_PREP', label: 'En preparacion' },
-    { value: 'READY', label: 'Listo' },
-    { value: 'SERVED', label: 'Entregado' },
-    { value: 'CANCELLED', label: 'Cancelado' },
-  ];
-
+  // Load series options when checkout modal opens or doc kind changes
   useEffect(() => {
     if (!checkoutTarget) return;
 
@@ -219,31 +279,34 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
           branchId,
           warehouseId,
         });
-
         if (cancelled) return;
-
         const enabled = (options ?? []).filter((s) => Boolean(s.is_enabled));
         setCheckoutSeriesOptions(enabled);
         setCheckoutSeries((prev) => {
-          if (prev && enabled.some((s) => s.series === prev)) {
-            return prev;
-          }
+          if (prev && enabled.some((s) => s.series === prev)) return prev;
           return enabled[0]?.series ?? '';
         });
       } catch {
-        if (!cancelled) {
-          setCheckoutSeriesOptions([]);
-          setCheckoutSeries('');
-        }
+        if (!cancelled) { setCheckoutSeriesOptions([]); setCheckoutSeries(''); }
       } finally {
         if (!cancelled) setCheckoutSeriesLoading(false);
       }
     })();
 
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [checkoutTarget, checkoutDocKind, accessToken, branchId, warehouseId]);
+
+  const statusOptions: Array<{ value: ComandaKitchenStatus | ''; label: string }> = [
+    { value: '', label: 'Todos los estados' },
+    { value: 'PENDING', label: 'Pendiente' },
+    { value: 'IN_PREP', label: 'En preparación' },
+    { value: 'READY', label: 'Listo' },
+    { value: 'SERVED', label: 'Entregado' },
+    { value: 'CANCELLED', label: 'Cancelado' },
+  ];
+
+  // Suppress unused-variable warning for tick (used to trigger re-render)
+  void tick;
 
   return (
     <>
@@ -255,9 +318,11 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
           <p className="restaurant-toolbar__copy">Vista operativa para cocina, pase y entrega en sala.</p>
         </div>
         <div className="restaurant-toolbar__actions">
-          <span className="restaurant-toolbar__context">Sucursal: {branchId ?? 'Todas'}</span>
+          <span className="restaurant-toolbar__context" style={{ fontSize: '0.76rem', color: '#7a6f63' }}>
+            Actualizado {lastRefreshed.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
+          </span>
           <button type="button" className="restaurant-ghost-btn" onClick={() => void load()} disabled={loading}>
-            {loading ? 'Actualizando...' : 'Refrescar'}
+            {loading ? 'Actualizando...' : '↻ Refrescar'}
           </button>
         </div>
       </div>
@@ -266,12 +331,12 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
         <article className="restaurant-stat">
           <span>Pendientes</span>
           <strong>{summary.pending}</strong>
-          <small>Ordenes recien registradas</small>
+          <small>Órdenes recién registradas</small>
         </article>
         <article className="restaurant-stat">
-          <span>En preparacion</span>
+          <span>En preparación</span>
           <strong>{summary.inPrep}</strong>
-          <small>Produccion activa</small>
+          <small>Producción activa</small>
         </article>
         <article className="restaurant-stat">
           <span>Listas</span>
@@ -288,11 +353,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
             placeholder="Serie, cliente o mesa"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                void load();
-              }
-            }}
+            onKeyDown={(e) => { if (e.key === 'Enter') void load(); }}
           />
         </label>
         <label className="restaurant-field">
@@ -313,7 +374,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
       {rows.length === 0 ? (
         <div className="restaurant-empty-state">
           <strong>{loading ? 'Cargando comandas...' : 'Sin comandas en esta vista'}</strong>
-          <p>No hay ordenes que coincidan con los filtros seleccionados.</p>
+          <p>No hay órdenes que coincidan con los filtros seleccionados.</p>
         </div>
       ) : (
         <div className="comandas-board">
@@ -330,35 +391,76 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
               <div className="comandas-column__body">
                 {column.rows.length === 0 ? (
                   <div className="comandas-column__empty">Sin comandas en esta etapa.</div>
-                ) : column.rows.map((row) => (
-                  <article key={row.id} className="comanda-card">
+                ) : column.rows.map((row) => {
+                  const isModified = modifiedOrderIds.has(row.id);
+                  const items = row.items_preview ?? [];
+                  return (
+                  <article key={row.id} className={`comanda-card comanda-card--${column.tone}${isModified ? ' comanda-card--modified' : ''}`}>
+
+                    {/* ── Modified alert banner ── */}
+                    {isModified && (
+                      <div className="comanda-card__modified-banner">
+                        <span>⚡ Pedido modificado</span>
+                        <button
+                          type="button"
+                          className="comanda-card__modified-dismiss"
+                          onClick={() => dismissModified(row.id)}
+                          aria-label="Entendido"
+                        >
+                          ✓ Entendido
+                        </button>
+                      </div>
+                    )}
+
+                    {/* ── Header: ID + serie + tiempo ── */}
                     <div className="comanda-card__head">
-                      <div>
-                        <p className="comanda-card__kicker">Comanda #{row.id}</p>
-                        <h4>{row.series}-{String(row.number).padStart(6, '0')}</h4>
+                      <div className="comanda-card__head-left">
+                        <p className="comanda-card__kicker">#{row.id}</p>
+                        <h4 className="comanda-card__serie">{row.series}-{String(row.number).padStart(6, '0')}</h4>
                       </div>
-                      <span className={kitchenBadgeClass(row.kitchen_status)}>{STATUS_LABELS[row.kitchen_status]}</span>
+                      <div className="comanda-card__head-right">
+                        <span className="comanda-card__time-ago">{timeAgo(row.issue_at)}</span>
+                        <span className={kitchenBadgeClass(row.kitchen_status)}>{STATUS_LABELS[row.kitchen_status]}</span>
+                      </div>
                     </div>
 
-                    <div className="comanda-card__body">
-                      <div className="comanda-card__meta">
-                        <span>Cliente</span>
-                        <strong>{row.customer_name || 'Cliente rapido'}</strong>
-                      </div>
-                      <div className="comanda-card__meta">
-                        <span>Mesa</span>
-                        <strong>{row.table_label || 'Sin mesa'}</strong>
-                      </div>
-                      <div className="comanda-card__meta">
-                        <span>Emision</span>
-                        <strong>{formatIssueAt(row.issue_at)}</strong>
-                      </div>
-                      <div className="comanda-card__meta comanda-card__meta--accent">
-                        <span>Total</span>
+                    {/* ── Info strip: Mesa · Cliente · Total ── */}
+                    <div className="comanda-card__strip">
+                      <span className="comanda-strip__chip comanda-strip__chip--mesa">
+                        <span className="comanda-strip__label">Mesa</span>
+                        <strong>{row.table_label || '—'}</strong>
+                      </span>
+                      <span className="comanda-strip__chip">
+                        <span className="comanda-strip__label">Cliente</span>
+                        <strong>{row.customer_name || 'Rápido'}</strong>
+                      </span>
+                      <span className="comanda-strip__chip comanda-strip__chip--total">
+                        <span className="comanda-strip__label">Total</span>
                         <strong>{formatTotal(row.total)}</strong>
-                      </div>
+                      </span>
                     </div>
 
+                    {/* ── Items inline ── */}
+                    <div className="comanda-card__items-inline">
+                      <p className="comanda-card__items-label">
+                        Platos
+                        <span className="comanda-card__items-count">{items.length}</span>
+                      </p>
+                      {items.length === 0 ? (
+                        <p className="comanda-items-empty">Sin detalle de platos</p>
+                      ) : (
+                        <ul className="comanda-items-inline-list">
+                          {items.map((item, idx) => (
+                            <li key={`item-${row.id}-${idx}`} className="comanda-items-inline-list__row">
+                              <span className="comanda-items-inline-list__name">{item.description || 'Ítem sin descripción'}</span>
+                              <strong className="comanda-items-inline-list__qty">✕ {formatQty(Number(item.qty))}</strong>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+
+                    {/* ── Actions ── */}
                     <div className="comanda-card__actions">
                       <button
                         type="button"
@@ -374,7 +476,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                         disabled={busyId === row.id || row.kitchen_status === 'READY'}
                         onClick={() => void moveStatus(row, 'READY')}
                       >
-                        Marcar listo
+                        Listo
                       </button>
                       <button
                         type="button"
@@ -396,7 +498,8 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                       )}
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ))}

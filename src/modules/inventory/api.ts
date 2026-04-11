@@ -21,10 +21,10 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchInventoryProducts(
   accessToken: string,
-  params?: { search?: string; warehouseId?: number | null; status?: number | null }
+  params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number }
 ): Promise<InventoryProduct[]> {
   const query = new URLSearchParams();
-  query.set('limit', '50');
+  query.set('limit', String(params?.limit ?? 50));
 
   if (params?.search) {
     query.set('search', params.search);

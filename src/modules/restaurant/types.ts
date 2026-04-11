@@ -11,6 +11,10 @@ export type ComandaRow = {
   customer_name: string;
   kitchen_status: ComandaKitchenStatus;
   table_label: string;
+  items_preview?: Array<{
+    description: string;
+    qty: number;
+  }>;
 };
 
 export type PaginatedComandasResponse = {
@@ -56,12 +60,26 @@ export type RestaurantOrderRow = {
   status: string;
   total: string;
   notes: string;
+  customer_id: number | null;
   customer_name: string;
   kitchen_status: ComandaKitchenStatus;
   table_label: string;
   table_id: string | null;
   line_count: number;
   total_qty: number;
+  items?: RestaurantOrderEditItem[];
+};
+
+export type RestaurantOrderEditItem = {
+  line_no: number;
+  product_id: number | null;
+  unit_id: number | null;
+  description: string;
+  quantity: number;
+  unit_price: number;
+  tax_total: number;
+  subtotal: number;
+  total: number;
 };
 
 export type PaginatedRestaurantOrdersResponse = {
