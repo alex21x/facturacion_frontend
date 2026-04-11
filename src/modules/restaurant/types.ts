@@ -88,6 +88,7 @@ export type CreateRestaurantOrderPayload = {
   branch_id: number;
   warehouse_id?: number | null;
   table_id?: number | null;
+  table_label?: string;
   series: string;
   currency_id: number;
   payment_method_id: number;

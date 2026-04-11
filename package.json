@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
+    "start:app": "node scripts/serve-static.mjs dist",
     "dev:admin": "vite --config vite.admin.config.ts",
     "build:admin": "tsc -b && vite build --config vite.admin.config.ts",
-    "preview:admin": "vite preview --config vite.admin.config.ts"
+    "preview:admin": "vite preview --config vite.admin.config.ts",
+    "start:admin": "node scripts/serve-static.mjs dist-admin"
   },
   "dependencies": {
     "react": "^19.2.4",
@@ -20,6 +22,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^4.7.0",
+    "serve": "^14.2.4",
     "typescript": "^5.9.3",
     "vite": "^6.4.1"
   }
