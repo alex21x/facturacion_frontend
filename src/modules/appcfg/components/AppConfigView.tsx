@@ -1,20 +1,25 @@
 import { useEffect, useState } from 'react';
 import {
+  fetchCompanyVerticalSettings,
   fetchCommerceSettings,
   fetchFeatureToggles,
   fetchIgvSettings,
   fetchModules,
   fetchOperationalLimits,
+  fetchReconcileStats,
+  updateCompanyVerticalSettings,
   updateCommerceSettings,
   updateIgvSettings,
   updateOperationalLimits,
 } from '../api';
 import type {
+  CompanyVerticalSettingsResponse,
   CommerceSettingsFeature,
   FeatureToggleRow,
   IgvSettingsResponse,
   ModuleRow,
   OperationalLimitsResponse,
+  ReconcileStatsResponse,
   SalesTaxBridgeConfig,
   UpdateOperationalLimitsPayload,
 } from '../types';
@@ -41,6 +46,30 @@ function featureLabel(code: string): string {
   return FEATURE_LABELS[code] ?? code;
 }
 
+function verticalSourceLabel(source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null): string {
+  if (source === 'COMPANY_VERTICAL_OVERRIDE') {
+    return 'Override empresa/rubro';
+  }
+
+  if (source === 'VERTICAL_TEMPLATE') {
+    return 'Template rubro';
+  }
+
+  return 'Fallback company/sucursal';
+}
+
+function verticalSourceBadgeClass(source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null): string {
+  if (source === 'COMPANY_VERTICAL_OVERRIDE') {
+    return 'appcfg-source-badge appcfg-source-badge--override';
+  }
+
+  if (source === 'VERTICAL_TEMPLATE') {
+    return 'appcfg-source-badge appcfg-source-badge--template';
+  }
+
+  return 'appcfg-source-badge appcfg-source-badge--fallback';
+}
+
 export function AppConfigView({ accessToken, branchId, warehouseId, cashRegisterId }: AppConfigViewProps) {
   const [modules, setModules] = useState<ModuleRow[]>([]);
   const [features, setFeatures] = useState<FeatureToggleRow[]>([]);
@@ -56,14 +85,19 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     auth_scheme: 'none',
     token: '',
     auto_send_on_issue: true,
+    auto_reconcile_enabled: true,
+    reconcile_batch_size: 20,
     sol_user: '',
     sol_pass: '',
     envio_pse: '',
   });
+  const [reconcileStats, setReconcileStats] = useState<ReconcileStatsResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [igvSettings, setIgvSettings] = useState<IgvSettingsResponse | null>(null);
   const [igvRatePercent, setIgvRatePercent] = useState('18');
+  const [verticalSettings, setVerticalSettings] = useState<CompanyVerticalSettingsResponse | null>(null);
+  const [selectedVerticalCode, setSelectedVerticalCode] = useState('');
 
   async function loadAppCfg() {
     setLoading(true);
@@ -90,6 +124,15 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
         max_cash_registers_enabled: limitRows.company_limits.max_cash_registers_enabled,
       });
 
+      try {
+        const verticalRows = await fetchCompanyVerticalSettings(accessToken);
+        setVerticalSettings(verticalRows);
+        setSelectedVerticalCode(verticalRows.active_vertical?.code ?? '');
+      } catch {
+        setVerticalSettings(null);
+        setSelectedVerticalCode('');
+      }
+
       // Commerce settings may fail if user is not admin — ignore error silently
       try {
         const commerceRows = await fetchCommerceSettings(accessToken);
@@ -110,11 +153,21 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
           auth_scheme: cfg.auth_scheme === 'bearer' ? 'bearer' : 'none',
           token: String(cfg.token ?? ''),
           auto_send_on_issue: cfg.auto_send_on_issue ?? true,
+          auto_reconcile_enabled: cfg.auto_reconcile_enabled !== false,
+          reconcile_batch_size: Number(cfg.reconcile_batch_size ?? 20),
           sol_user: String(cfg.sol_user ?? ''),
           sol_pass: String(cfg.sol_pass ?? ''),
           codigolocal: '',
           envio_pse: String(cfg.envio_pse ?? ''),
         });
+
+        // Load reconcile stats (non-blocking)
+        try {
+          const stats = await fetchReconcileStats(accessToken);
+          setReconcileStats(stats);
+        } catch {
+          // Stats are informational — ignore if not available
+        }
 
         if (branchId) {
           const branchCommerceRows = await fetchCommerceSettings(accessToken, branchId);
@@ -189,6 +242,8 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
               auth_scheme: taxBridgeForm.auth_scheme === 'bearer' ? 'bearer' : 'none',
               token: String(taxBridgeForm.token ?? '').trim(),
               auto_send_on_issue: Boolean(taxBridgeForm.auto_send_on_issue),
+              auto_reconcile_enabled: taxBridgeForm.auto_reconcile_enabled !== false,
+              reconcile_batch_size: Math.max(5, Math.min(50, Number(taxBridgeForm.reconcile_batch_size ?? 20))),
               sol_user: String(taxBridgeForm.sol_user ?? '').trim(),
               sol_pass: String(taxBridgeForm.sol_pass ?? ''),
               envio_pse: String(taxBridgeForm.envio_pse ?? '').trim(),
@@ -256,6 +311,30 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     }
   }
 
+  async function handleSaveVerticalSettings(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedVerticalCode) {
+      setMessage('Selecciona un rubro para guardar.');
+      return;
+    }
+
+    setLoading(true);
+    setMessage('');
+    try {
+      const result = await updateCompanyVerticalSettings(accessToken, {
+        vertical_code: selectedVerticalCode,
+      });
+      setVerticalSettings(result);
+      setSelectedVerticalCode(result.active_vertical?.code ?? selectedVerticalCode);
+      setMessage('Rubro activo actualizado.');
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo actualizar rubro activo';
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <section className="module-panel">
       <div className="module-header">
@@ -278,6 +357,59 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
           {warehouseId ?? 'N/A'} | <strong>Caja:</strong> {cashRegisterId ?? 'N/A'}
         </p>
       </div>
+
+      {verticalSettings && (
+        <div className="table-wrap">
+          <h4>Verticalizacion por rubro</h4>
+          <form className="grid-form" onSubmit={handleSaveVerticalSettings}>
+            <label>
+              Rubro activo de la empresa
+              <select
+                value={selectedVerticalCode}
+                onChange={(e) => setSelectedVerticalCode(e.target.value)}
+              >
+                <option value="">Seleccionar rubro</option>
+                {verticalSettings.verticals.map((row) => (
+                  <option key={row.id} value={row.code}>
+                    {row.name} ({row.code})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="entity-filter-action">
+              <button type="submit" disabled={loading || !selectedVerticalCode}>
+                Guardar rubro activo
+              </button>
+            </div>
+          </form>
+
+          <p className="notice" style={{ marginTop: '0.5rem' }}>
+            Activo actual: <strong>{verticalSettings.active_vertical?.name ?? 'No definido'}</strong>
+            {verticalSettings.active_vertical?.code ? ` (${verticalSettings.active_vertical.code})` : ''}
+          </p>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Codigo</th>
+                <th>Nombre</th>
+                <th>Asignado</th>
+                <th>Principal</th>
+              </tr>
+            </thead>
+            <tbody>
+              {verticalSettings.verticals.map((row) => (
+                <tr key={row.id}>
+                  <td>{row.code}</td>
+                  <td>{row.name}</td>
+                  <td>{row.is_assigned ? 'SI' : 'NO'}</td>
+                  <td>{row.is_primary ? 'SI' : 'NO'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <form className="grid-form" onSubmit={handleSaveLimits}>
         <label>
@@ -441,6 +573,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
               <th>Feature</th>
               <th>Company</th>
               <th>Branch</th>
+              <th>Fuente</th>
               <th>Activo</th>
             </tr>
           </thead>
@@ -450,6 +583,11 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                 <td>{featureLabel(row.feature_code)}</td>
                 <td>{row.company_enabled === null ? '-' : row.company_enabled ? 'SI' : 'NO'}</td>
                 <td>{row.branch_enabled === null ? '-' : row.branch_enabled ? 'SI' : 'NO'}</td>
+                <td>
+                  <span className={verticalSourceBadgeClass(row.vertical_source)}>
+                    {verticalSourceLabel(row.vertical_source)}
+                  </span>
+                </td>
                 <td>{row.is_enabled ? 'SI' : 'NO'}</td>
               </tr>
             ))}
@@ -465,6 +603,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
               <thead>
                 <tr>
                   <th>Funcionalidad</th>
+                  <th>Fuente</th>
                   <th>Habilitado</th>
                 </tr>
               </thead>
@@ -472,6 +611,11 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                 {commerceFeatures.map((row) => (
                   <tr key={row.feature_code}>
                     <td>{featureLabel(row.feature_code)}</td>
+                    <td>
+                      <span className={verticalSourceBadgeClass(row.vertical_source)}>
+                        {verticalSourceLabel(row.vertical_source)}
+                      </span>
+                    </td>
                     <td>
                       <input
                         type="checkbox"
@@ -508,6 +652,86 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                       ? 'Cada comprobante tributario emitido se manda al puente automaticamente.'
                       : 'El usuario lo enviara desde el boton Enviar SUNAT en la lista, como en el legado.'}
                   </small>
+                </div>
+
+                {/* ── Reintentos automáticos ── */}
+                <div className="tax-bridge-send-mode wide" style={{ background: taxBridgeForm.auto_reconcile_enabled !== false ? 'var(--card)' : '#fef2f2', border: '1px solid var(--line)', borderRadius: 10, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                    <span className="tax-bridge-send-mode__label" style={{ fontWeight: 700 }}>
+                      Reintentos automáticos SUNAT
+                    </span>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={taxBridgeForm.auto_reconcile_enabled !== false}
+                        onChange={(e) => setTaxBridgeForm((prev) => ({ ...prev, auto_reconcile_enabled: e.target.checked }))}
+                      />
+                      <span style={{ fontWeight: 600, color: taxBridgeForm.auto_reconcile_enabled !== false ? 'var(--ok, #16a34a)' : '#dc2626' }}>
+                        {taxBridgeForm.auto_reconcile_enabled !== false ? 'Activo' : 'Desactivado'}
+                      </span>
+                    </label>
+                  </div>
+                  <small style={{ color: 'var(--ink-soft)', display: 'block', marginBottom: 10 }}>
+                    {taxBridgeForm.auto_reconcile_enabled !== false
+                      ? 'El sistema reintenta solo los documentos pendientes en segundo plano, con espera progresiva (1 → 2 → 4 → … → 120 min). Una vez aceptados, se actualizan solos. Usted no tiene que hacer nada.'
+                      : 'Los reintentos automáticos están pausados. Los documentos pendientes quedarán esperando hasta que los reenvíe manualmente desde Excepciones SUNAT.'}
+                  </small>
+
+                  {taxBridgeForm.auto_reconcile_enabled !== false && (
+                    <>
+                      <label style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--ink-soft)' }}>
+                          Máximo de documentos por ciclo: <strong>{taxBridgeForm.reconcile_batch_size ?? 20}</strong>
+                          {' '}<span style={{ color: 'var(--ink-soft)', fontSize: '0.75rem' }}>(5 – 50)</span>
+                        </span>
+                        <input
+                          type="range"
+                          min={5}
+                          max={50}
+                          step={5}
+                          value={taxBridgeForm.reconcile_batch_size ?? 20}
+                          onChange={(e) => setTaxBridgeForm((prev) => ({ ...prev, reconcile_batch_size: Number(e.target.value) }))}
+                          style={{ width: '100%', accentColor: 'var(--primary, #2563eb)' }}
+                        />
+                        <small style={{ color: 'var(--ink-soft)' }}>
+                          Limite bajo (5 – 10) = más silencioso durante la venta. Limite alto (40 – 50) = resuelve la cola más rápido en horario tranquilo.
+                        </small>
+                      </label>
+
+                      {/* Stats en vivo */}
+                      {reconcileStats && (
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 6 }}>
+                          <div style={{ background: reconcileStats.pending_reconcile_count > 0 ? '#fef9c3' : '#f0fdf4', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 12px', minWidth: 90, textAlign: 'center' }}>
+                            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: reconcileStats.pending_reconcile_count > 0 ? '#92400e' : '#15803d' }}>
+                              {reconcileStats.pending_reconcile_count}
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)' }}>En cola</div>
+                          </div>
+                          <div style={{ background: reconcileStats.unsent_count > 0 ? '#fff7ed' : '#f0fdf4', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 12px', minWidth: 90, textAlign: 'center' }}>
+                            <div style={{ fontSize: '1.4rem', fontWeight: 700, color: reconcileStats.unsent_count > 0 ? '#9a3412' : '#15803d' }}>
+                              {reconcileStats.unsent_count}
+                            </div>
+                            <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)' }}>Sin enviar</div>
+                          </div>
+                          {reconcileStats.next_reconcile_at && (
+                            <div style={{ background: 'var(--card)', border: '1px solid var(--line)', borderRadius: 8, padding: '6px 12px', flex: 1, minWidth: 160 }}>
+                              <div style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--ink)' }}>
+                                Próximo reintento automático
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: 'var(--ink-soft)' }}>
+                                {new Date(reconcileStats.next_reconcile_at).toLocaleString('es-PE', { hour12: false })}
+                              </div>
+                            </div>
+                          )}
+                          {reconcileStats.pending_reconcile_count === 0 && reconcileStats.unsent_count === 0 && (
+                            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, padding: '6px 12px', flex: 1, color: '#15803d', fontSize: '0.8rem', fontWeight: 600 }}>
+                              ✓ Todo en orden — no hay documentos pendientes
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
                 <label>
                   Modo puente tributario

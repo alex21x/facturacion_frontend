@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:admin": "vite --config vite.admin.config.ts",
+    "build:admin": "tsc -b && vite build --config vite.admin.config.ts",
+    "preview:admin": "vite preview --config vite.admin.config.ts"
   },
   "dependencies": {
     "react": "^19.2.4",

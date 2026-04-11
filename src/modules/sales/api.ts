@@ -3,8 +3,11 @@ import type {
   CommercialDocumentListItem,
   ConvertCommercialDocumentPayload,
   CreateDocumentForm,
+  ManualSunatConfirmPayload,
   PaginatedCommercialDocuments,
+  PaginatedSunatExceptions,
   SalesCustomerSuggestion,
+  SunatExceptionsAuditResponse,
   SalesLookups,
   SalesReferenceDocument,
   SeriesNumber,
@@ -146,6 +149,92 @@ export async function fetchCommercialDocuments(
   });
 }
 
+export async function fetchSunatExceptions(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+    status?: string;
+    minAgeHours?: number;
+    minAttempts?: number;
+    onlyManualNeeded?: boolean;
+    page?: number;
+    perPage?: number;
+  }
+): Promise<PaginatedSunatExceptions> {
+  const query = new URLSearchParams();
+  query.set('page', String(context?.page ?? 1));
+  query.set('per_page', String(context?.perPage ?? 20));
+
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+  if (context?.status && context.status.trim() !== '') {
+    query.set('status', context.status.trim().toUpperCase());
+  }
+  if ((context?.minAgeHours ?? 0) > 0) {
+    query.set('min_age_hours', String(context?.minAgeHours));
+  }
+  if ((context?.minAttempts ?? 0) > 0) {
+    query.set('min_attempts', String(context?.minAttempts));
+  }
+  if (context?.onlyManualNeeded) {
+    query.set('only_manual_needed', '1');
+  }
+
+  return apiClient.request<PaginatedSunatExceptions>(`/api/sales/sunat-exceptions?${query.toString()}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function fetchSunatExceptionsAudit(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+  }
+): Promise<SunatExceptionsAuditResponse> {
+  const query = new URLSearchParams();
+
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+  if (context?.dateFrom) {
+    query.set('date_from', context.dateFrom);
+  }
+  if (context?.dateTo) {
+    query.set('date_to', context.dateTo);
+  }
+  if (context?.limit && context.limit > 0) {
+    query.set('limit', String(context.limit));
+  }
+
+  return apiClient.request<SunatExceptionsAuditResponse>(`/api/sales/sunat-exceptions/audit?${query.toString()}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function manualConfirmSunatException(
+  accessToken: string,
+  documentId: number,
+  payload: ManualSunatConfirmPayload
+): Promise<{
+  message: string;
+  document_id: number;
+  sunat_status: string;
+  sunat_status_label: string;
+  inventory_sunat_settled?: boolean | null;
+}> {
+  return apiClient.request(`/api/sales/sunat-exceptions/${documentId}/manual-confirm`, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchReferenceDocuments(
   accessToken: string,
   context: {
@@ -272,7 +361,8 @@ export async function createCommercialDocument(accessToken: string, form: Create
   });
 
   const total = items.reduce((acc, item) => acc + Number(item.total), 0);
-  const isPreDocument = form.documentKind === 'SALES_ORDER' || form.documentKind === 'QUOTATION';
+  const targetStatus = form.status ?? ((form.documentKind === 'SALES_ORDER' || form.documentKind === 'QUOTATION') ? 'DRAFT' : 'ISSUED');
+  const isPreDocument = targetStatus !== 'ISSUED';
   const advanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
   const hasAdvance = advanceAmount > 0;
   const pendingCreditTotal = Math.max(0, Number((total - advanceAmount).toFixed(2)));
@@ -330,6 +420,13 @@ export async function createCommercialDocument(accessToken: string, form: Create
       currency_id: Number(form.currencyId),
       payment_method_id: Number(form.paymentMethodId),
       metadata: {
+        table_label: form.documentKind === 'SALES_ORDER'
+          ? (form.restaurantTableLabel?.trim() || null)
+          : null,
+        restaurant_order_status: form.documentKind === 'SALES_ORDER' ? 'PENDING' : null,
+        receipt_send_mode: form.documentKind === 'RECEIPT'
+          ? (form.receiptSendMode ?? 'DIRECT')
+          : null,
         customer_address: form.customerAddress?.trim() || null,
         source_document_id: form.noteAffectedDocumentId ?? null,
         note_reason_code: form.noteReasonCode?.trim() || null,
@@ -353,7 +450,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
         has_advance: hasAdvance,
         advance_amount: hasAdvance ? Number(advanceAmount.toFixed(2)) : 0,
       },
-      status: isPreDocument ? 'DRAFT' : 'ISSUED',
+      status: targetStatus,
       items,
       payments,
     }),
@@ -541,6 +638,8 @@ export async function retryTaxBridgeSend(
   sunat_status_label: string;
   bridge_http_code?: number | null;
   bridge_response?: unknown;
+  sunat_error_code?: string | null;
+  sunat_error_message?: string | null;
   payload?: unknown;
   debug?: {
     bridge_mode?: string;
@@ -566,6 +665,8 @@ export async function retryTaxBridgeSend(
     sunat_status_label: string;
     bridge_http_code?: number | null;
     bridge_response?: unknown;
+    sunat_error_code?: string | null;
+    sunat_error_message?: string | null;
     payload?: unknown;
     debug?: {
       bridge_mode?: string;
@@ -643,6 +744,8 @@ export async function sendSunatVoidCommunication(
   sunat_void_label: string;
   bridge_http_code?: number | null;
   bridge_response?: unknown;
+  sunat_error_code?: string | null;
+  sunat_error_message?: string | null;
   void_number?: number | null;
   debug?: {
     bridge_mode?: string;

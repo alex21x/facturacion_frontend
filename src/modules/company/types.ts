@@ -27,6 +27,8 @@ export type CompanyProfile = {
   urbanizacion?: string | null;
   sunat_secondary_user?: string | null;
   sunat_secondary_pass?: string | null;
+  client_id?: string | null;
+  client_secret?: string | null;
 };
 
 export type UpdateCompanyProfilePayload = {
@@ -48,6 +50,8 @@ export type UpdateCompanyProfilePayload = {
   urbanizacion?: string;
   sunat_secondary_user?: string;
   sunat_secondary_pass?: string;
+  client_id?: string;
+  client_secret?: string;
 };
 
 export type CompanyCertBridgeDebug = {

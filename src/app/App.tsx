@@ -2,18 +2,29 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
-import { fetchOperationalContext } from '../modules/appcfg/api';
+import { fetchCompanyVerticalSettings, fetchOperationalContext } from '../modules/appcfg/api';
 import { AppConfigView } from '../modules/appcfg/components/AppConfigView';
 import { CashView } from '../modules/cash/components/CashView';
 import { CompanyConfigView } from '../modules/company/components/CompanyConfigView';
 import { CustomersView } from '../modules/customers/components/CustomersView';
-import type { OperationalContextResponse } from '../modules/appcfg/types';
-import { InventoryView } from '../modules/inventory/components/InventoryView';
+import type { CompanyVerticalSettingsResponse, OperationalContextResponse } from '../modules/appcfg/types';
+import { RestaurantInventoryView } from '../modules/inventory/components/RestaurantInventoryView';
+import { RetailInventoryView } from '../modules/inventory/components/RetailInventoryView';
 import { MastersView } from '../modules/masters/components/MastersView';
-import { ProductsView } from '../modules/products/components/ProductsView';
-import { PurchasesView } from '../modules/purchases/components/PurchasesView';
+import { RestaurantMenuProductsView } from '../modules/products/components/RestaurantMenuProductsView';
+import { RestaurantSuppliesProductsView } from '../modules/products/components/RestaurantSuppliesProductsView';
+import { RetailProductsView } from '../modules/products/components/RetailProductsView';
+import { RestaurantPurchasesView } from '../modules/purchases/components/RestaurantPurchasesView';
+import { RetailPurchasesView } from '../modules/purchases/components/RetailPurchasesView';
+import { ReportsCenterView } from '../modules/reports/components/ReportsCenterView';
+import { ComandasView } from '../modules/restaurant/components/ComandasView';
+import { RestaurantOrderView } from '../modules/restaurant/components/RestaurantOrderView';
+import { TablesView } from '../modules/restaurant/components/TablesView';
 import { fetchSalesLookups } from '../modules/sales/api';
 import { SalesView } from '../modules/sales/components/SalesView';
+import { DailySummaryView } from '../modules/sales/components/DailySummaryView';
+import { GreGuidesView } from '../modules/sales/components/GreGuidesView';
+import { SunatExceptionsView } from '../modules/sales/components/SunatExceptionsView';
 import {
   clearAuthSession,
   loadAuthSession,
@@ -29,9 +40,18 @@ const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
 
 type ModuleTab =
   | 'cash'
+  | 'restaurant-orders'
+  | 'comandas'
+  | 'tables'
   | 'sales'
+  | 'daily-summary'
+  | 'gre-guides'
+  | 'sunat-exceptions'
   | 'inventory'
   | 'purchases'
+  | 'reports'
+  | 'restaurant-menu'
+  | 'restaurant-supplies'
   | 'products'
   | 'customers'
   | 'masters'
@@ -61,6 +81,19 @@ const MENU_ITEMS: Array<{
   hint: string;
   icon: React.ReactNode;
   moduleCode?: string;
+  /**
+   * If set, this tab is ONLY visible when the active vertical matches one of
+   * these codes (case-insensitive). Add a new vertical here — no other code
+   * changes needed to gate the tab.
+   */
+  onlyVerticals?: string[];
+  /**
+   * Per-vertical label overrides. The base kicker/label/hint are the retail
+   * (default) values. Each vertical can override any or all three fields so
+   * the same underlying module feels native to that rubro.
+   * e.g. { RESTAURANT: { label: 'Menu del Restaurante', hint: 'Platos y bebidas' } }
+   */
+  verticalLabels?: Partial<Record<string, { kicker?: string; label?: string; hint?: string }>>;
 }> = [
   {
     id: 'cash',
@@ -68,9 +101,58 @@ const MENU_ITEMS: Array<{
     kicker: 'Tesoreria',
     label: 'Caja',
     hint: 'Sesiones y movimientos',
+    verticalLabels: {
+      RESTAURANT: {
+        kicker: 'Caja del Dia',
+        label: 'Caja',
+        hint: 'Apertura de turno, cobros de mesas y cierre',
+      },
+    },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9zm0 0V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2M9 13h6M12 13v4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'restaurant-orders',
+    group: 'operacion',
+    kicker: 'Restaurante',
+    label: 'Pedidos',
+    hint: 'Crear órdenes por mesa',
+    moduleCode: 'SALES',
+    onlyVerticals: ['RESTAURANT'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2m-6 9 2 2 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'comandas',
+    group: 'operacion',
+    kicker: 'Restaurante',
+    label: 'Comandas',
+    hint: 'Cocina, mesa y despacho',
+    moduleCode: 'SALES',
+    onlyVerticals: ['RESTAURANT'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 4v8m10-8v8M4 12h16M6 20h12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'tables',
+    group: 'operacion',
+    kicker: 'Restaurante',
+    label: 'Mesas',
+    hint: 'Salones, capacidad y estado',
+    moduleCode: 'SALES',
+    onlyVerticals: ['RESTAURANT'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10h18M6 10V6h12v4M7 10v8m10-8v8M4 18h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -88,12 +170,64 @@ const MENU_ITEMS: Array<{
     ),
   },
   {
+    id: 'daily-summary',
+    group: 'operacion',
+    kicker: 'Ventas',
+    label: 'Resumen Diario',
+    hint: 'Declaracion y anulacion de boletas',
+    moduleCode: 'SALES',
+    verticalLabels: {
+      RESTAURANT: { kicker: 'SUNAT', hint: 'Declaracion diaria de boletas emitidas en el restaurante' },
+    },
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 4h16v4H4zM4 10h10v10H4zM16 14l2 2 4-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'gre-guides',
+    group: 'operacion',
+    kicker: 'SUNAT',
+    label: 'Guia GRE',
+    hint: 'Remitente, transportista y envio',
+    moduleCode: 'SALES',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 6h10v12H4zM14 9h6v9h-6zM7 9h4m-4 3h4m-4 3h3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'sunat-exceptions',
+    group: 'operacion',
+    kicker: 'SUNAT',
+    label: 'Excepciones',
+    hint: 'Pendientes y confirmacion manual',
+    moduleCode: 'SALES',
+    verticalLabels: {
+      RESTAURANT: { hint: 'Comprobantes del restaurante pendientes de envio a SUNAT' },
+    },
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 9v4m0 4h.01M4 20h16L12 4z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
     id: 'inventory',
     group: 'abastecimiento',
     kicker: 'Stock',
     label: 'Inventario',
     hint: 'Existencias y lotes',
     moduleCode: 'INVENTORY',
+    verticalLabels: {
+      RESTAURANT: {
+        kicker: 'Bodega',
+        label: 'Insumos y Bodega',
+        hint: 'Stock de ingredientes, bebidas e insumos de cocina',
+      },
+    },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 7 12 3l8 4-8 4zM4 11l8 4 8-4M4 15l8 4 8-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -107,9 +241,60 @@ const MENU_ITEMS: Array<{
     label: 'Compras',
     hint: 'Ingresos y ajustes',
     moduleCode: 'INVENTORY',
+    verticalLabels: {
+      RESTAURANT: {
+        kicker: 'Cocina',
+        label: 'Compras de Insumos',
+        hint: 'Compras al proveedor: carnes, verduras, bebidas e insumos',
+      },
+    },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 6h3l2.2 10.2a1 1 0 0 0 1 .8H19a1 1 0 0 0 1-.8L22 9H8M10 20a1.2 1.2 0 1 0 0 .01M18 20a1.2 1.2 0 1 0 0 .01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'reports',
+    group: 'abastecimiento',
+    kicker: 'Analitica',
+    label: 'Reportes',
+    hint: 'Centro unificado de reportes',
+    moduleCode: 'INVENTORY',
+    verticalLabels: {
+      RESTAURANT: {
+        hint: 'Ventas por mesa, platos mas vendidos y recaudacion diaria',
+      },
+    },
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 20h16M6 16V9m6 7V5m6 11v-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'restaurant-menu',
+    group: 'catalogo',
+    kicker: 'Carta',
+    label: 'Menu',
+    hint: 'Platos, bebidas, combos y precios',
+    onlyVerticals: ['RESTAURANT'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 5h16v14H4zM8 9h8M8 13h8M8 17h5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'restaurant-supplies',
+    group: 'catalogo',
+    kicker: 'Bodega',
+    label: 'Insumos',
+    hint: 'Ingredientes, abarrotes y bebidas base',
+    onlyVerticals: ['RESTAURANT'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 7 12 3l8 4-8 4zM4 12l8 4 8-4M4 17l8 4 8-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -119,6 +304,13 @@ const MENU_ITEMS: Array<{
     kicker: 'Catalogo',
     label: 'Productos',
     hint: 'SKU, precios y estado',
+    verticalLabels: {
+      RESTAURANT: {
+        kicker: 'Carta',
+        label: 'Menu del Restaurante',
+        hint: 'Platos, bebidas, combos y precios de venta',
+      },
+    },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 6h16v12H4zM8 10h8M8 14h5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -131,6 +323,13 @@ const MENU_ITEMS: Array<{
     kicker: 'Relacion',
     label: 'Clientes',
     hint: 'Documentos y datos',
+    verticalLabels: {
+      RESTAURANT: {
+        kicker: 'Salon',
+        label: 'Comensales',
+        hint: 'Clientes frecuentes, datos de facturacion y preferencias',
+      },
+    },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M8 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19a5 5 0 0 1 10 0M13 19a5 5 0 0 1 8 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -143,6 +342,11 @@ const MENU_ITEMS: Array<{
     kicker: 'Catalogos',
     label: 'Maestros',
     hint: 'Series, cajas y reglas',
+    verticalLabels: {
+      RESTAURANT: {
+        hint: 'Series de comprobantes, modos de pago y configuracion de cajas',
+      },
+    },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 5h7v6H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 13h7v6H4z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -177,8 +381,82 @@ const MENU_ITEMS: Array<{
   },
 ];
 
+const HIDDEN_TABS_BY_VERTICAL: Partial<Record<string, ModuleTab[]>> = {
+  RETAIL: ['comandas', 'tables'],
+  RESTAURANT: ['sales', 'gre-guides', 'products'],
+  SERVICES: ['inventory', 'purchases', 'gre-guides'],
+  WORKSHOP: ['daily-summary', 'gre-guides'],
+};
+
+/**
+ * Determine whether a menu item should be visible for the active vertical.
+ *
+ * Rules (evaluated in order):
+ *  1. If the item declares `onlyVerticals`, it is EXCLUSIVE to those verticals.
+ *     Adding a new vertical's exclusive tab = set onlyVerticals on that item.
+ *     No other code change needed.
+ *  2. Otherwise fall through to the HIDDEN_TABS_BY_VERTICAL blocklist
+ *     (tabs that are universally redundant in a specific vertical).
+ *  3. With no vertical context, everything is visible (dev/demo mode).
+ */
+function isTabVisibleByVertical(
+  item: (typeof MENU_ITEMS)[number],
+  verticalCode: string | null,
+): boolean {
+  const code = (verticalCode ?? '').toUpperCase();
+
+  if (item.onlyVerticals?.length) {
+    return item.onlyVerticals.map((v) => v.toUpperCase()).includes(code);
+  }
+
+  if (!verticalCode) {
+    return true;
+  }
+
+  const hiddenTabs = HIDDEN_TABS_BY_VERTICAL[code] ?? [];
+  return !hiddenTabs.includes(item.id);
+}
+
+/**
+ * Apply per-vertical label overrides to a menu item.
+ * Returns { kicker, label, hint } with vertical-specific text when available,
+ * falling back to the generic (retail) defaults.
+ */
+function resolveVerticalLabel(
+  item: (typeof MENU_ITEMS)[number],
+  verticalCode: string | null,
+): { kicker: string; label: string; hint: string } {
+  const override = verticalCode
+    ? item.verticalLabels?.[verticalCode.toUpperCase()]
+    : undefined;
+  return {
+    kicker: override?.kicker ?? item.kicker,
+    label:  override?.label  ?? item.label,
+    hint:   override?.hint   ?? item.hint,
+  };
+}
+
+function resolveTenantAccessSlugFromPath(): string | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  const match = window.location.pathname.match(/^\/t\/([^/]+)/i);
+  if (!match || !match[1]) {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(match[1]).trim().toLowerCase() || null;
+  } catch {
+    return String(match[1]).trim().toLowerCase() || null;
+  }
+}
+
 export function App() {
-  const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession());
+  const tenantAccessSlug = resolveTenantAccessSlugFromPath();
+  const authScope = tenantAccessSlug ? `tenant:${tenantAccessSlug}` : 'default';
+  const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession(authScope));
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ModuleTab>('sales');
@@ -190,6 +468,7 @@ export function App() {
   const [isContextPickerOpen, setIsContextPickerOpen] = useState(false);
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
+  const [activeVertical, setActiveVertical] = useState<CompanyVerticalSettingsResponse['active_vertical'] | null>(null);
   const [uiDensity, setUiDensity] = useState<UiDensity>(() => {
     if (typeof window === 'undefined') {
       return 'compact';
@@ -210,8 +489,8 @@ export function App() {
   useEffect(() => {
     return onAuthSessionChanged((nextSession) => {
       setSession(nextSession);
-    });
-  }, []);
+    }, authScope);
+  }, [authScope]);
 
   const fullName = useMemo(() => {
     if (!session?.user) {
@@ -234,6 +513,10 @@ export function App() {
         return false;
       }
 
+      if (!isTabVisibleByVertical(item, activeVertical?.code ?? null)) {
+        return false;
+      }
+
       if (!item.moduleCode) return true;
       const perms = session?.user?.permissions;
       if (!perms) return true;
@@ -241,7 +524,7 @@ export function App() {
       if (!perm) return true;
       return perm.can_view;
     });
-  }, [session?.user?.permissions, shouldHideCashModule]);
+  }, [activeVertical?.code, session?.user?.permissions, shouldHideCashModule]);
 
   const filteredMenuItems = useMemo(() => {
     const query = menuSearch.trim().toLowerCase();
@@ -256,8 +539,10 @@ export function App() {
   }, [permittedMenuItems, menuSearch]);
 
   const activeMenuItem = useMemo(() => {
-    return MENU_ITEMS.find((item) => item.id === activeTab) ?? MENU_ITEMS[0];
-  }, [activeTab]);
+    const item = MENU_ITEMS.find((m) => m.id === activeTab) ?? MENU_ITEMS[0];
+    const resolved = resolveVerticalLabel(item, activeVertical?.code ?? null);
+    return { ...item, ...resolved };
+  }, [activeTab, activeVertical?.code]);
 
   const groupedMenuItems = useMemo(() => {
     const grouped: Record<MenuGroup, typeof MENU_ITEMS> = {
@@ -280,7 +565,10 @@ export function App() {
     setErrorMessage(null);
 
     try {
-      const response = await login(payload);
+      const response = await login({
+        ...payload,
+        company_access_slug: tenantAccessSlug ?? undefined,
+      });
       const nextSession: AuthSession = {
         accessToken: response.access_token,
         refreshToken: response.refresh_token,
@@ -289,7 +577,7 @@ export function App() {
         user: response.user,
       };
 
-      saveAuthSession(nextSession);
+      saveAuthSession(nextSession, authScope);
       setSession(nextSession);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo iniciar sesion';
@@ -309,9 +597,10 @@ export function App() {
     } catch {
       // Ignore API errors and clear local session anyway.
     } finally {
-      clearAuthSession();
+      clearAuthSession(authScope);
       setSession(null);
       setContext(null);
+      setActiveVertical(null);
       setSelectedBranchId(null);
       setSelectedWarehouseId(null);
       setSelectedCashRegisterId(null);
@@ -347,7 +636,7 @@ export function App() {
       const nextCashRegisterId =
         cashRegisterId ??
         nextContext.selected.cash_register_id ??
-        nextContext.cash_registers.find((row) => row.branch_id === nextBranchId || row.branch_id === null)?.id ??
+        nextContext.cash_registers.find((row) => (row.branch_id === nextBranchId || row.branch_id === null) && (row.warehouse_id === nextWarehouseId || row.warehouse_id === null))?.id ??
         nextContext.cash_registers[0]?.id ??
         null;
 
@@ -382,6 +671,32 @@ export function App() {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedBranchId]);
+
+  useEffect(() => {
+    if (!session) {
+      setActiveVertical(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const settings = await fetchCompanyVerticalSettings(session.accessToken);
+        if (!cancelled) {
+          setActiveVertical(settings.active_vertical);
+        }
+      } catch {
+        if (!cancelled) {
+          setActiveVertical(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
 
   useEffect(() => {
     if (!session) {
@@ -541,6 +856,7 @@ export function App() {
                 <span>{filteredMenuItems.length} modulos</span>
                 <span>Sucursal {selectedBranchId ?? 'N/A'}</span>
                 <span>Caja {selectedCashRegisterId ?? 'N/A'}</span>
+                <span>Rubro {activeVertical?.name ?? 'N/A'}</span>
               </div>
 
               <nav className="tab-nav" aria-label="Modulos del sistema">
@@ -553,7 +869,9 @@ export function App() {
                   return (
                     <section key={group.id} className="menu-group">
                       <p className="menu-group-title">{group.label}</p>
-                      {items.map((item) => (
+                      {items.map((item) => {
+                          const resolved = resolveVerticalLabel(item, activeVertical?.code ?? null);
+                          return (
                         <button
                           key={item.id}
                           className={activeTab === item.id ? 'active' : ''}
@@ -564,14 +882,15 @@ export function App() {
                           <span className="menu-head">
                             <span className="menu-icon-wrap">{item.icon}</span>
                             <span>
-                              <span className="menu-kicker">{item.kicker}</span>
-                              <span className="menu-label">{item.label}</span>
-                              <span className="menu-sub">{item.hint}</span>
+                              <span className="menu-kicker">{resolved.kicker}</span>
+                              <span className="menu-label">{resolved.label}</span>
+                              <span className="menu-sub">{resolved.hint}</span>
                             </span>
                           </span>
                           <span className="menu-arrow" aria-hidden="true">&rsaquo;</span>
                         </button>
-                      ))}
+                          );
+                        })}
                     </section>
                   );
                 })}
@@ -653,7 +972,7 @@ export function App() {
                             >
                               <option value="">Seleccionar</option>
                               {context.cash_registers
-                                .filter((row) => row.branch_id === null || row.branch_id === selectedBranchId)
+                                .filter((row) => (row.branch_id === null || row.branch_id === selectedBranchId) && (row.warehouse_id === null || row.warehouse_id === selectedWarehouseId))
                                 .map((cash) => (
                                   <option key={cash.id} value={cash.id}>
                                     {cash.code} - {cash.name}
@@ -674,24 +993,110 @@ export function App() {
                   cashRegisterId={selectedCashRegisterId}
                 />
               )}
+              {activeTab === 'restaurant-orders' && (
+                <RestaurantOrderView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                  warehouseId={selectedWarehouseId}
+                />
+              )}
+              {activeTab === 'comandas' && (
+                <ComandasView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                  warehouseId={selectedWarehouseId}
+                  cashRegisterId={selectedCashRegisterId}
+                />
+              )}
+              {activeTab === 'tables' && (
+                <TablesView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                />
+              )}
               {activeTab === 'sales' && (
                 <SalesView
                   accessToken={session.accessToken}
                   branchId={selectedBranchId}
                   warehouseId={selectedWarehouseId}
                   cashRegisterId={selectedCashRegisterId}
+                  activeVerticalCode={activeVertical?.code ?? null}
                   currentUserRoleCode={session.user.role_code ?? null}
                   currentUserRoleProfile={session.user.role_profile ?? null}
                 />
               )}
+              {activeTab === 'daily-summary' && (
+                <DailySummaryView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                />
+              )}
+              {activeTab === 'gre-guides' && (
+                <GreGuidesView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                />
+              )}
+              {activeTab === 'sunat-exceptions' && (
+                <SunatExceptionsView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                />
+              )}
               {activeTab === 'inventory' && (
-                <InventoryView accessToken={session.accessToken} warehouseId={selectedWarehouseId} />
+                (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
+                  <RestaurantInventoryView
+                    accessToken={session.accessToken}
+                    warehouseId={selectedWarehouseId}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                  />
+                ) : (
+                  <RetailInventoryView
+                    accessToken={session.accessToken}
+                    warehouseId={selectedWarehouseId}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                  />
+                )
               )}
               {activeTab === 'purchases' && (
-                <PurchasesView accessToken={session.accessToken} warehouseId={selectedWarehouseId} />
+                (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
+                  <RestaurantPurchasesView
+                    accessToken={session.accessToken}
+                    warehouseId={selectedWarehouseId}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                  />
+                ) : (
+                  <RetailPurchasesView
+                    accessToken={session.accessToken}
+                    warehouseId={selectedWarehouseId}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                  />
+                )
+              )}
+              {activeTab === 'reports' && (
+                <ReportsCenterView
+                  accessToken={session.accessToken}
+                  branchId={selectedBranchId}
+                  warehouseId={selectedWarehouseId}
+                />
               )}
               {activeTab === 'products' && (
-                <ProductsView accessToken={session.accessToken} />
+                <RetailProductsView
+                  accessToken={session.accessToken}
+                  activeVerticalCode={activeVertical?.code ?? null}
+                />
+              )}
+              {activeTab === 'restaurant-menu' && (
+                <RestaurantMenuProductsView
+                  accessToken={session.accessToken}
+                  activeVerticalCode={activeVertical?.code ?? null}
+                />
+              )}
+              {activeTab === 'restaurant-supplies' && (
+                <RestaurantSuppliesProductsView
+                  accessToken={session.accessToken}
+                  activeVerticalCode={activeVertical?.code ?? null}
+                />
               )}
               {activeTab === 'customers' && (
                 <CustomersView accessToken={session.accessToken} />

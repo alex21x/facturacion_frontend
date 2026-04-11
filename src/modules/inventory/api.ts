@@ -7,10 +7,10 @@ import type {
   InventoryProDashboardResponse,
   InventoryProDailySnapshotResponse,
   InventoryProLotExpiryResponse,
-  InventoryProReportType,
   InventoryProReportRequestsResponse,
   InventoryProReportRequestCreateResponse,
   InventoryProReportRequestDetailResponse,
+  ReportsApiReportCode,
 } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -215,7 +215,7 @@ export async function fetchInventoryProReportRequests(
   accessToken: string,
   params?: {
     status?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-    reportType?: InventoryProReportType;
+    reportCode?: ReportsApiReportCode;
     limit?: number;
   }
 ): Promise<InventoryProReportRequestsResponse> {
@@ -224,14 +224,14 @@ export async function fetchInventoryProReportRequests(
   if (params?.status) {
     query.set('status', params.status);
   }
-  if (params?.reportType) {
-    query.set('report_type', params.reportType);
+  if (params?.reportCode) {
+    query.set('report_code', params.reportCode);
   }
   if (params?.limit && params.limit > 0) {
-    query.set('limit', String(params.limit));
+    query.set('per_page', String(params.limit));
   }
 
-  const path = query.toString() ? `/api/inventory-pro/report-requests?${query.toString()}` : '/api/inventory-pro/report-requests';
+  const path = query.toString() ? `/api/reports/requests?${query.toString()}` : '/api/reports/requests';
   return apiClient.request<InventoryProReportRequestsResponse>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
@@ -241,21 +241,19 @@ export async function fetchInventoryProReportRequests(
 export async function createInventoryProReportRequest(
   accessToken: string,
   payload: {
-    reportType: InventoryProReportType;
+    reportCode: ReportsApiReportCode;
     filters?: Record<string, unknown>;
-    runAsync?: boolean;
   }
 ): Promise<InventoryProReportRequestCreateResponse> {
-  return apiClient.request<InventoryProReportRequestCreateResponse>('/api/inventory-pro/report-requests', {
+  return apiClient.request<InventoryProReportRequestCreateResponse>('/api/reports/requests', {
     method: 'POST',
     headers: {
       ...authHeaders(accessToken),
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      report_type: payload.reportType,
+      report_code: payload.reportCode,
       filters: payload.filters ?? {},
-      run_async: payload.runAsync ?? true,
     }),
   });
 }
@@ -264,7 +262,7 @@ export async function fetchInventoryProReportRequest(
   accessToken: string,
   requestId: number
 ): Promise<InventoryProReportRequestDetailResponse> {
-  return apiClient.request<InventoryProReportRequestDetailResponse>(`/api/inventory-pro/report-requests/${requestId}`, {
+  return apiClient.request<InventoryProReportRequestDetailResponse>(`/api/reports/requests/${requestId}`, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });

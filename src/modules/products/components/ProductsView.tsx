@@ -5,6 +5,9 @@ import type { InventoryProduct } from '../../inventory/types';
 
 type ProductsViewProps = {
   accessToken: string;
+  activeVerticalCode?: string | null;
+  uiProfile?: 'RETAIL' | 'RESTAURANT_MENU' | 'RESTAURANT_SUPPLIES';
+  defaultNatureFilter?: 'ALL' | 'PRODUCT' | 'SUPPLY';
 };
 
 type ProductLookup = {
@@ -230,7 +233,12 @@ async function updateProductCommercialConfig(
   });
 }
 
-export function ProductsView({ accessToken }: ProductsViewProps) {
+export function ProductsView({
+  accessToken,
+  activeVerticalCode = null,
+  uiProfile,
+  defaultNatureFilter = 'ALL',
+}: ProductsViewProps) {
   const [rows, setRows] = useState<InventoryProduct[]>([]);
   const [units, setUnits] = useState<ProductLookup[]>([]);
   const [categories, setCategories] = useState<ProductLookup[]>([]);
@@ -271,8 +279,34 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
   const [formStep, setFormStep] = useState<ProductFormStep>(1);
   const [canManageProducts, setCanManageProducts] = useState(true);
   const [canManageProductMasters, setCanManageProductMasters] = useState(true);
+  const [natureFilter, setNatureFilter] = useState<'ALL' | 'PRODUCT' | 'SUPPLY'>('ALL');
+
+  const resolvedProfile = uiProfile
+    ?? (((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT') ? 'RESTAURANT_SUPPLIES' : 'RETAIL');
+
+  const isRestaurant = resolvedProfile !== 'RETAIL';
+
+  useEffect(() => {
+    if (defaultNatureFilter !== 'ALL') {
+      setNatureFilter(defaultNatureFilter);
+      return;
+    }
+
+    if (isRestaurant) {
+      setNatureFilter('SUPPLY');
+    } else {
+      setNatureFilter('ALL');
+    }
+  }, [isRestaurant, defaultNatureFilter]);
 
   const activeCount = useMemo(() => rows.filter((row) => Number(row.status) === 1).length, [rows]);
+
+  const visibleRows = useMemo(() => {
+    if (natureFilter === 'ALL') {
+      return rows;
+    }
+    return rows.filter((row) => row.product_nature === natureFilter);
+  }, [rows, natureFilter]);
 
   const lineNameById = useMemo(() => new Map(lines.map((row) => [row.id, row.name])), [lines]);
   const brandNameById = useMemo(() => new Map(brands.map((row) => [row.id, row.name])), [brands]);
@@ -344,6 +378,13 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
     setCommercialWholesale([]);
     setUnitToAdd(null);
     setFormStep(1);
+  }
+
+  function startCreateWithNature(nature: 'PRODUCT' | 'SUPPLY') {
+    setUiTab('formulario');
+    setFormStep(1);
+    setEditingId(null);
+    setForm((prev) => ({ ...EMPTY_FORM, product_nature: nature, unit_id: prev.unit_id, category_id: prev.category_id }));
   }
 
   async function startEdit(row: InventoryProduct) {
@@ -715,11 +756,21 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
   return (
     <section className="module-panel">
       <div className="module-header">
-        <h3>Productos</h3>
+        <h3>{isRestaurant ? 'Carta e Insumos' : 'Productos'}</h3>
         <div className="entity-actions">
           <button type="button" onClick={() => { setUiTab('formulario'); setFormStep(1); }} disabled={!canManageProducts}>
             Nuevo producto
           </button>
+          {isRestaurant && (
+            <button type="button" onClick={() => startCreateWithNature('SUPPLY')} disabled={!canManageProducts}>
+              Nuevo insumo
+            </button>
+          )}
+          {isRestaurant && (
+            <button type="button" onClick={() => startCreateWithNature('PRODUCT')} disabled={!canManageProducts}>
+              Nuevo plato/bebida
+            </button>
+          )}
           <button type="button" onClick={() => void loadProducts()} disabled={loading}>
             Refrescar
           </button>
@@ -796,6 +847,14 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
                 <option value="0">Inactivos</option>
               </select>
             </label>
+            <label>
+              Tipo
+              <select value={natureFilter} onChange={(event) => setNatureFilter(event.target.value as 'ALL' | 'PRODUCT' | 'SUPPLY')}>
+                <option value="ALL">Todos</option>
+                <option value="SUPPLY">Insumos</option>
+                <option value="PRODUCT">Producto/Carta</option>
+              </select>
+            </label>
             <div className="entity-filter-action">
               <button type="button" onClick={() => void loadProducts()} disabled={loading}>
                 Buscar
@@ -804,7 +863,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
           </div>
 
           <div className="table-wrap">
-            <h4>Catálogo de productos</h4>
+            <h4>{isRestaurant ? 'Catalogo de carta e insumos' : 'Catalogo de productos'}</h4>
             <table>
               <thead>
                 <tr>
@@ -822,7 +881,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row) => (
+                {visibleRows.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
                     <td>{row.sku ?? '-'}</td>
@@ -842,9 +901,9 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {visibleRows.length === 0 && (
                   <tr>
-                    <td colSpan={11}>No hay productos para el filtro actual.</td>
+                    <td colSpan={11}>No hay registros para el filtro actual.</td>
                   </tr>
                 )}
               </tbody>
@@ -921,7 +980,7 @@ export function ProductsView({ accessToken }: ProductsViewProps) {
             value={form.product_nature}
             onChange={(event) => setForm((prev) => ({ ...prev, product_nature: event.target.value as 'PRODUCT' | 'SUPPLY' }))}
           >
-            <option value="PRODUCT">Producto</option>
+            <option value="PRODUCT">{isRestaurant ? 'Producto de carta (plato/bebida)' : 'Producto'}</option>
             <option value="SUPPLY">Insumo</option>
           </select>
         </label>

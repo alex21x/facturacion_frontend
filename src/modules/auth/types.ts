@@ -25,6 +25,7 @@ export type LoginPayload = {
   password: string;
   device_id: string;
   device_name?: string;
+  company_access_slug?: string;
 };
 
 export type LoginResponse = {

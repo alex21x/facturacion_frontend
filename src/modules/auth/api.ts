@@ -14,7 +14,17 @@ async function postJson<T>(path: string, body: unknown, headers?: HeadersInit): 
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`API ${response.status}: ${text}`);
+
+    try {
+      const parsed = JSON.parse(text) as { message?: string };
+      if (parsed && typeof parsed.message === 'string' && parsed.message.trim() !== '') {
+        throw new Error(parsed.message);
+      }
+    } catch {
+      // Ignore JSON parse errors and continue with a fallback message.
+    }
+
+    throw new Error(`No se pudo completar la solicitud (${response.status}).`);
   }
 
   return (await response.json()) as T;

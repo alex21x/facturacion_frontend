@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
 import type { InventoryProduct, InventoryStockRow } from '../../inventory/types';
-import { createStockEntry, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport } from '../api';
+import { createStockEntry, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, receivePurchaseOrder } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import type {
   CreateStockEntryItemPayload,
@@ -14,6 +14,8 @@ import type {
 type PurchasesViewProps = {
   accessToken: string;
   warehouseId: number | null;
+  activeVerticalCode?: string | null;
+  uiProfile?: 'DEFAULT' | 'RESTAURANT';
 };
 
 type EntryRowDraft = {
@@ -28,6 +30,13 @@ type EntryRowDraft = {
   tax_category_id?: number;
   tax_rate?: number;
   notes: string;
+};
+
+type PartialReceiveDraftRow = {
+  product_id: number;
+  product_name: string;
+  ordered_qty: number;
+  receive_qty: string;
 };
 
 type PurchasesWorkspaceMode = 'ENTRY' | 'REPORT';
@@ -82,6 +91,16 @@ function formatDateTime(value?: string | null): string {
   }
 
   return parsed.toLocaleString('es-PE');
+}
+
+function entryTypeLabel(entryType: StockEntryType): string {
+  if (entryType === 'PURCHASE') {
+    return 'Compra';
+  }
+  if (entryType === 'PURCHASE_ORDER') {
+    return 'Orden de compra';
+  }
+  return 'Ajuste';
 }
 
 function buildPurchaseDetailHtml(entry: StockEntryRow): string {
@@ -158,7 +177,7 @@ function buildPurchaseDetailHtml(entry: StockEntryRow): string {
   <body>
     <h2>Detalle de compra #${entry.id}</h2>
     <p class="meta">
-      Tipo: ${entry.entry_type === 'PURCHASE' ? 'Compra' : 'Ajuste'} |
+      Tipo: ${entryTypeLabel(entry.entry_type)} |
       Fecha: ${formatDateTime(entry.issue_at)} |
       Referencia: ${entry.reference_no ?? entry.supplier_reference ?? '-'}
     </p>
@@ -227,8 +246,36 @@ function normalizePurchaseUnitCost(unitCost: number, taxRate: number, priceTaxMo
   return unitCost / divisor;
 }
 
-export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) {
+function resolveDefaultPurchaseTaxCategory(lookups: PurchasesLookups | null): { id: number; rate_percent: number } | null {
+  const categories = lookups?.tax_categories ?? [];
+  if (categories.length === 0) {
+    return null;
+  }
+
+  const gravado = categories.find((category) => {
+    const code = String(category.code ?? '').toUpperCase();
+    const label = String(category.label ?? '').toUpperCase();
+    return code.includes('10') || label.includes('GRAV') || label.includes('ONER');
+  });
+
+  if (gravado) {
+    return { id: gravado.id, rate_percent: Number(gravado.rate_percent ?? 0) };
+  }
+
+  const positiveRate = categories.find((category) => Number(category.rate_percent ?? 0) > 0);
+  return positiveRate
+    ? { id: positiveRate.id, rate_percent: Number(positiveRate.rate_percent ?? 0) }
+    : null;
+}
+
+export function PurchasesView({
+  accessToken,
+  warehouseId,
+  activeVerticalCode = null,
+  uiProfile,
+}: PurchasesViewProps) {
   const productInputRef = useRef<HTMLInputElement | null>(null);
+  const draftDatesPopoverRef = useRef<HTMLDivElement | null>(null);
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [stockRows, setStockRows] = useState<InventoryStockRow[]>([]);
   const [reportRows, setReportRows] = useState<StockEntryRow[]>([]);
@@ -246,8 +293,13 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
   const [isLoadingReport, setIsLoadingReport] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isExportingReport, setIsExportingReport] = useState(false);
+  const [isDraftDatesPopoverOpen, setIsDraftDatesPopoverOpen] = useState(false);
+  const [partialReceiveTarget, setPartialReceiveTarget] = useState<StockEntryRow | null>(null);
+  const [partialReceiveRows, setPartialReceiveRows] = useState<PartialReceiveDraftRow[]>([]);
+  const [partialReceiveBusy, setPartialReceiveBusy] = useState(false);
   const [priceTaxMode, setPriceTaxMode] = useState<PriceTaxMode>('INCLUSIVE');
   const [message, setMessage] = useState('');
+  const [purchaseNatureFilter, setPurchaseNatureFilter] = useState<'ALL' | 'PRODUCT' | 'SUPPLY'>('ALL');
 
   const [entryType, setEntryType] = useState<StockEntryType>('PURCHASE');
   const [referenceNo, setReferenceNo] = useState('');
@@ -264,6 +316,31 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
   const [hasPercepcion, setHasPercepcion] = useState(false);
   const [percepcionTypeCode, setPercepcionTypeCode] = useState('');
   const [sunatOperationTypeCode, setSunatOperationTypeCode] = useState('');
+
+  const isRestaurant = (uiProfile ?? ((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT' ? 'RESTAURANT' : 'DEFAULT')) === 'RESTAURANT';
+
+  useEffect(() => {
+    if (isRestaurant) {
+      setPurchaseNatureFilter('SUPPLY');
+    } else {
+      setPurchaseNatureFilter('ALL');
+    }
+  }, [isRestaurant]);
+
+  const selectableProducts = useMemo(() => {
+    if (purchaseNatureFilter === 'ALL') {
+      return products;
+    }
+    return products.filter((row) => row.product_nature === purchaseNatureFilter);
+  }, [products, purchaseNatureFilter]);
+
+  const visibleStockRows = useMemo(() => {
+    if (purchaseNatureFilter === 'ALL') {
+      return stockRows;
+    }
+    const allowedProductIds = new Set(selectableProducts.map((row) => row.id));
+    return stockRows.filter((row) => allowedProductIds.has(row.product_id));
+  }, [stockRows, selectableProducts, purchaseNatureFilter]);
 
   const totalQty = useMemo(() => {
     return rows.reduce((acc, row) => acc + (Number(row.qty) || 0), 0);
@@ -284,14 +361,14 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       return [] as InventoryProduct[];
     }
 
-    return products
+    return selectableProducts
       .filter((product) => {
         const sku = (product.sku ?? '').toLowerCase();
         const name = (product.name ?? '').toLowerCase();
         return sku.includes(query) || name.includes(query);
       })
       .slice(0, 10);
-  }, [draftItem.product_query, isProductSuggestOpen, products]);
+  }, [draftItem.product_query, isProductSuggestOpen, selectableProducts]);
 
   useEffect(() => {
     if (activeProductSuggestions.length === 0) {
@@ -379,6 +456,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
   const selectedRetencion = retencionTypes.find((row) => row.code === retencionTypeCode) ?? null;
   const selectedPercepcion = percepcionTypes.find((row) => row.code === percepcionTypeCode) ?? null;
   const selectedOperationType = operationTypes.find((row) => row.code === sunatOperationTypeCode) ?? null;
+  const defaultPurchaseTaxCategory = useMemo(() => resolveDefaultPurchaseTaxCategory(lookups), [lookups]);
   const detraccionAmount = hasDetraccion ? (totalsWithTax.grandTotal * Number(selectedDetraccion?.rate_percent ?? 0)) / 100 : 0;
   const retencionAmount = hasRetencion ? (totalsWithTax.grandTotal * Number(selectedRetencion?.rate_percent ?? 0)) / 100 : 0;
   const percepcionAmount = hasPercepcion ? (totalsWithTax.grandTotal * Number(selectedPercepcion?.rate_percent ?? 0)) / 100 : 0;
@@ -468,6 +546,50 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
     }
   }, [selectedOperationType]);
 
+  useEffect(() => {
+    if (!defaultPurchaseTaxCategory) {
+      return;
+    }
+
+    if (!['PURCHASE', 'PURCHASE_ORDER'].includes(entryType)) {
+      return;
+    }
+
+    setDraftItem((prev) => {
+      if (prev.tax_category_id) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        tax_category_id: defaultPurchaseTaxCategory.id,
+        tax_rate: defaultPurchaseTaxCategory.rate_percent,
+      };
+    });
+  }, [defaultPurchaseTaxCategory, entryType]);
+
+  useEffect(() => {
+    if (!isDraftDatesPopoverOpen) {
+      return;
+    }
+
+    const handleDocumentPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) {
+        return;
+      }
+
+      if (draftDatesPopoverRef.current && !draftDatesPopoverRef.current.contains(target)) {
+        setIsDraftDatesPopoverOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleDocumentPointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentPointerDown);
+    };
+  }, [isDraftDatesPopoverOpen]);
+
   async function loadData() {
     setIsLoading(true);
     setMessage('');
@@ -556,6 +678,10 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       return false;
     }
 
+    if (entryType !== 'ADJUSTMENT' && qty <= 0) {
+      return false;
+    }
+
     if (row.unit_cost === '') {
       return false;
     }
@@ -566,10 +692,6 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
     }
 
     if (lotTrackingEnabled && inventorySettings?.enforce_lot_for_tracked && product?.lot_tracking && row.lot_code.trim() === '') {
-      return false;
-    }
-
-    if (expiryTrackingEnabled && product?.has_expiration && row.expires_at.trim() === '') {
       return false;
     }
 
@@ -586,7 +708,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       return row;
     }
 
-    const exact = products.find((product) => {
+    const exact = selectableProducts.find((product) => {
       const sku = normalizeSearchText(product.sku ?? '');
       const name = normalizeSearchText(product.name ?? '');
       const combo = normalizeSearchText(`${product.sku ?? 'SIN-SKU'} - ${product.name}`);
@@ -601,7 +723,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       };
     }
 
-    const filtered = products.filter((product) => {
+    const filtered = selectableProducts.filter((product) => {
       const sku = normalizeSearchText(product.sku ?? '');
       const name = normalizeSearchText(product.name ?? '');
       return sku.includes(query) || name.includes(query);
@@ -635,7 +757,9 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       if (!resolvedDraft.product_id) {
         setMessage('Selecciona un producto valido para agregar el item.');
       } else if (!Number.isFinite(Number(resolvedDraft.qty)) || Math.abs(Number(resolvedDraft.qty)) <= 0) {
-        setMessage('Ingresa una cantidad valida mayor a 0.');
+        setMessage('Ingresa una cantidad valida (distinta de 0).');
+      } else if (entryType !== 'ADJUSTMENT' && Number(resolvedDraft.qty) <= 0) {
+        setMessage('Para compras y ordenes de compra la cantidad debe ser mayor a 0.');
       } else if (!Number.isFinite(Number(resolvedDraft.unit_cost)) || Number(resolvedDraft.unit_cost) < 0) {
         setMessage('Ingresa un costo unitario valido (0 o mayor).');
       } else {
@@ -666,6 +790,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
     nextDraft.manufacture_at = expiryTrackingEnabled ? resolvedDraft.manufacture_at : '';
     nextDraft.expires_at = expiryTrackingEnabled ? resolvedDraft.expires_at : '';
     setDraftItem(nextDraft);
+    setIsDraftDatesPopoverOpen(false);
     setIsProductSuggestOpen(false);
     setActiveProductIndex(-1);
 
@@ -737,7 +862,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
         tax_rate: row.tax_rate ? Number(row.tax_rate) : undefined,
         notes: row.notes.trim() !== '' ? row.notes.trim() : undefined,
       }))
-      .filter((row) => row.product_id > 0 && Number.isFinite(row.qty) && Math.abs(row.qty) > 0);
+      .filter((row) => row.product_id > 0 && Number.isFinite(row.qty) && (entryType === 'ADJUSTMENT' ? Math.abs(row.qty) > 0 : row.qty > 0));
 
     if (payloadItems.length === 0) {
       setMessage('Debes ingresar al menos una linea valida con producto y cantidad.');
@@ -813,7 +938,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       setRetencionTypeCode('');
       setPercepcionTypeCode('');
       setSunatOperationTypeCode('');
-      setMessage('Ingreso registrado correctamente.');
+      setMessage(entryType === 'PURCHASE_ORDER' ? 'Orden de compra registrada correctamente.' : 'Ingreso registrado correctamente.');
       await loadData();
       if (workspaceMode === 'REPORT') {
         await loadReport(1, reportFiltersApplied);
@@ -859,7 +984,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
           return [
             {
               IngresoID: entry.id,
-              Tipo: entry.entry_type === 'PURCHASE' ? 'Compra' : 'Ajuste',
+              Tipo: entryTypeLabel(entry.entry_type),
               Fecha: entry.issue_at,
               Referencia: entry.reference_no ?? entry.supplier_reference ?? '',
               MetodoPago: entry.payment_method ?? '',
@@ -879,7 +1004,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
 
         return details.map((item) => ({
           IngresoID: entry.id,
-          Tipo: entry.entry_type === 'PURCHASE' ? 'Compra' : 'Ajuste',
+          Tipo: entryTypeLabel(entry.entry_type),
           Fecha: entry.issue_at,
           Referencia: entry.reference_no ?? entry.supplier_reference ?? '',
           MetodoPago: entry.payment_method ?? '',
@@ -910,10 +1035,104 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
     }
   }
 
+  async function handleReceiveOrder(entry: StockEntryRow) {
+    if (entry.entry_type !== 'PURCHASE_ORDER') {
+      return;
+    }
+
+    const confirmed = window.confirm(`Se recepcionara la OC #${entry.id} y se registrara una compra con ingreso a stock. Deseas continuar?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setIsLoadingReport(true);
+    setMessage('');
+
+    try {
+      const result = await receivePurchaseOrder(accessToken, entry.id, {
+        issue_at: asInputDate(entryDate),
+      });
+
+      setMessage(`OC #${result.data.purchase_order_id} recepcionada. Ingreso generado #${result.data.received_entry_id}.`);
+      await loadData();
+      await loadReport(reportPage, reportFiltersApplied);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo recepcionar la orden de compra');
+    } finally {
+      setIsLoadingReport(false);
+    }
+  }
+
+  function openPartialReceive(entry: StockEntryRow) {
+    const detailRows = entry.items ?? [];
+    const grouped = new Map<number, PartialReceiveDraftRow>();
+
+    detailRows.forEach((row) => {
+      const current = grouped.get(row.product_id);
+      if (!current) {
+        grouped.set(row.product_id, {
+          product_id: row.product_id,
+          product_name: row.product_name,
+          ordered_qty: Number(row.qty ?? 0),
+          receive_qty: '',
+        });
+        return;
+      }
+
+      current.ordered_qty += Number(row.qty ?? 0);
+      grouped.set(row.product_id, current);
+    });
+
+    setPartialReceiveRows(Array.from(grouped.values()));
+    setPartialReceiveTarget(entry);
+  }
+
+  function closePartialReceive() {
+    setPartialReceiveTarget(null);
+    setPartialReceiveRows([]);
+  }
+
+  async function submitPartialReceive() {
+    if (!partialReceiveTarget) {
+      return;
+    }
+
+    const lines = partialReceiveRows
+      .map((row) => ({
+        product_id: row.product_id,
+        qty: Number(row.receive_qty || 0),
+      }))
+      .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+
+    if (lines.length === 0) {
+      setMessage('Ingresa al menos una cantidad parcial mayor a 0 para recepcionar.');
+      return;
+    }
+
+    setPartialReceiveBusy(true);
+    setMessage('');
+
+    try {
+      const result = await receivePurchaseOrder(accessToken, partialReceiveTarget.id, {
+        issue_at: asInputDate(entryDate),
+        items: lines,
+      });
+
+      closePartialReceive();
+      setMessage(`Recepcion parcial registrada. OC #${result.data.purchase_order_id} -> ingreso #${result.data.received_entry_id}. Estado: ${result.data.status ?? '-'}.`);
+      await loadData();
+      await loadReport(reportPage, reportFiltersApplied);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo registrar la recepcion parcial');
+    } finally {
+      setPartialReceiveBusy(false);
+    }
+  }
+
   return (
     <section className="module-panel">
       <div className="module-header">
-        <h3>Compras e Ingresos</h3>
+        <h3>{isRestaurant ? 'Compras de Insumos' : 'Compras, Ordenes e Ingresos'}</h3>
         <div className="module-header">
           <button type="button" onClick={() => setWorkspaceMode('ENTRY')} disabled={workspaceMode === 'ENTRY'}>
             Registro de compras
@@ -937,7 +1156,9 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
       {message && <p className="notice">{message}</p>}
 
       <p>
-        Registra ingresos por compra o ajustes de stock. El stock impacta en inventario y queda disponible para venta.
+        {isRestaurant
+          ? 'Registra ordenes de compra, compras efectivas y ajustes de insumos. Solo la compra y el ajuste impactan stock inmediatamente.'
+          : 'Registra ordenes de compra, ingresos por compra o ajustes de stock. Solo la compra y el ajuste impactan inventario inmediatamente.'}
       </p>
 
       {workspaceMode === 'ENTRY' && (
@@ -946,6 +1167,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
           <label>
             Tipo de movimiento
             <select value={entryType} onChange={(e) => setEntryType(e.target.value as StockEntryType)}>
+              <option value="PURCHASE_ORDER">Orden de compra</option>
               <option value="PURCHASE">Compra (ingreso)</option>
               <option value="ADJUSTMENT">Ajuste (+/-)</option>
             </select>
@@ -974,9 +1196,20 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
           </label>
 
           <label>
-            Fecha de compra
+            Fecha de documento
             <input type="date" value={entryDate} onChange={(e) => setEntryDate(asInputDate(e.target.value))} />
           </label>
+
+          {isRestaurant && (
+          <label>
+            Tipo de item
+            <select value={purchaseNatureFilter} onChange={(e) => setPurchaseNatureFilter(e.target.value as 'ALL' | 'PRODUCT' | 'SUPPLY')}>
+              <option value="ALL">Todos</option>
+              <option value="SUPPLY">Insumos</option>
+              <option value="PRODUCT">Producto/Carta</option>
+            </select>
+          </label>
+          )}
         </div>
 
         <div className="sales-concepts-shell">
@@ -1072,17 +1305,52 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
                 )}
 
                 {expiryTrackingEnabled && (
-                <label className="sales-field-context">
-                  Fabricacion
-                  <input type="date" value={draftItem.manufacture_at} onChange={(e) => updateDraftItem({ manufacture_at: e.target.value })} />
-                </label>
-                )}
+                <div className="sales-field-context purchases-field-dates" ref={draftDatesPopoverRef}>
+                  <span>Fechas</span>
+                  <button
+                    type="button"
+                    className="purchases-dates-trigger"
+                    onClick={() => setIsDraftDatesPopoverOpen((prev) => !prev)}
+                  >
+                    <span className="purchases-dates-trigger__lead">
+                      <span className="purchases-dates-trigger__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" focusable="false" aria-hidden="true">
+                          <path d="M7 2a1 1 0 0 1 1 1v1h8V3a1 1 0 1 1 2 0v1h1a3 3 0 0 1 3 3v11a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V7a3 3 0 0 1 3-3h1V3a1 1 0 0 1 1-1Zm13 8H4v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8ZM5 6a1 1 0 0 0-1 1v1h16V7a1 1 0 0 0-1-1H5Z" />
+                        </svg>
+                      </span>
+                      <span>{draftItem.manufacture_at || draftItem.expires_at ? 'Editar' : 'Configurar'}</span>
+                    </span>
+                    <span className={`purchases-dates-trigger__chevron ${isDraftDatesPopoverOpen ? 'is-open' : ''}`} aria-hidden="true">▾</span>
+                  </button>
 
-                {expiryTrackingEnabled && (
-                <label className="sales-field-context">
-                  Vencimiento
-                  <input type="date" value={draftItem.expires_at} onChange={(e) => updateDraftItem({ expires_at: e.target.value })} />
-                </label>
+                  {isDraftDatesPopoverOpen && (
+                    <div className="purchases-dates-popover" role="dialog" aria-label="Fechas del item">
+                      <label>
+                        Fabricacion
+                        <input
+                          type="date"
+                          value={draftItem.manufacture_at}
+                          onChange={(e) => updateDraftItem({ manufacture_at: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        Vencimiento
+                        <input
+                          type="date"
+                          value={draftItem.expires_at}
+                          onChange={(e) => updateDraftItem({ expires_at: e.target.value })}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="btn-mini"
+                        onClick={() => setIsDraftDatesPopoverOpen(false)}
+                      >
+                        Listo
+                      </button>
+                    </div>
+                  )}
+                </div>
                 )}
 
                 <label className="sales-field-igv">
@@ -1374,7 +1642,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
 
       {workspaceMode === 'ENTRY' && (
       <div className="table-wrap">
-        <h4>Stock actual para venta</h4>
+        <h4>{isRestaurant ? 'Stock actual de cocina/bar' : 'Stock actual para venta'}</h4>
         <table>
           <thead>
             <tr>
@@ -1384,7 +1652,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
             </tr>
           </thead>
           <tbody>
-            {stockRows.map((row) => (
+            {visibleStockRows.map((row) => (
               <tr key={`${row.product_id}-${row.warehouse_id}`}>
                 <td>{row.product_name}</td>
                 <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
@@ -1413,6 +1681,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
               onChange={(e) => setReportFiltersDraft((prev) => ({ ...prev, entryType: e.target.value as PurchasesReportFilters['entryType'] }))}
             >
               <option value="ALL">Todos</option>
+              <option value="PURCHASE_ORDER">Orden de compra</option>
               <option value="PURCHASE">Compra</option>
               <option value="ADJUSTMENT">Ajuste</option>
             </select>
@@ -1460,6 +1729,7 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
             <tr>
               <th>ID</th>
               <th>Tipo</th>
+              <th>Estado</th>
               <th>Fecha</th>
               <th>Referencia</th>
               <th>Pago</th>
@@ -1473,7 +1743,8 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
             {reportRows.map((entry) => (
               <tr key={entry.id}>
                 <td>{entry.id}</td>
-                <td>{entry.entry_type === 'PURCHASE' ? 'Compra' : 'Ajuste'}</td>
+                <td>{entryTypeLabel(entry.entry_type)}</td>
+                <td>{entry.status || '-'}</td>
                 <td>{formatDateTime(entry.issue_at)}</td>
                 <td>{entry.reference_no ?? entry.supplier_reference ?? '-'}</td>
                 <td>{entry.payment_method ?? '-'}</td>
@@ -1481,6 +1752,26 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
                 <td>{Number(entry.total_qty).toFixed(3)}</td>
                 <td>{Number(entry.total_amount).toFixed(2)}</td>
                 <td>
+                  {entry.entry_type === 'PURCHASE_ORDER' && !['CLOSED', 'VOID', 'CANCELED'].includes(String(entry.status || '').toUpperCase()) && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => void handleReceiveOrder(entry)}
+                        disabled={isLoadingReport}
+                        style={{ marginRight: '0.4rem' }}
+                      >
+                        Recepcionar total
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openPartialReceive(entry)}
+                        disabled={isLoadingReport}
+                        style={{ marginRight: '0.4rem' }}
+                      >
+                        Recepcionar parcial
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={() => setDetailPreviewEntry(entry)}
@@ -1520,6 +1811,66 @@ export function PurchasesView({ accessToken, warehouseId }: PurchasesViewProps) 
           variant="wide"
           onClose={() => setDetailPreviewEntry(null)}
         />
+      )}
+
+      {partialReceiveTarget && (
+        <div className="modal-overlay" role="dialog" aria-modal="true">
+          <div className="modal-card" style={{ maxWidth: '780px', width: '100%' }}>
+            <header className="modal-head" style={{ marginBottom: '0.75rem' }}>
+              <h4 style={{ margin: 0 }}>Recepcion parcial OC #{partialReceiveTarget.id}</h4>
+            </header>
+
+            <p style={{ marginTop: 0 }}>
+              Ingresa solo las cantidades a recepcionar ahora. El sistema calculara el saldo pendiente automaticamente.
+            </p>
+
+            <div className="table-wrap" style={{ maxHeight: '320px', overflow: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Producto</th>
+                    <th>Ordenado</th>
+                    <th>Recepcionar ahora</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {partialReceiveRows.map((row) => (
+                    <tr key={row.product_id}>
+                      <td>{row.product_name}</td>
+                      <td>{row.ordered_qty.toFixed(3)}</td>
+                      <td>
+                        <input
+                          type="number"
+                          step="0.001"
+                          min="0"
+                          value={row.receive_qty}
+                          onChange={(event) => {
+                            const nextValue = event.target.value;
+                            setPartialReceiveRows((prev) => prev.map((draft) => (
+                              draft.product_id === row.product_id
+                                ? { ...draft, receive_qty: nextValue }
+                                : draft
+                            )));
+                          }}
+                          placeholder="0.000"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="module-header" style={{ marginTop: '1rem' }}>
+              <button type="button" onClick={submitPartialReceive} disabled={partialReceiveBusy}>
+                {partialReceiveBusy ? 'Registrando...' : 'Guardar recepcion parcial'}
+              </button>
+              <button type="button" onClick={closePartialReceive} disabled={partialReceiveBusy}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </section>
   );

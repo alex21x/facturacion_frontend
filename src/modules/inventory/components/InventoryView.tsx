@@ -19,9 +19,9 @@ import type {
   InventoryProDashboardResponse,
   InventoryProDailySnapshotResponse,
   InventoryProLotExpiryResponse,
-  InventoryProReportType,
   InventoryProReportRequestListItem,
   InventoryProReportRequestDetail,
+  ReportsApiReportCode,
 } from '../types';
 
 type InvTab = 'stock' | 'lotes' | 'ubicaciones' | 'kardex' | 'dashboard' | 'reportes';
@@ -29,6 +29,7 @@ type InvTab = 'stock' | 'lotes' | 'ubicaciones' | 'kardex' | 'dashboard' | 'repo
 const REF_TYPE_LABELS: Record<string, string> = {
   STOCK_ENTRY: 'Ingreso',
   COMMERCIAL_DOCUMENT: 'Doc. Comercial',
+  COMMERCIAL_DOCUMENT_VOID: 'Anulacion doc. comercial',
 };
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
@@ -37,11 +38,17 @@ const MOVEMENT_TYPE_LABELS: Record<string, string> = {
 };
 
 const REPORT_TYPE_LABELS: Record<string, string> = {
+  INVENTORY_STOCK_SNAPSHOT: 'Foto de stock',
+  INVENTORY_KARDEX_PHYSICAL: 'Kardex fisico',
+  INVENTORY_KARDEX_VALUED: 'Kardex valorizado',
+  INVENTORY_LOT_EXPIRY: 'Venc. de lotes',
+  INVENTORY_CUT: 'Corte de inventario',
   STOCK_SNAPSHOT: 'Foto de stock',
   KARDEX_PHYSICAL: 'Kardex fisico',
   KARDEX_VALUED: 'Kardex valorizado',
   LOT_EXPIRY: 'Venc. de lotes',
-  INVENTORY_CUT: 'Corte de inventario',
+  SALES_DOCUMENTS_SUMMARY: 'Resumen de comprobantes de venta',
+  SALES_SUNAT_MONITOR: 'Monitoreo SUNAT',
 };
 
 const REPORT_STATUS_LABELS: Record<string, string> = {
@@ -150,9 +157,16 @@ function formatExportCell(key: string, value: unknown): unknown {
 type InventoryViewProps = {
   accessToken: string;
   warehouseId: number | null;
+  activeVerticalCode?: string | null;
+  uiProfile?: 'DEFAULT' | 'RESTAURANT';
 };
 
-export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) {
+export function InventoryView({
+  accessToken,
+  warehouseId,
+  activeVerticalCode = null,
+  uiProfile,
+}: InventoryViewProps) {
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [stock, setStock] = useState<InventoryStockRow[]>([]);
   const [lots, setLots] = useState<InventoryLotRow[]>([]);
@@ -162,6 +176,20 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   const [stockQuickSearch, setStockQuickSearch] = useState('');
   const [lotQuickSearch, setLotQuickSearch] = useState('');
   const [locationQuickSearch, setLocationQuickSearch] = useState('');
+  const [stockNatureFilter, setStockNatureFilter] = useState<'ALL' | 'PRODUCT' | 'SUPPLY'>('ALL');
+  const [lotNatureFilter, setLotNatureFilter] = useState<'ALL' | 'PRODUCT' | 'SUPPLY'>('ALL');
+
+  const isRestaurant = (uiProfile ?? ((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT' ? 'RESTAURANT' : 'DEFAULT')) === 'RESTAURANT';
+
+  useEffect(() => {
+    if (isRestaurant) {
+      setStockNatureFilter('SUPPLY');
+      setLotNatureFilter('SUPPLY');
+    } else {
+      setStockNatureFilter('ALL');
+      setLotNatureFilter('ALL');
+    }
+  }, [isRestaurant]);
 
   // Kardex state
   const [kardex, setKardex] = useState<KardexRow[]>([]);
@@ -185,8 +213,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   const [creatingReportRequest, setCreatingReportRequest] = useState(false);
   const [loadingReportRequests, setLoadingReportRequests] = useState(false);
   const [loadingReportRequestDetail, setLoadingReportRequestDetail] = useState(false);
-  const [reportType, setReportType] = useState<InventoryProReportType>('STOCK_SNAPSHOT');
-  const [reportRunAsync, setReportRunAsync] = useState(true);
+  const [reportCode, setReportCode] = useState<ReportsApiReportCode>('INVENTORY_STOCK_SNAPSHOT');
   const [reportRequests, setReportRequests] = useState<InventoryProReportRequestListItem[]>([]);
   const [selectedReportRequestId, setSelectedReportRequestId] = useState<number | null>(null);
   const [selectedReportRequest, setSelectedReportRequest] = useState<InventoryProReportRequestDetail | null>(null);
@@ -213,11 +240,26 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
     return map;
   }, [products]);
 
+  const productNatureById = useMemo(() => {
+    const map = new Map<number, 'PRODUCT' | 'SUPPLY'>();
+    products.forEach((product) => {
+      map.set(product.id, product.product_nature);
+    });
+    return map;
+  }, [products]);
+
   const filteredStock = useMemo(() => {
     const query = stockQuickSearch.trim().toLowerCase();
-    if (!query) return stock;
-
     return stock.filter((row) => {
+      const nature = productNatureById.get(row.product_id);
+      if (stockNatureFilter !== 'ALL' && nature !== stockNatureFilter) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
       const productLocation = normalizedLocation(productLocationById.get(row.product_id));
       return [
         row.product_name,
@@ -227,13 +269,20 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
         productLocation,
       ].some((value) => value.toLowerCase().includes(query));
     });
-  }, [stock, stockQuickSearch, productLocationById]);
+  }, [stock, stockQuickSearch, productLocationById, productNatureById, stockNatureFilter]);
 
   const filteredLots = useMemo(() => {
     const query = lotQuickSearch.trim().toLowerCase();
-    if (!query) return lots;
-
     return lots.filter((row) => {
+      const nature = productNatureById.get(row.product_id);
+      if (lotNatureFilter !== 'ALL' && nature !== lotNatureFilter) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
       const productLocation = normalizedLocation(productLocationById.get(row.product_id));
       return [
         row.lot_code,
@@ -244,7 +293,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
         productLocation,
       ].some((value) => value.toLowerCase().includes(query));
     });
-  }, [lots, lotQuickSearch, productLocationById]);
+  }, [lots, lotQuickSearch, productLocationById, productNatureById, lotNatureFilter]);
 
   const locationRows = useMemo(() => {
     const rows = new Map<string, {
@@ -417,7 +466,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
 
     try {
       const response = await fetchInventoryProReportRequest(accessToken, requestId);
-      setSelectedReportRequest(response.data);
+      setSelectedReportRequest(response);
       setSelectedReportRequestId(requestId);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Error al cargar detalle del reporte');
@@ -438,14 +487,13 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
       };
 
       const response = await createInventoryProReportRequest(accessToken, {
-        reportType,
-        runAsync: reportRunAsync,
+        reportCode,
         filters,
       });
 
       await loadReportRequests();
-      await loadReportRequestDetail(response.data.id);
-      setMessage(`Solicitud #${response.data.id} creada en modo ${response.mode}.`);
+      await loadReportRequestDetail(response.request_id);
+      setMessage(`Solicitud #${response.request_id} creada en cola.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo crear la solicitud de reporte');
     } finally {
@@ -595,7 +643,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
     setMessage('');
 
     try {
-      const rawRows = (selectedReportRequest?.result?.rows ?? []) as Array<Record<string, unknown>>;
+      const rawRows = (selectedReportRequest?.result_json?.rows ?? []) as Array<Record<string, unknown>>;
 
       if (rawRows.length === 0) {
         setMessage('La solicitud seleccionada no tiene filas para exportar.');
@@ -681,7 +729,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
   return (
     <section className="module-panel">
       <div className="module-header">
-        <h3>Inventario</h3>
+        <h3>{isRestaurant ? 'Bodega e Insumos' : 'Inventario'}</h3>
         <button
           type="button"
           onClick={() => {
@@ -764,12 +812,20 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
             <h4>Buscador rapido de stock</h4>
             <div className="grid-form">
               <label>
-                Producto / SKU / Almacen / Ubicacion
+                {isRestaurant ? 'Insumo/Producto / SKU / Bodega / Ubicacion' : 'Producto / SKU / Almacen / Ubicacion'}
                 <input
                   value={stockQuickSearch}
                   onChange={(e) => setStockQuickSearch(e.target.value)}
                   placeholder="Ej. arroz, SKU001, principal, estante A1"
                 />
+              </label>
+              <label>
+                Tipo
+                <select value={stockNatureFilter} onChange={(e) => setStockNatureFilter(e.target.value as 'ALL' | 'PRODUCT' | 'SUPPLY')}>
+                  <option value="ALL">Todos</option>
+                  <option value="SUPPLY">Insumos</option>
+                  <option value="PRODUCT">Producto/Carta</option>
+                </select>
               </label>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
@@ -827,7 +883,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
       {/* ── LOTES ── */}
       {activeTab === 'lotes' && (
         <div className="table-wrap">
-          <h4>Lotes con stock</h4>
+          <h4>{isRestaurant ? 'Lotes de insumos/productos con stock' : 'Lotes con stock'}</h4>
           <div className="grid-form" style={{ marginBottom: '0.6rem' }}>
             <label>
               Buscar por lote, producto, SKU, almacen o ubicacion
@@ -836,6 +892,14 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 onChange={(e) => setLotQuickSearch(e.target.value)}
                 placeholder="Ej. L001, PRODUCTO2, principal, rack B2"
               />
+            </label>
+            <label>
+              Tipo
+              <select value={lotNatureFilter} onChange={(e) => setLotNatureFilter(e.target.value as 'ALL' | 'PRODUCT' | 'SUPPLY')}>
+                <option value="ALL">Todos</option>
+                <option value="SUPPLY">Insumos</option>
+                <option value="PRODUCT">Producto/Carta</option>
+              </select>
             </label>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.4rem' }}>
@@ -1187,19 +1251,14 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
               </label>
               <label>
                 Tipo de reporte
-                <select value={reportType} onChange={(e) => setReportType(e.target.value as InventoryProReportType)}>
-                  <option value="STOCK_SNAPSHOT">Stock Snapshot</option>
-                  <option value="KARDEX_PHYSICAL">Kardex Fisico</option>
-                  <option value="KARDEX_VALUED">Kardex Valorizado</option>
-                  <option value="LOT_EXPIRY">Lotes por Vencimiento</option>
+                <select value={reportCode} onChange={(e) => setReportCode(e.target.value as ReportsApiReportCode)}>
+                  <option value="INVENTORY_STOCK_SNAPSHOT">Stock Snapshot</option>
+                  <option value="INVENTORY_KARDEX_PHYSICAL">Kardex Fisico</option>
+                  <option value="INVENTORY_KARDEX_VALUED">Kardex Valorizado</option>
+                  <option value="INVENTORY_LOT_EXPIRY">Lotes por Vencimiento</option>
                   <option value="INVENTORY_CUT">Corte de Inventario</option>
-                </select>
-              </label>
-              <label>
-                Modo de ejecucion
-                <select value={reportRunAsync ? 'ASYNC' : 'INLINE'} onChange={(e) => setReportRunAsync(e.target.value === 'ASYNC')}>
-                  <option value="ASYNC">Asincrono</option>
-                  <option value="INLINE">En linea</option>
+                  <option value="SALES_DOCUMENTS_SUMMARY">Ventas: Resumen de Comprobantes</option>
+                  <option value="SALES_SUNAT_MONITOR">Ventas: Monitoreo SUNAT</option>
                 </select>
               </label>
             </div>
@@ -1245,7 +1304,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                 {reportRequests.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
-                    <td>{REPORT_TYPE_LABELS[row.report_type] ?? row.report_type}</td>
+                    <td>{REPORT_TYPE_LABELS[row.report_code] ?? row.report_code}</td>
                     <td>{REPORT_STATUS_LABELS[row.status] ?? row.status}</td>
                     <td>{fmtDateTime(row.requested_at)}</td>
                     <td>{fmtDateTime(row.finished_at)}</td>
@@ -1264,7 +1323,7 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
             <div className="form-card">
               <h4>Detalle solicitud #{selectedReportRequest.id}</h4>
               <div className="inventory-detail-grid">
-                <article><span>Tipo</span><strong>{REPORT_TYPE_LABELS[selectedReportRequest.report_type] ?? selectedReportRequest.report_type}</strong></article>
+                <article><span>Tipo</span><strong>{REPORT_TYPE_LABELS[selectedReportRequest.report_code] ?? selectedReportRequest.report_code}</strong></article>
                 <article><span>Estado</span><strong>{REPORT_STATUS_LABELS[selectedReportRequest.status] ?? selectedReportRequest.status}</strong></article>
                 <article><span>Solicitado</span><strong>{fmtDateTime(selectedReportRequest.requested_at)}</strong></article>
                 <article><span>Finalizado</span><strong>{fmtDateTime(selectedReportRequest.finished_at)}</strong></article>
@@ -1272,8 +1331,8 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
               {selectedReportRequest.error_message && (
                 <p className="notice">{selectedReportRequest.error_message}</p>
               )}
-              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result?.summary && (() => {
-                const s = selectedReportRequest.result.summary;
+              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result_json?.summary && (() => {
+                const s = selectedReportRequest.result_json.summary;
                 const type = selectedReportRequest.report_type;
                 const items: Array<{ label: string; value: string }> = [];
                 if ('warehouses' in s)
@@ -1286,8 +1345,8 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                   items.push({ label: type === 'KARDEX_PHYSICAL' || type === 'KARDEX_VALUED' ? 'Cantidad total movida' : 'Cantidad total en stock', value: Number(s.total_qty).toFixed(3) });
                 if ('total_value' in s)
                   items.push({ label: 'Valor total (S/.)', value: Number(s.total_value).toFixed(2) });
-                if (selectedReportRequest.result.generated_at)
-                  items.push({ label: 'Generado el', value: fmtDateTime(String(selectedReportRequest.result.generated_at)) });
+                if (selectedReportRequest.result_json.generated_at)
+                  items.push({ label: 'Generado el', value: fmtDateTime(String(selectedReportRequest.result_json.generated_at)) });
                 return (
                   <div className="stat-grid" style={{ marginTop: '0.75rem' }}>
                     {items.map((item) => (
@@ -1299,10 +1358,10 @@ export function InventoryView({ accessToken, warehouseId }: InventoryViewProps) 
                   </div>
                 );
               })()}
-              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result?.rows && (
+              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result_json?.rows && (
                 <div style={{ marginTop: '0.5rem' }}>
                   <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)' }}>
-                    El reporte contiene {(selectedReportRequest.result.rows as unknown[]).length} fila(s).
+                    El reporte contiene {(selectedReportRequest.result_json.rows as unknown[]).length} fila(s).
                   </p>
                   <button type="button" onClick={() => void handleExportSelectedRequestResult()} disabled={exportingRequestResult}>
                     {exportingRequestResult ? 'Exportando...' : 'Exportar solicitud XLSX'}

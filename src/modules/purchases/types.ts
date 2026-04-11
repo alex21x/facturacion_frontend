@@ -1,6 +1,6 @@
 import type { InventorySettings, PaymentMethodRow, TaxCategoryRow } from '../../shared/types/common';
 
-export type StockEntryType = 'PURCHASE' | 'ADJUSTMENT';
+export type StockEntryType = 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER';
 
 export type PurchasesLookups = {
   payment_methods: PaymentMethodRow[];

@@ -37,6 +37,8 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [urbanizacion, setUrbanizacion] = useState('');
   const [sunatSecondaryUser, setSunatSecondaryUser] = useState('');
   const [sunatSecondaryPass, setSunatSecondaryPass] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
 
   // Logo
@@ -68,6 +70,8 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     setUrbanizacion(p.urbanizacion ?? '');
     setSunatSecondaryUser(p.sunat_secondary_user ?? '');
     setSunatSecondaryPass(p.sunat_secondary_pass ?? '');
+    setClientId(p.client_id ?? '');
+    setClientSecret(p.client_secret ?? '');
     setBankAccounts(p.bank_accounts ?? []);
   }
 
@@ -137,6 +141,8 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         urbanizacion: urbanizacion || undefined,
         sunat_secondary_user: sunatSecondaryUser || undefined,
         sunat_secondary_pass: sunatSecondaryPass || undefined,
+        client_id: clientId || undefined,
+        client_secret: clientSecret || undefined,
         bank_accounts: bankAccounts,
       });
 
@@ -394,6 +400,33 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                 value={sunatSecondaryPass}
                 onChange={(e) => setSunatSecondaryPass(e.target.value)}
                 placeholder="••••••••"
+                autoComplete="new-password"
+              />
+            </label>
+          </div>
+        </div>
+
+        <div className="form-card">
+          <h4>Credenciales API GRE</h4>
+          <div className="grid-form">
+            <label>
+              Client ID
+              <input
+                type="text"
+                maxLength={200}
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                placeholder="Ingresa client_id"
+              />
+            </label>
+            <label>
+              Client Secret
+              <input
+                type="password"
+                maxLength={500}
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder="Ingresa client_secret"
                 autoComplete="new-password"
               />
             </label>

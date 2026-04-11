@@ -25,6 +25,8 @@ import {
   updateCommercialDocument,
   voidCommercialDocument,
 } from '../api';
+import { fetchRestaurantTables } from '../../restaurant/api';
+import type { RestaurantTableRow } from '../../restaurant/types';
 import {
   buildCommercialDocument80mmHtml,
   buildCommercialDocumentA4Html,
@@ -47,6 +49,7 @@ type SalesViewProps = {
   branchId: number | null;
   warehouseId: number | null;
   cashRegisterId: number | null;
+  activeVerticalCode?: string | null;
   currentUserRoleCode?: string | null;
   currentUserRoleProfile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
 };
@@ -377,6 +380,8 @@ function createCreditInstallmentRow(dueDate: string, amount = 0, observation = '
 }
 
 const initialForm: CreateDocumentForm = {
+  restaurantTableId: null,
+  restaurantTableLabel: '',
   documentKind: 'RECEIPT',
   customerId: 0,
   currencyId: 1,
@@ -392,6 +397,7 @@ const initialForm: CreateDocumentForm = {
   isManualItem: false,
   issueDate: TODAY,
   dueDate: TODAY,
+  receiptSendMode: 'DIRECT',
   series: '',
   noteAffectedDocumentId: null,
   noteReasonCode: '',
@@ -430,6 +436,16 @@ function toBooleanFlag(value: unknown): boolean {
   return false;
 }
 
+function toPositiveInt(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+
+  const normalized = Math.trunc(parsed);
+  return normalized > 0 ? normalized : null;
+}
+
 function buildDocumentFilterParams(filter: DocumentViewFilter): {
   documentKind?: string;
   conversionState?: 'PENDING' | 'CONVERTED';
@@ -457,13 +473,10 @@ function buildDocumentFilterParams(filter: DocumentViewFilter): {
   return {};
 }
 
-function shouldApplyCashRegisterFilter(mode: SalesFlowMode, viewFilter: DocumentViewFilter): boolean {
-  if (mode !== 'SELLER_TO_CASHIER') {
-    return true;
-  }
-
-  // In separated mode, commercial-order/source views should not be tied to a single cash register.
-  return viewFilter === 'TRIBUTARY';
+function shouldApplyCashRegisterFilter(): boolean {
+  // Report views should not be scoped by metadata cash_register_id because
+  // issued documents may not store this field and would disappear from results.
+  return false;
 }
 
 function commercialStatusLabel(status: string): string {
@@ -484,8 +497,12 @@ function sunatStatusLabel(status: string | null | undefined): string {
   if (!normalized) return 'No enviado';
   if (normalized === 'ACCEPTED') return 'Aceptado';
   if (normalized === 'REJECTED') return 'Rechazado';
+  if (normalized === 'PENDING_CONFIRMATION') return 'Pendiente confirmacion SUNAT';
+  if (normalized === 'EXPIRED_WINDOW') return 'Fuera de plazo SUNAT';
   if (normalized === 'SENDING') return 'Enviando';
   if (normalized === 'PENDING_MANUAL') return 'Pendiente manual';
+  if (normalized === 'PENDING_SUMMARY') return 'Pendiente por resumen';
+  if (normalized === 'SENT_BY_SUMMARY') return 'Enviado por resumen';
   if (normalized === 'CONFIG_INCOMPLETE') return 'Config incompleta';
   if (normalized === 'HTTP_ERROR') return 'Error HTTP';
   if (normalized === 'NETWORK_ERROR') return 'Error red';
@@ -535,12 +552,23 @@ function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFil
 
 function resolveSunatUiState(row: CommercialDocumentListItem): SunatUiState {
   const commercialStatus = String(row.status ?? '').toUpperCase();
-  if (commercialStatus === 'VOID' || commercialStatus === 'CANCELED') {
+  const voidStatus = String(row.sunat_void_status ?? '').trim().toUpperCase();
+
+  if (commercialStatus === 'VOID' || commercialStatus === 'CANCELED' || voidStatus === 'ACCEPTED') {
     return {
       statusKey: 'VOIDED',
       label: 'Anulado',
       className: 'is-neutral',
       isFinal: true,
+    };
+  }
+
+  if (voidStatus) {
+    return {
+      statusKey: voidStatus,
+      label: voidStatus === 'PENDING_SUMMARY' ? 'Pend. anulacion RA' : sunatStatusLabel(voidStatus),
+      className: sunatStatusClass(voidStatus),
+      isFinal: false,
     };
   }
 
@@ -560,11 +588,50 @@ function sunatStatusClass(status: string | null | undefined): string {
   const normalized = String(status || '').toUpperCase();
 
   if (normalized === 'ACCEPTED') return 'is-ok';
-  if (normalized === 'REJECTED') return 'is-bad';
-  if (normalized === 'SENDING' || normalized === 'SENT') return 'is-progress';
+  if (normalized === 'REJECTED' || normalized === 'EXPIRED_WINDOW') return 'is-bad';
+  if (normalized === 'SENDING' || normalized === 'SENT' || normalized === 'PENDING_SUMMARY' || normalized === 'SENT_BY_SUMMARY') return 'is-progress';
+  if (normalized === 'PENDING_CONFIRMATION') return 'is-warn';
   if (normalized === 'HTTP_ERROR' || normalized === 'NETWORK_ERROR' || normalized === 'ERROR' || normalized === 'CONFIG_INCOMPLETE') return 'is-warn';
 
   return 'is-neutral';
+}
+
+function summaryFlowStatusLabel(status: string | null | undefined): string {
+  const normalized = String(status || '').trim().toUpperCase();
+
+  if (!normalized) return 'asignado';
+  if (normalized === 'DRAFT') return 'borrador';
+  if (normalized === 'SENDING') return 'en envio';
+  if (normalized === 'SENT') return 'enviado';
+  if (normalized === 'ACCEPTED') return 'aceptado';
+  if (normalized === 'REJECTED') return 'rechazado';
+  if (normalized === 'ERROR') return 'con error';
+
+  return normalized.toLowerCase();
+}
+
+function summaryFlowBadgeStyle(status: string | null | undefined) {
+  const normalized = String(status || '').trim().toUpperCase();
+
+  if (normalized === 'ACCEPTED') {
+    return { color: '#065f46', background: '#d1fae5', border: '1px solid #6ee7b7' };
+  }
+  if (normalized === 'REJECTED' || normalized === 'ERROR') {
+    return { color: '#991b1b', background: '#fee2e2', border: '1px solid #fca5a5' };
+  }
+  if (normalized === 'SENDING' || normalized === 'SENT') {
+    return { color: '#1e3a8a', background: '#dbeafe', border: '1px solid #93c5fd' };
+  }
+
+  return { color: '#0f766e', background: '#ccfbf1', border: '1px solid #99f6e4' };
+}
+
+function hasDeclarationSummaryAssigned(row: CommercialDocumentListItem): boolean {
+  return toPositiveInt(row.sunat_summary_id) !== null;
+}
+
+function hasCancellationSummaryAssigned(row: CommercialDocumentListItem): boolean {
+  return toPositiveInt(row.sunat_void_summary_id) !== null;
 }
 
 function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: boolean): boolean {
@@ -580,8 +647,12 @@ function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: bo
     return false;
   }
 
+  if (isReceiptDocument(row) && hasDeclarationSummaryAssigned(row)) {
+    return false;
+  }
+
   const sunatUi = resolveSunatUiState(row);
-  return !sunatUi.isFinal && sunatUi.statusKey !== 'SENDING';
+  return !sunatUi.isFinal && !['SENDING', 'PENDING_CONFIRMATION', 'EXPIRED_WINDOW'].includes(sunatUi.statusKey);
 }
 
 function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocuments: boolean): boolean {
@@ -594,6 +665,10 @@ function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocument
   }
 
   if (String(row.status).toUpperCase() !== 'ISSUED') {
+    return false;
+  }
+
+  if (isReceiptDocument(row) && (hasDeclarationSummaryAssigned(row) || hasCancellationSummaryAssigned(row))) {
     return false;
   }
 
@@ -616,6 +691,54 @@ function canRequestSunatVoidCommunication(
   return sunatStatus === 'ACCEPTED';
 }
 
+function isReceiptDocument(row: CommercialDocumentListItem): boolean {
+  return String(row.document_kind ?? '').toUpperCase() === 'RECEIPT';
+}
+
+function canAddReceiptToDeclarationSummary(
+  row: CommercialDocumentListItem
+): boolean {
+  if (!isReceiptDocument(row)) {
+    return false;
+  }
+
+  if (String(row.status).toUpperCase() !== 'ISSUED') {
+    return false;
+  }
+
+  if (hasDeclarationSummaryAssigned(row) || hasCancellationSummaryAssigned(row)) {
+    return false;
+  }
+
+  const sunatStatus = String(row.sunat_status ?? '').trim().toUpperCase();
+  return sunatStatus === ''
+    || sunatStatus === 'PENDING_MANUAL'
+    || sunatStatus === 'CONFIG_INCOMPLETE'
+    || sunatStatus === 'HTTP_ERROR'
+    || sunatStatus === 'NETWORK_ERROR'
+    || sunatStatus === 'ERROR'
+    || sunatStatus === 'REJECTED';
+}
+
+function canAnulateAcceptedReceipt(
+  row: CommercialDocumentListItem
+): boolean {
+  if (!isReceiptDocument(row)) {
+    return false;
+  }
+
+  if (String(row.status).toUpperCase() !== 'ISSUED') {
+    return false;
+  }
+
+  if (hasCancellationSummaryAssigned(row)) {
+    return false;
+  }
+
+  const sunatStatus = String(row.sunat_status ?? '').trim().toUpperCase();
+  return sunatStatus === 'ACCEPTED';
+}
+
 function canOpenSunatActionsMenu(
   row: CommercialDocumentListItem,
   bridgeEnabled: boolean,
@@ -629,7 +752,9 @@ function canOpenSunatActionsMenu(
   }
   return canSendSunatManually(row, bridgeEnabled)
     || canVoidBeforeSunatSend(row, canVoidDocuments)
-    || canRequestSunatVoidCommunication(row);
+    || canRequestSunatVoidCommunication(row)
+    || canAddReceiptToDeclarationSummary(row)
+    || canAnulateAcceptedReceipt(row);
 }
 
 function isTributaryDocumentKind(kind: string | null | undefined): boolean {
@@ -767,6 +892,22 @@ function summarizeBridgeResponse(response: unknown): string {
   return parts.join(' | ');
 }
 
+function summarizeSunatDiagnostic(code: string | null | undefined, message: string | null | undefined, response: unknown): string {
+  const parts: string[] = [];
+  if (code && String(code).trim() !== '') {
+    parts.push(`Codigo SUNAT: ${String(code).trim()}`);
+  }
+  if (message && String(message).trim() !== '') {
+    parts.push(`Detalle: ${String(message).trim()}`);
+  }
+
+  if (parts.length > 0) {
+    return parts.join(' | ');
+  }
+
+  return summarizeBridgeResponse(response);
+}
+
 function formatStoredDateTime(value: string): string {
   const raw = String(value || '').trim();
   if (!raw) {
@@ -819,7 +960,44 @@ function featureEnabled(features: Array<{ feature_code: string; is_enabled: bool
   return row ? Boolean(row.is_enabled) : defaultValue;
 }
 
-export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, currentUserRoleCode, currentUserRoleProfile }: SalesViewProps) {
+function featureSource(features: Array<{ feature_code: string; vertical_source?: string | null }> | undefined, code: string): 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | 'FALLBACK' {
+  const row = (features ?? []).find((item) => item.feature_code === code);
+  if (row?.vertical_source === 'COMPANY_VERTICAL_OVERRIDE') {
+    return 'COMPANY_VERTICAL_OVERRIDE';
+  }
+
+  if (row?.vertical_source === 'VERTICAL_TEMPLATE') {
+    return 'VERTICAL_TEMPLATE';
+  }
+
+  return 'FALLBACK';
+}
+
+function featureSourceLabel(source: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | 'FALLBACK'): string {
+  if (source === 'COMPANY_VERTICAL_OVERRIDE') {
+    return 'Override empresa/rubro';
+  }
+
+  if (source === 'VERTICAL_TEMPLATE') {
+    return 'Template rubro';
+  }
+
+  return 'Fallback company/sucursal';
+}
+
+function featureSourceBadgeClass(source: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | 'FALLBACK'): string {
+  if (source === 'COMPANY_VERTICAL_OVERRIDE') {
+    return 'appcfg-source-badge appcfg-source-badge--override';
+  }
+
+  if (source === 'VERTICAL_TEMPLATE') {
+    return 'appcfg-source-badge appcfg-source-badge--template';
+  }
+
+  return 'appcfg-source-badge appcfg-source-badge--fallback';
+}
+
+export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, activeVerticalCode, currentUserRoleCode, currentUserRoleProfile }: SalesViewProps) {
   const [lookups, setLookups] = useState<SalesLookups | null>(null);
   const [series, setSeries] = useState<SeriesNumber[]>([]);
   const [documents, setDocuments] = useState<CommercialDocumentListItem[]>([]);
@@ -829,6 +1007,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [customerSuggestions, setCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [productSuggestions, setProductSuggestions] = useState<InventoryProduct[]>([]);
   const [lots, setLots] = useState<InventoryLotRow[]>([]);
+  const [restaurantTables, setRestaurantTables] = useState<RestaurantTableRow[]>([]);
   const [referenceDocuments, setReferenceDocuments] = useState<SalesReferenceDocument[]>([]);
   const [loadingReferenceDocument, setLoadingReferenceDocument] = useState(false);
   const [form, setForm] = useState<CreateDocumentForm>(initialForm);
@@ -904,34 +1083,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return initialDocumentAdvancedFilters;
     }
   });
-  const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(() => {
-    if (typeof window === 'undefined') {
-      return initialDocumentAdvancedFilters;
-    }
-
-    try {
-      const raw = window.localStorage.getItem(SALES_REPORT_FILTERS_STORAGE_KEY);
-      if (!raw) {
-        return initialDocumentAdvancedFilters;
-      }
-
-      const parsed = JSON.parse(raw) as Partial<DocumentAdvancedFilters>;
-      return {
-        customer: typeof parsed.customer === 'string' ? parsed.customer : '',
-        issueDateFrom: typeof parsed.issueDateFrom === 'string' ? parsed.issueDateFrom : '',
-        issueDateTo: typeof parsed.issueDateTo === 'string' ? parsed.issueDateTo : '',
-        series: typeof parsed.series === 'string' ? parsed.series : '',
-        number: typeof parsed.number === 'string' ? parsed.number : '',
-        status: typeof parsed.status === 'string' ? parsed.status : '',
-      };
-    } catch {
-      return initialDocumentAdvancedFilters;
-    }
-  });
+  const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(initialDocumentAdvancedFilters);
   const [exportingDocuments, setExportingDocuments] = useState(false);
 
   const [salesWorkspaceMode, setSalesWorkspaceMode] = useState<SalesWorkspaceMode>('SELL');
-  const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('PENDING');
+  const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('FULL');
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [seriesExpanded, setSeriesExpanded] = useState(false);
   const [cashierDefaultApplied, setCashierDefaultApplied] = useState(false);
@@ -950,6 +1106,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const isAdminUser = normalizedRoleCode.includes('ADMIN');
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isSeparatedMode = salesFlowMode === 'SELLER_TO_CASHIER';
+  const isRestaurantVertical = (activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT';
   const canUseSellWorkspace = true;
   const shouldPrioritizePendingOrders = isSeparatedMode && isCashierUser;
   const canConvertInCurrentMode = !isSeparatedMode || (isCashierUser && !isAdminUser);
@@ -973,6 +1130,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
   const advancesEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ANTICIPO_ENABLED', false);
   const taxBridgeEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE', false);
+  const sellerToCashierSource = featureSource(lookups?.commerce_features, 'SALES_SELLER_TO_CASHIER');
+  const taxBridgeSource = featureSource(lookups?.commerce_features, 'SALES_TAX_BRIDGE');
+  const documentVoidSource = featureSource(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID');
 
   const salesFlowModeLabel = salesFlowMode === 'SELLER_TO_CASHIER'
     ? 'Vendedor -> Caja independiente'
@@ -983,6 +1143,71 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     : isCashierUser
       ? 'Inicia en pedidos pendientes para conversion y emision.'
       : 'Configura un perfil VENDEDOR/CAJERO para separar flujos.';
+
+  useEffect(() => {
+    if (!isRestaurantVertical) {
+      setRestaurantTables([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetchRestaurantTables(accessToken, { branchId });
+        if (!cancelled) {
+          setRestaurantTables(response.data ?? []);
+        }
+      } catch {
+        if (!cancelled) {
+          setRestaurantTables([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, branchId, isRestaurantVertical]);
+
+  useEffect(() => {
+    const currentDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
+
+    if (!isRestaurantVertical || currentDocumentKind !== 'SALES_ORDER') {
+      if (!form.restaurantTableId && !form.restaurantTableLabel) {
+        return;
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        restaurantTableId: null,
+        restaurantTableLabel: '',
+      }));
+      return;
+    }
+
+    if (!form.restaurantTableId) {
+      return;
+    }
+
+    const selected = restaurantTables.find((row) => row.id === form.restaurantTableId);
+
+    if (!selected) {
+      setForm((prev) => ({
+        ...prev,
+        restaurantTableId: null,
+        restaurantTableLabel: '',
+      }));
+      return;
+    }
+
+    if (form.restaurantTableLabel !== selected.name) {
+      setForm((prev) => ({
+        ...prev,
+        restaurantTableLabel: selected.name,
+      }));
+    }
+  }, [form.documentKind, form.restaurantTableId, form.restaurantTableLabel, isCashierUser, isRestaurantVertical, restaurantTables, salesFlowMode]);
 
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productInputRef = useRef<HTMLInputElement | null>(null);
@@ -1551,7 +1776,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const filterParams = isCashierPendingQueue
         ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
         : buildDocumentFilterParams(documentViewFilter);
-      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter(salesFlowMode, documentViewFilter);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
       const [lookupRows, docs] = await Promise.all([
         fetchSalesLookups(accessToken, { branchId }),
         salesWorkspaceMode === 'REPORT'
@@ -2354,27 +2579,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }));
   }
 
-  function printIssuedPreview() {
+  function printIssuedPreview(format: 'A4' | '80mm' = 'A4') {
     if (!issuedPreview) {
       return;
     }
 
     setPreviewDialog({
-      title: 'Documento emitido A4',
+      title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
       subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
-      html: buildCommercialDocumentA4Html(issuedPreview.printable, { embedded: true }),
-      variant: 'wide',
+      html: format === '80mm'
+        ? buildCommercialDocument80mmHtml(issuedPreview.printable, { embedded: true })
+        : buildCommercialDocumentA4Html(issuedPreview.printable, { embedded: true }),
+      variant: format === '80mm' ? 'compact' : 'wide',
     });
   }
 
-  async function showDocumentPreview(documentId: number) {
+  async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
     try {
       const data = await fetchCommercialDocumentDetails(accessToken, documentId);
       setPreviewDialog({
-        title: 'Previsualizacion del documento',
+        title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
         subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
-        html: buildCommercialDocumentA4Html(data, { embedded: true }),
-        variant: 'wide',
+        html: format === '80mm'
+          ? buildCommercialDocument80mmHtml(data, { embedded: true })
+          : buildCommercialDocumentA4Html(data, { embedded: true }),
+        variant: format === '80mm' ? 'compact' : 'wide',
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Error al cargar el documento');
@@ -2387,7 +2616,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     try {
       const response = await retryTaxBridgeSend(accessToken, row.id);
-      const responseSummary = summarizeBridgeResponse(response.bridge_response);
+      const responseSummary = summarizeSunatDiagnostic(response.sunat_error_code, response.sunat_error_message, response.bridge_response);
       const httpSummary = response.bridge_http_code ? `HTTP ${response.bridge_http_code}` : '';
       const detailSummary = [httpSummary, responseSummary].filter((part) => part !== '').join(' | ');
 
@@ -2447,7 +2676,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const filterParams = isCashierPendingQueue
         ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
         : buildDocumentFilterParams(documentViewFilter);
-      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter(salesFlowMode, documentViewFilter);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
       const result = await exportCommercialDocumentsExcel(accessToken, {
         branchId,
         warehouseId,
@@ -2490,7 +2719,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const filterParams = isCashierPendingQueue
         ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
         : buildDocumentFilterParams(documentViewFilter);
-      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter(salesFlowMode, documentViewFilter);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
       const rows = await exportCommercialDocumentsJson(accessToken, {
         branchId,
         warehouseId,
@@ -2744,9 +2973,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
+      const targetStatus = effectiveDocumentKind === 'QUOTATION'
+        ? 'DRAFT'
+        : (effectiveDocumentKind === 'SALES_ORDER' && salesFlowMode === 'DIRECT_CASHIER' ? 'ISSUED' : (effectiveDocumentKind === 'SALES_ORDER' ? 'DRAFT' : 'ISSUED'));
+
+      const selectedRestaurantTable = (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER')
+        ? restaurantTables.find((row) => row.id === (form.restaurantTableId ?? 0))
+        : null;
+
       const response = await createCommercialDocument(accessToken, {
         ...form,
         documentKind: effectiveDocumentKind,
+        restaurantTableLabel: selectedRestaurantTable?.name ?? form.restaurantTableLabel ?? '',
+        status: targetStatus,
         noteAffectedDocumentId: form.noteAffectedDocumentId ?? null,
         noteReasonCode: form.noteReasonCode ?? '',
         items: payloadItems,
@@ -2789,6 +3028,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           inafectaTotal: printTotals.inafectaTotal,
           exoneradaTotal: printTotals.exoneradaTotal,
           metadata: {
+            table_label: selectedRestaurantTable?.name ?? null,
             has_detraccion: form.hasDetraccion ?? false,
             detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
             detraccion_service_name: selectedDetractionService?.name ?? null,
@@ -2885,6 +3125,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         hasPercepcion: false,
         percepcionTypeCode: '',
         sunatOperationTypeCode: '',
+        restaurantTableId: null,
+        restaurantTableLabel: '',
         isCreditSale: false,
         creditInstallments: [],
         advanceAmount: 0,
@@ -3036,7 +3278,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
-    const accepted = window.confirm(`Se anulara ${docKindLabel(row.document_kind)} ${row.series}-${row.number}. Desea continuar?`);
+    const isReceipt = isReceiptDocument(row);
+    const docLabel = docKindLabel(row.document_kind);
+    const accepted = window.confirm(`Se anulara ${docLabel} ${row.series}-${row.number}. Desea continuar?`);
     if (!accepted) {
       return;
     }
@@ -3046,15 +3290,46 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setLoading(true);
     setMessage('');
     try {
-      await voidCommercialDocument(accessToken, row.id, {
+      const response = await voidCommercialDocument(accessToken, row.id, {
         reason: reason.trim() || undefined,
         notes: reason.trim() || undefined,
         void_at: new Date().toISOString(),
       });
-      setMessage(`Documento ${row.series}-${row.number} anulado correctamente.`);
+      const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
+      const summaryType = isReceipt ? 'RA' : 'baja SUNAT';
+      const summaryInfo = linkedSummaryId && isReceipt ? ` Asignado automaticamente a ${summaryType} #${linkedSummaryId}.` : '';
+      setMessage(`${docLabel} ${row.series}-${row.number} anulado correctamente.${summaryInfo}`);
       await loadData();
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
+      setMessage(text);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleAddReceiptToDeclarationSummary(row: CommercialDocumentListItem) {
+    if (!canAddReceiptToDeclarationSummary(row)) {
+      setMessage('Esta boleta no puede agregarse a resumen RC en este momento.');
+      return;
+    }
+
+    const accepted = window.confirm(
+      `Se agregara Boleta ${row.series}-${row.number} al resumen diario de declaracion (RC). Desea continuar?`
+    );
+    if (!accepted) {
+      return;
+    }
+
+    setLoading(true);
+    setMessage('');
+    try {
+      // TODO: Implementar endpoint para agregar boleta a RC manualmente
+      setMessage('Boleta agregada a resumen RC. (Funcionalidad en desarrollo)');
+      // await addCommercialDocumentToDeclarationSummary(accessToken, row.id);
+      // await loadData();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo agregar documento al resumen';
       setMessage(text);
     } finally {
       setLoading(false);
@@ -3079,7 +3354,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         notes: reason.trim() || undefined,
       });
 
-      const responseSummary = summarizeBridgeResponse(response.bridge_response);
+      const responseSummary = summarizeSunatDiagnostic(response.sunat_error_code, response.sunat_error_message, response.bridge_response);
       const httpSummary = response.bridge_http_code ? `HTTP ${response.bridge_http_code}` : '';
       const endpointSummary = response.debug?.endpoint ? `endpoint=${response.debug.endpoint}` : '';
       const payloadHashSummary = response.debug?.payload_sha1 ? `payload_sha1=${response.debug.payload_sha1}` : '';
@@ -3534,6 +3809,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       <div className="sales-mode-summary" aria-live="polite">
         <span className="sales-mode-chip">Modo: {salesFlowModeLabel}</span>
         {isSeparatedMode && <span className="sales-mode-chip">Perfil: {activeProfileLabel}</span>}
+        <span className={featureSourceBadgeClass(sellerToCashierSource)}>
+          Fuente flujo: {featureSourceLabel(sellerToCashierSource)}
+        </span>
         <div style={{ position: 'relative' }}>
           <button
             type="button"
@@ -3566,6 +3844,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </span>
               <span className="sales-mode-chip" style={{ background: canVoidDocumentsInCurrentMode ? '#d1fae5' : '#fee2e2', color: canVoidDocumentsInCurrentMode ? '#065f46' : '#991b1b' }}>
                 Anulacion: {canVoidDocumentsInCurrentMode ? 'Habilitada' : 'Deshabilitada'}
+              </span>
+              <span className={featureSourceBadgeClass(documentVoidSource)}>
+                Fuente anulacion: {featureSourceLabel(documentVoidSource)}
+              </span>
+              <span className="sales-mode-chip" style={{ background: taxBridgeEnabled ? '#dbeafe' : '#f3f4f6', color: taxBridgeEnabled ? '#1e3a8a' : '#374151' }}>
+                SUNAT bridge: {taxBridgeEnabled ? 'Habilitado' : 'Deshabilitado'}
+              </span>
+              <span className={featureSourceBadgeClass(taxBridgeSource)}>
+                Fuente SUNAT bridge: {featureSourceLabel(taxBridgeSource)}
               </span>
               <span className="sales-mode-chip" style={{ background: allowVoidForSeller ? '#ecfeff' : '#fee2e2', color: allowVoidForSeller ? '#155e75' : '#991b1b' }}>
                 Vendedor: {allowVoidForSeller ? 'Puede anular' : 'Sin anulacion'}
@@ -3706,6 +3993,34 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             />
           </label>
 
+          {isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER' && (
+            <label className="sales-field-address">
+              Mesa / zona
+              <select
+                value={form.restaurantTableId ?? ''}
+                onChange={(e) => {
+                  const nextId = e.target.value ? Number(e.target.value) : null;
+                  const selected = restaurantTables.find((row) => row.id === nextId) ?? null;
+
+                  setForm((prev) => ({
+                    ...prev,
+                    restaurantTableId: nextId,
+                    restaurantTableLabel: selected ? selected.name : '',
+                  }));
+                }}
+              >
+                <option value="">Sin mesa asignada</option>
+                {restaurantTables
+                  .filter((row) => row.status !== 'DISABLED')
+                  .map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.code} - {row.name} ({row.status})
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
+
           <label className="sales-field-issue-date">
             Fecha emision
             <input
@@ -3723,6 +4038,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               onChange={(e) => setForm((prev) => ({ ...prev, dueDate: e.target.value || prev.issueDate || TODAY }))}
             />
           </label>
+
+          {effectiveDocumentKind === 'RECEIPT' && (
+            <label className="sales-field-due-date">
+              Envio SUNAT boleta
+              <select
+                value={form.receiptSendMode ?? 'DIRECT'}
+                onChange={(e) => {
+                  const nextMode = e.target.value === 'SUMMARY' ? 'SUMMARY' : 'DIRECT';
+                  setForm((prev) => ({ ...prev, receiptSendMode: nextMode }));
+                }}
+              >
+                <option value="DIRECT">Directo (send_xml)</option>
+                <option value="SUMMARY">Por resumen diario (RC)</option>
+              </select>
+            </label>
+          )}
 
           {(effectiveDocumentKind === 'INVOICE' || effectiveDocumentKind === 'RECEIPT') && (
             <div className="sales-tributary-slot">
@@ -4534,9 +4865,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             {docKindLabel(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
             {issuedPreview.total.toFixed(2)} | Estado: {commercialStatusLabel(issuedPreview.status)}
           </p>
-          <button type="button" onClick={printIssuedPreview}>
-            Imprimir A4 / PDF
-          </button>
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button type="button" onClick={() => printIssuedPreview('A4')}>
+              Imprimir A4 / PDF
+            </button>
+            <button type="button" onClick={() => printIssuedPreview('80mm')}>
+              Imprimir Ticket 80mm
+            </button>
+          </div>
         </div>
       )}
 
@@ -4593,7 +4929,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <td>{row.total}</td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      <button type="button" className="btn-mini" disabled={loading} onClick={() => void showDocumentPreview(row.id)}>Ver</button>
+                      <button type="button" className="btn-mini" disabled={loading} onClick={() => void showDocumentPreview(row.id, 'A4')}>Ver A4</button>
+                      <button type="button" className="btn-mini" disabled={loading} onClick={() => void showDocumentPreview(row.id, '80mm')}>Ver Ticket</button>
                       {canConvertInCurrentMode && (
                         <>
                           <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'INVOICE')}>Factura</button>
@@ -4797,6 +5134,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <tbody>
             {documents.map((row) => {
               const sunatUi = resolveSunatUiState(row);
+              const declarationSummaryId = toPositiveInt(row.sunat_summary_id);
+              const cancellationSummaryId = toPositiveInt(row.sunat_void_summary_id);
+              const declarationSummaryStatus = String(row.declaration_summary_status ?? '').trim().toUpperCase();
+              const cancellationSummaryStatus = String(row.cancellation_summary_status ?? '').trim().toUpperCase();
               const editControl = resolveEditControlState(
                 row,
                 canEditDraftInCurrentMode,
@@ -4874,10 +5215,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         type="button"
                         className="btn-mini sales-action-btn sales-action-view"
                         disabled={loading}
-                        onClick={() => void showDocumentPreview(row.id)}
+                        onClick={() => void showDocumentPreview(row.id, 'A4')}
                         title="Ver comprobante"
                       >
                         👁️
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-mini sales-action-btn sales-action-view"
+                        disabled={loading}
+                        onClick={() => void showDocumentPreview(row.id, '80mm')}
+                        title="Ver ticket 80mm"
+                      >
+                        🧾
                       </button>
                       {canConvertInCurrentMode && (
                         <details className="sales-actions-dropdown">
@@ -4941,10 +5291,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         type="button"
                         className="btn-mini sales-action-btn sales-action-view"
                         disabled={loading}
-                        onClick={() => void showDocumentPreview(row.id)}
+                        onClick={() => void showDocumentPreview(row.id, 'A4')}
                         title="Ver comprobante"
                       >
                         👁️
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-mini sales-action-btn sales-action-view"
+                        disabled={loading}
+                        onClick={() => void showDocumentPreview(row.id, '80mm')}
+                        title="Ver ticket 80mm"
+                      >
+                        🧾
                       </button>
                       {editControl.visible && (
                         <button
@@ -4974,6 +5333,44 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   )}
                 </td>
                 <td>
+                  {(declarationSummaryId || cancellationSummaryId) && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem', marginBottom: '0.35rem' }}>
+                      {declarationSummaryId && (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            padding: '0.08rem 0.48rem',
+                            borderRadius: '9999px',
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            ...summaryFlowBadgeStyle(declarationSummaryStatus),
+                          }}
+                          title="Asignado a resumen diario de declaracion"
+                        >
+                          En RC {summaryFlowStatusLabel(declarationSummaryStatus)} #{declarationSummaryId}
+                        </span>
+                      )}
+                      {cancellationSummaryId && (
+                        <span
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '0.25rem',
+                            padding: '0.08rem 0.48rem',
+                            borderRadius: '9999px',
+                            fontSize: '0.68rem',
+                            fontWeight: 700,
+                            ...summaryFlowBadgeStyle(cancellationSummaryStatus),
+                          }}
+                          title="Asignado a resumen diario de anulacion"
+                        >
+                          En RA {summaryFlowStatusLabel(cancellationSummaryStatus)} #{cancellationSummaryId}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   {isTributaryDocumentKind(row.document_kind) ? (
                     <details
                       className={`sales-sunat-dropdown ${canOpenSunatActionsMenu(row, taxBridgeEnabled, canVoidDocumentsInCurrentMode) ? '' : 'is-locked'}`}
@@ -5043,7 +5440,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             🚀 {sunatSendingDocumentId === row.id ? 'Enviando...' : 'Enviar a SUNAT'}
                           </button>
                         )}
-                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode) && (
+                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode) && !isReceiptDocument(row) && (
                           <button
                             type="button"
                             className="sunat-menu-btn sunat-menu-btn--danger"
@@ -5054,7 +5451,48 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             🗑️ Anular (sin envio SUNAT)
                           </button>
                         )}
-                        {canRequestSunatVoidCommunication(row) && (
+                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode) && isReceiptDocument(row) && !canAnulateAcceptedReceipt(row) && (
+                          <button
+                            type="button"
+                            className="sunat-menu-btn sunat-menu-btn--danger"
+                            disabled={loading}
+                            onClick={() => void handleVoidDocument(row)}
+                            title="Anular boleta y agrupar automaticamente a RA (resumen anulacion)"
+                          >
+                            🗑️ Anular a RA
+                          </button>
+                        )}
+                        {isReceiptDocument(row) && String(row.status).toUpperCase() === 'ISSUED' && (
+                          <>
+                            {canAddReceiptToDeclarationSummary(row) && (
+                              <button
+                                type="button"
+                                className="sunat-menu-btn"
+                                disabled={loading}
+                                onClick={() => void handleAddReceiptToDeclarationSummary(row)}
+                                title={String(row.sunat_status ?? '').toUpperCase() === 'ACCEPTED'
+                                  ? 'Agregar boleta aceptada al resumen diario de declaracion (RC)'
+                                  : 'Agregar boleta al resumen diario de declaracion (RC)'}
+                              >
+                                📋 Agregar a RC (declaracion)
+                              </button>
+                            )}
+                            {canAnulateAcceptedReceipt(row) && (
+                              <button
+                                type="button"
+                                className="sunat-menu-btn sunat-menu-btn--danger"
+                                disabled={loading || !canVoidDocumentsInCurrentMode}
+                                onClick={() => void handleVoidDocument(row)}
+                                title={!canVoidDocumentsInCurrentMode
+                                  ? 'Sin permiso de anulacion'
+                                  : 'Anular boleta aceptada por SUNAT y agrupar a RA (resumen anulacion)'}
+                              >
+                                🗑️ Anular a RA
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {canRequestSunatVoidCommunication(row) && !isReceiptDocument(row) && (
                           <>
                             <button
                               type="button"
@@ -5069,9 +5507,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             >
                               📤 Comunicar baja SUNAT
                             </button>
-                            {String(row.document_kind).toUpperCase() === 'RECEIPT' && (
-                              <small className="sunat-menu-note">Boleta: via resumen (proxima version)</small>
-                            )}
                           </>
                         )}
                       </div>

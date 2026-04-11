@@ -10,7 +10,7 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchStockEntries(
   accessToken: string,
-  params?: { warehouseId?: number | null; entryType?: 'PURCHASE' | 'ADJUSTMENT' | null; limit?: number }
+  params?: { warehouseId?: number | null; entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null; limit?: number }
 ): Promise<StockEntryRow[]> {
   const query = new URLSearchParams();
 
@@ -50,6 +50,28 @@ export async function createStockEntry(
   });
 }
 
+export async function receivePurchaseOrder(
+  accessToken: string,
+  orderId: number,
+  payload?: {
+    issue_at?: string;
+    reference_no?: string;
+    supplier_reference?: string;
+    payment_method_id?: number | null;
+    notes?: string;
+    items?: Array<{
+      product_id: number;
+      qty: number;
+    }>;
+  }
+): Promise<{ message: string; data: { purchase_order_id: number; received_entry_id: number; status?: string } }> {
+  return apiClient.request<{ message: string; data: { purchase_order_id: number; received_entry_id: number; status?: string } }>(`/api/purchases/orders/${orderId}/receive`, {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
 export async function fetchPurchasesLookups(accessToken: string): Promise<PurchasesLookups> {
   const response = await apiClient.request<PurchasesLookups>('/api/purchases/lookups', {
     method: 'GET',
@@ -64,7 +86,7 @@ export async function fetchPurchasesReport(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | null;
+    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -111,7 +133,7 @@ export async function exportPurchasesExcel(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | null;
+    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -160,7 +182,7 @@ export async function exportPurchasesJson(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | null;
+    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;

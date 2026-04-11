@@ -191,13 +191,25 @@ export type InventoryProReportType =
   | 'KARDEX_PHYSICAL'
   | 'KARDEX_VALUED'
   | 'LOT_EXPIRY'
-  | 'INVENTORY_CUT';
+  | 'INVENTORY_CUT'
+  | 'SALES_DOCUMENTS_SUMMARY'
+  | 'SALES_SUNAT_MONITOR';
+
+export type ReportsApiReportCode =
+  | 'INVENTORY_STOCK_SNAPSHOT'
+  | 'INVENTORY_KARDEX_PHYSICAL'
+  | 'INVENTORY_KARDEX_VALUED'
+  | 'INVENTORY_LOT_EXPIRY'
+  | 'INVENTORY_CUT'
+  | 'SALES_DOCUMENTS_SUMMARY'
+  | 'SALES_SUNAT_MONITOR';
 
 export type InventoryProReportRequestListItem = {
   id: number;
   company_id: number;
   branch_id: number | null;
   requested_by: number;
+  report_code: ReportsApiReportCode;
   report_type: InventoryProReportType;
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
   error_message: string | null;
@@ -213,9 +225,8 @@ export type InventoryProReportRequestsResponse = {
 
 export type InventoryProReportRequestCreateResponse = {
   message: string;
-  mode: 'async' | 'deferred' | 'inline';
-  queue_connection: string;
-  data: InventoryProReportRequestListItem;
+  request_id: number;
+  status: 'PENDING';
 };
 
 export type InventoryProReportRequestDetail = {
@@ -223,10 +234,11 @@ export type InventoryProReportRequestDetail = {
   company_id: number;
   branch_id: number | null;
   requested_by: number;
+  report_code: ReportsApiReportCode;
   report_type: InventoryProReportType;
-  filters: Record<string, unknown>;
+  filters_json: Record<string, unknown>;
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
-  result: {
+  result_json: {
     type?: string;
     generated_at?: string;
     rows?: unknown[];
@@ -238,6 +250,4 @@ export type InventoryProReportRequestDetail = {
   finished_at: string | null;
 };
 
-export type InventoryProReportRequestDetailResponse = {
-  data: InventoryProReportRequestDetail;
-};
+export type InventoryProReportRequestDetailResponse = InventoryProReportRequestDetail;

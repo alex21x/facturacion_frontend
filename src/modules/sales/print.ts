@@ -1,5 +1,18 @@
 ﻿export type PrintableSalesItem = {
   lineNo: number;
+  productId?: number | null;
+  unitId?: number | null;
+  priceTierId?: number | null;
+  wholesaleDiscountPercent?: number | null;
+  priceSource?: 'MANUAL' | 'TIER' | 'PROFILE';
+  taxCategoryId?: number | null;
+  taxLabel?: string;
+  taxRate?: number;
+  qtyBase?: number | null;
+  conversionFactor?: number | null;
+  baseUnitPrice?: number | null;
+  metadata?: Record<string, unknown> | null;
+  lots?: Array<{ lot_id: number; qty: number }>;
   qty: number;
   unitLabel: string;
   description: string;
@@ -80,6 +93,58 @@ function kindMeta(kind: PrintableSalesDocument['documentKind']): { shortCode: st
   return { shortCode: 'ND', title: 'NOTA DE DEBITO' };
 }
 
+function isTributaryKind(kind: PrintableSalesDocument['documentKind']): boolean {
+  return kind === 'INVOICE' || kind === 'RECEIPT' || kind === 'CREDIT_NOTE' || kind === 'DEBIT_NOTE';
+}
+
+function findMetaStringValue(
+  source: unknown,
+  keys: string[]
+): string | null {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  const record = source as Record<string, unknown>;
+  for (const key of keys) {
+    const candidate = record[key];
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate.trim();
+    }
+  }
+
+  for (const value of Object.values(record)) {
+    if (value && typeof value === 'object') {
+      const nested = findMetaStringValue(value, keys);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return null;
+}
+
+function resolveSunatPrintData(metadata: Record<string, unknown>, docKind: PrintableSalesDocument['documentKind']) {
+  if (!isTributaryKind(docKind)) {
+    return { signature: '' };
+  }
+
+  const signature = findMetaStringValue(metadata, [
+    'sunat_electronic_signature',
+    'sunat_signature',
+    'firma_electronica',
+    'firma',
+    'signature',
+    'hash_cpe',
+    'codigo_hash',
+    'digest_value',
+    'digestValue',
+  ]) ?? '';
+
+  return { signature };
+}
+
 function cashDocumentKindLabel(kind: string): string {
   const normalized = String(kind || '').toUpperCase();
   if (normalized === 'INVOICE') return 'Factura';
@@ -131,6 +196,7 @@ export function buildCommercialDocumentA4Html(
   const percepcionAccount = String(metaData.percepcion_account_number ?? '').trim();
   const percepcionBank = String(metaData.percepcion_bank_name ?? '').trim();
   const percepcionType = String(metaData.percepcion_type_name ?? '').trim();
+  const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
 
   const tributaryRows = [
     sunatOpCode
@@ -210,6 +276,9 @@ export function buildCommercialDocumentA4Html(
           .total-row td { font-weight: 700; border-top: 1px solid #1f2937; }
           .payment { margin-top: 8px; font-size: 12px; font-weight: 600; }
           .obs { margin-top: 12px; border-top: 1px solid #9ca3af; padding-top: 6px; font-size: 11px; color: #4b5563; }
+          .sunat-proof { margin-top: 10px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; }
+          .sunat-proof h5 { margin: 0 0 4px 0; font-size: 12px; }
+          .sunat-proof p { margin: 0 0 4px 0; font-size: 11px; color: #334155; word-break: break-all; }
         </style>
       </head>
       <body>
@@ -289,6 +358,15 @@ export function buildCommercialDocumentA4Html(
             </article>
           </section>
 
+          ${sunatPrint.signature
+            ? `<section class="sunat-proof">
+                <div>
+                  <h5>Datos SUNAT</h5>
+                  ${sunatPrint.signature ? `<p><strong>Firma electronica:</strong> ${escapeHtml(sunatPrint.signature)}</p>` : ''}
+                </div>
+              </section>`
+            : ''}
+
           <section class="obs">
             Observaciones: Documento impreso en formato A4 adaptable por tipo de comprobante.
           </section>
@@ -342,6 +420,7 @@ export function buildCommercialDocument80mmHtml(
   const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
   const percepcionAccount = String(metaData.percepcion_account_number ?? '').trim();
+  const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
 
   return `
     <html>
@@ -517,6 +596,25 @@ export function buildCommercialDocument80mmHtml(
           .footer-item {
             margin: 0.3mm 0;
           }
+          .sunat-ticket {
+            margin-top: 1.5mm;
+            border-top: 1px dashed #000;
+            padding-top: 1.2mm;
+            text-align: left;
+          }
+          .sunat-ticket img {
+            width: 26mm;
+            height: 26mm;
+            border: 1px solid #000;
+            display: block;
+            margin: 0 auto 1mm;
+            background: #fff;
+          }
+          .sunat-ticket .line {
+            font-size: 7px;
+            margin: 0.3mm 0;
+            word-break: break-all;
+          }
         </style>
       </head>
       <body>
@@ -593,6 +691,11 @@ export function buildCommercialDocument80mmHtml(
           <div class="footer">
             <div class="footer-item">Forma Pago: ${escapeHtml(doc.paymentMethodName || '-')}</div>
             <div class="footer-item">Estado: ${escapeHtml(doc.status)}</div>
+            ${sunatPrint.signature
+              ? `<div class="sunat-ticket">
+                  ${sunatPrint.signature ? `<div class="line"><strong>Firma:</strong> ${escapeHtml(sunatPrint.signature)}</div>` : ''}
+                </div>`
+              : ''}
             <div class="divider" style="margin: 1mm 0"></div>
             <div class="footer-item">Gracias por su compra</div>
             <div class="footer-item">ID: ${doc.id}</div>

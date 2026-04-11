@@ -19,6 +19,11 @@ export type CommercialDocumentListItem = {
   created_at?: string | null;
   status: string;
   sunat_status?: string | null;
+  sunat_void_status?: string | null;
+  sunat_summary_id?: number | string | null;
+  sunat_void_summary_id?: number | string | null;
+  declaration_summary_status?: string | null;
+  cancellation_summary_status?: string | null;
   total: string;
   balance_due: string;
   customer_name: string;
@@ -38,6 +43,68 @@ export type PaginationMeta = {
 export type PaginatedCommercialDocuments = {
   data: CommercialDocumentListItem[];
   meta: PaginationMeta;
+};
+
+export type SunatExceptionItem = {
+  id: number;
+  branch_id?: number | null;
+  document_kind: string;
+  series: string;
+  number: number;
+  issue_at: string;
+  document_status: string;
+  customer_name: string;
+  sunat_status: string;
+  sunat_label: string;
+  pending_hours: number;
+  reconcile_attempts: number;
+  needs_manual_confirmation: boolean;
+  inventory_pending_sunat: boolean;
+  inventory_sunat_settled: boolean;
+  inventory_mismatch: boolean;
+  sunat_reconcile_next_at?: string | null;
+  sunat_bridge_http_code?: number | null;
+  sunat_bridge_note?: string | null;
+  sunat_error_code?: string | null;
+  sunat_error_message?: string | null;
+};
+
+export type PaginatedSunatExceptions = {
+  data: SunatExceptionItem[];
+  meta: PaginationMeta;
+};
+
+export type SunatExceptionsAuditSummary = {
+  total_issued: number;
+  pending_sunat: number;
+  inventory_settled: number;
+  mismatch_count: number;
+};
+
+export type SunatExceptionsAuditRow = {
+  id: number;
+  branch_id?: number | null;
+  document_kind: string;
+  series: string;
+  number: number;
+  issue_at: string;
+  updated_at: string;
+  sunat_status: string;
+  inventory_sunat_settled: boolean;
+  inventory_pending_sunat: boolean;
+  mismatch_reason: string;
+};
+
+export type SunatExceptionsAuditResponse = {
+  summary: SunatExceptionsAuditSummary;
+  data: SunatExceptionsAuditRow[];
+};
+
+export type ManualSunatConfirmPayload = {
+  resolution: 'ACCEPTED' | 'REJECTED';
+  evidence_type: 'TICKET' | 'CDR' | 'OBSERVATION' | 'WHATSAPP' | 'EMAIL' | 'OTHER';
+  evidence_ref?: string;
+  evidence_note?: string;
 };
 
 export type ConvertCommercialDocumentPayload = {
@@ -221,6 +288,7 @@ export type SalesLookups = {
     is_enabled: boolean;
     company_enabled?: boolean | null;
     branch_enabled?: boolean | null;
+    vertical_source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null;
   }>;
 };
 
@@ -248,6 +316,8 @@ export type CreateDocumentForm = {
   branchId?: number | null;
   warehouseId?: number | null;
   cashRegisterId?: number | null;
+  restaurantTableId?: number | null;
+  restaurantTableLabel?: string;
   documentKind: SalesDocumentKind['code'];
   customerId: number;
   currencyId: number;
@@ -263,6 +333,7 @@ export type CreateDocumentForm = {
   isManualItem: boolean;
   issueDate: string;
   dueDate: string;
+  receiptSendMode?: 'DIRECT' | 'SUMMARY';
   series: string;
   noteAffectedDocumentId?: number | null;
   noteReasonCode?: string;
@@ -282,5 +353,6 @@ export type CreateDocumentForm = {
   advanceAmount?: number;
   qty: number;
   unitPrice: number;
+  status?: 'DRAFT' | 'APPROVED' | 'ISSUED' | 'VOID' | 'CANCELED';
   items?: SalesDraftItem[];
 };
