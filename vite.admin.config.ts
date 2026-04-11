@@ -19,10 +19,12 @@ export default defineConfig({
     port: 5174,
   },
   build: {
-    outDir: 'dist-admin',
+    outDir: 'dist',
     emptyOutDir: true,
     rollupOptions: {
-      input: 'admin.html',
+      input: {
+        index: 'admin.html',
+      },
     },
   },
 });

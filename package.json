@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && node scripts/railway-build.mjs",
     "preview": "vite preview",
     "start:app": "node scripts/serve-static.mjs dist",
     "dev:admin": "vite --config vite.admin.config.ts",
-    "build:admin": "tsc -b && vite build --config vite.admin.config.ts",
+    "build:admin": "tsc -b && node scripts/railway-build.mjs admin",
     "preview:admin": "vite preview --config vite.admin.config.ts",
     "start:admin": "node scripts/serve-static.mjs dist-admin"
   },
