@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchFeatureToggles } from '../../appcfg/api';
 import { fetchInventoryProducts } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
 import { fetchCustomerAutocomplete, fetchSalesLookups, fetchSeriesNumbers } from '../../sales/api';
@@ -7,6 +8,7 @@ import {
   createRestaurantOrder,
   fetchRestaurantOrders,
   fetchRestaurantTables,
+  updateRestaurantOrder,
 } from '../api';
 import type {
   RestaurantOrderRow,
@@ -25,6 +27,7 @@ type CartItem = {
   unit_id: number | null;
   tax_type: string;
   tax_rate: number;
+  line_no?: number;
 };
 
 type OrderStage = 'SELECT_TABLE' | 'BUILD_ORDER';
@@ -72,6 +75,10 @@ function formatDateTime(value: string): string {
     dateStyle: 'medium',
     timeStyle: 'short',
   }).format(date);
+}
+
+function roundCurrency(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
 // ---------------------------------------------------------------------------
@@ -132,12 +139,17 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   // ── product search ────────────────────────────────────────────────────────
   const [productSearch, setProductSearch] = useState('');
   const [productSuggestions, setProductSuggestions] = useState<InventoryProduct[]>([]);
+  const [featuredProducts, setFeaturedProducts] = useState<InventoryProduct[]>([]);
+  const [productPreviewOpen, setProductPreviewOpen] = useState(false);
+  const [featuredProductsLoaded, setFeaturedProductsLoaded] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const productDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const productPreviewRef = useRef<HTMLDivElement | null>(null);
 
   // ── cart ──────────────────────────────────────────────────────────────────
   const [cart, setCart] = useState<CartItem[]>([]);
   const [notes, setNotes] = useState('');
+  const [editingOrderId, setEditingOrderId] = useState<number | null>(null);
 
   // ── form field overrides ──────────────────────────────────────────────────
   const [seriesId, setSeriesId] = useState<string>('');
@@ -151,10 +163,19 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('');
   const [orderSearch, setOrderSearch] = useState('');
+  const [restaurantPriceIncludesIgv, setRestaurantPriceIncludesIgv] = useState(true);
 
   // ── feedback ──────────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState('');
+
+  // ── ready-order toasts (broadcast from ComandasView) ─────────────────────
+  type ReadyAlert = { id: number; tableLabel: string; series: string; number: number; ts: number };
+  const [readyAlerts, setReadyAlerts] = useState<ReadyAlert[]>([]);
+
+  function dismissReadyAlert(orderId: number) {
+    setReadyAlerts((prev) => prev.filter((a) => a.id !== orderId));
+  }
 
   // ── init: load lookups + tables ───────────────────────────────────────────
   useEffect(() => {
@@ -253,6 +274,52 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     void loadOrders();
   }, [loadOrders]);
 
+  // BroadcastChannel — listens for ORDER_READY from ComandasView
+  useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('restaurant_orders');
+      bc.onmessage = (ev: MessageEvent<{ type: string; orderId: number; tableLabel?: string; series?: string; number?: number }>) => {
+        if (ev.data?.type === 'ORDER_READY') {
+          const { orderId, tableLabel = '', series = '', number = 0 } = ev.data;
+          setReadyAlerts((prev) => {
+            // avoid duplicates
+            if (prev.some((a) => a.id === orderId)) return prev;
+            return [...prev, { id: orderId, tableLabel, series, number, ts: Date.now() }];
+          });
+          void loadOrders();
+        }
+      };
+    } catch {
+      // BroadcastChannel not supported
+    }
+    return () => { bc?.close(); };
+  }, [loadOrders]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const featureRows = await fetchFeatureToggles(accessToken, branchId);
+        if (cancelled) {
+          return;
+        }
+
+        const igvFeature = featureRows.find((row) => row.feature_code === 'RESTAURANT_MENU_IGV_INCLUDED');
+        setRestaurantPriceIncludesIgv(igvFeature ? Boolean(igvFeature.is_enabled) : true);
+      } catch {
+        if (!cancelled) {
+          setRestaurantPriceIncludesIgv(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, branchId]);
+
   // ── customer autocomplete ─────────────────────────────────────────────────
   useEffect(() => {
     if (customerDebounceRef.current) clearTimeout(customerDebounceRef.current);
@@ -297,6 +364,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
             search: q,
             warehouseId: warehouseId ?? undefined,
             status: 1,
+            limit: 100,
           });
           setProductSuggestions(results);
         } catch {
@@ -312,22 +380,191 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     };
   }, [accessToken, productSearch, warehouseId]);
 
+  useEffect(() => {
+    function handleDocumentPointerDown(event: MouseEvent) {
+      if (!productPreviewRef.current) {
+        return;
+      }
+
+      if (!productPreviewRef.current.contains(event.target as Node)) {
+        setProductPreviewOpen(false);
+      }
+    }
+
+    document.addEventListener('mousedown', handleDocumentPointerDown);
+    return () => {
+      document.removeEventListener('mousedown', handleDocumentPointerDown);
+    };
+  }, []);
+
+  // Category filter chip for product panel
+  const [productCategoryFilter, setProductCategoryFilter] = useState<string | null>(null);
+
+  const productCategories = useMemo(() => {
+    const base = productSearch.trim().length >= 2 ? productSuggestions : featuredProducts;
+    const cats = Array.from(new Set(base.map((p) => p.category_name ?? 'General').filter(Boolean)));
+    return cats.sort();
+  }, [featuredProducts, productSuggestions, productSearch]);
+
+  const productPreviewRows = useMemo(() => {
+    const q = productSearch.trim();
+    const base = q.length >= 2 ? productSuggestions : featuredProducts;
+    const filtered = productCategoryFilter
+      ? base.filter((p) => (p.category_name ?? 'General') === productCategoryFilter)
+      : base;
+    return filtered;
+  }, [featuredProducts, productSearch, productSuggestions, productCategoryFilter]);
+
   // ── cart helpers ──────────────────────────────────────────────────────────
   const igvRate = lookups?.active_igv_rate_percent ?? 18;
 
-  function addProductToCart(product: InventoryProduct) {
-    const item: CartItem = {
-      product_id: product.id,
-      description: product.name,
-      quantity: 1,
-      unit_price: Number(product.sale_price) || 0,
-      unit_id: product.unit_id ?? null,
-      tax_type: 'IGV',
-      tax_rate: igvRate,
+  async function ensureFeaturedProductsLoaded() {
+    if (featuredProductsLoaded || loadingProducts) {
+      return;
+    }
+
+    setLoadingProducts(true);
+    try {
+      const results = await fetchInventoryProducts(accessToken, {
+        warehouseId: warehouseId ?? undefined,
+        status: 1,
+        limit: 200,
+      });
+      setFeaturedProducts(results ?? []);
+      setFeaturedProductsLoaded(true);
+    } catch {
+      setFeaturedProducts([]);
+    } finally {
+      setLoadingProducts(false);
+    }
+  }
+
+  function computeLinePricing(quantity: number, displayedUnitPrice: number, taxRate: number) {
+    const safeQty = Math.max(0.001, Number(quantity) || 0);
+    const safeDisplayed = Math.max(0, Number(displayedUnitPrice) || 0);
+    const safeRate = Math.max(0, Number(taxRate) || 0);
+
+    if (restaurantPriceIncludesIgv) {
+      const grossTotal = roundCurrency(safeQty * safeDisplayed);
+      const netUnitPrice = safeRate > 0
+        ? roundCurrency(safeDisplayed / (1 + safeRate / 100))
+        : safeDisplayed;
+      const subtotal = roundCurrency(safeQty * netUnitPrice);
+      const taxTotal = roundCurrency(grossTotal - subtotal);
+
+      return {
+        unitPriceForDocument: netUnitPrice,
+        subtotal,
+        taxTotal,
+        total: grossTotal,
+      };
+    }
+
+    const subtotal = roundCurrency(safeQty * safeDisplayed);
+    const taxTotal = roundCurrency(subtotal * (safeRate / 100));
+
+    return {
+      unitPriceForDocument: safeDisplayed,
+      subtotal,
+      taxTotal,
+      total: roundCurrency(subtotal + taxTotal),
     };
-    setCart((prev) => [...prev, item]);
+  }
+
+  function toDisplayedUnitPrice(unitPrice: number, taxTotal: number, total: number, quantity: number) {
+    const safeQty = Math.max(0.001, Number(quantity) || 0);
+    if (restaurantPriceIncludesIgv) {
+      const safeUnit = Math.max(0, Number(unitPrice) || 0);
+      const safeTax = Math.max(0, Number(taxTotal) || 0);
+      const safeTotal = Math.max(0, Number(total) || 0);
+      const impliedNetTotal = safeUnit * safeQty;
+      const hasGrossStored = safeTotal > 0 && (safeTax > 0 || safeTotal > (impliedNetTotal + 0.009));
+
+      const perUnitGross = hasGrossStored
+        ? (safeTotal / safeQty)
+        : (safeUnit * (1 + Math.max(0, igvRate) / 100));
+
+      return roundCurrency(perUnitGross);
+    }
+
+    return roundCurrency(Number(unitPrice) || 0);
+  }
+
+  function addProductToCart(product: InventoryProduct) {
+    setCart((prev) => {
+      const existingIndex = prev.findIndex((item) => (
+        item.product_id === product.id
+        && item.unit_id === (product.unit_id ?? null)
+      ));
+
+      if (existingIndex >= 0) {
+        return prev.map((item, index) => {
+          if (index !== existingIndex) {
+            return item;
+          }
+
+          return {
+            ...item,
+            quantity: roundCurrency(item.quantity + 1),
+          };
+        });
+      }
+
+      const item: CartItem = {
+        product_id: product.id,
+        description: product.name,
+        quantity: 1,
+        unit_price: Number(product.sale_price) || 0,
+        unit_id: product.unit_id ?? null,
+        tax_type: 'IGV',
+        tax_rate: igvRate,
+      };
+
+      return [...prev, item];
+    });
     setProductSearch('');
     setProductSuggestions([]);
+    setProductPreviewOpen(false);
+  }
+
+  function startEditOrder(order: RestaurantOrderRow) {
+    const resolvedTable = tables.find((table) => String(table.id) === String(order.table_id))
+      ?? {
+        id: Number(order.table_id ?? 0),
+        company_id: 0,
+        branch_id: branchId ?? 0,
+        code: order.table_label || 'MESA',
+        name: order.table_label || 'Mesa',
+        capacity: 0,
+        status: 'OCCUPIED' as const,
+      };
+
+    setEditingOrderId(order.id);
+    setSelectedTable(resolvedTable);
+    setStage('BUILD_ORDER');
+    setNotes(order.notes ?? '');
+    setSelectedCustomer(order.customer_id ? {
+      id: order.customer_id,
+      name: order.customer_name || 'Cliente',
+      doc_number: null,
+      doc_type: null,
+      trade_name: null,
+      plate: null,
+      address: null,
+      default_tier_id: null,
+    } : null);
+    setCustomerQuery('');
+    setCart((order.items ?? []).map((item) => ({
+      line_no: item.line_no,
+      product_id: item.product_id,
+      description: item.description,
+      quantity: Number(item.quantity),
+      unit_price: toDisplayedUnitPrice(item.unit_price, item.tax_total, item.total, item.quantity),
+      unit_id: item.unit_id,
+      tax_type: 'IGV',
+      tax_rate: igvRate,
+    })));
+    setMessage('');
   }
 
   function removeCartItem(index: number) {
@@ -345,11 +582,9 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
   const cartTotal = useMemo(() => {
     return cart.reduce((acc, item) => {
-      const base = item.quantity * item.unit_price;
-      const tax = base * (item.tax_rate / 100);
-      return acc + base + tax;
+      return acc + computeLinePricing(item.quantity, item.unit_price, item.tax_rate).total;
     }, 0);
-  }, [cart]);
+  }, [cart, restaurantPriceIncludesIgv]);
 
   // ── table selection ───────────────────────────────────────────────────────
   function selectTable(table: RestaurantTableRow) {
@@ -365,6 +600,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     setNotes('');
     setSelectedCustomer(null);
     setCustomerQuery('');
+    setEditingOrderId(null);
     setMessage('');
   }
 
@@ -397,36 +633,83 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     setMessage('');
 
     try {
-      await createRestaurantOrder(accessToken, {
-        branch_id: branchId!,
-        warehouse_id: warehouseId,
-        table_id: selectedTable.id,
-        table_label: selectedTable.name,
-        series: seriesId,
-        currency_id: Number(currencyId),
-        payment_method_id: Number(paymentMethodId),
-        customer_id: selectedCustomer.id,
-        notes: notes.trim() || undefined,
-        items: cart.map((item) => ({
+      const itemsPayload = cart.map((item, index) => {
+        const pricing = computeLinePricing(item.quantity, item.unit_price, item.tax_rate);
+
+        return {
+          line_no: item.line_no ?? index + 1,
           product_id: item.product_id,
           description: item.description,
           quantity: item.quantity,
-          unit_price: item.unit_price,
+          qty: item.quantity,
+          unit_price: pricing.unitPriceForDocument,
           unit_id: item.unit_id,
           tax_type: item.tax_type,
           tax_rate: item.tax_rate,
-        })),
+          subtotal: pricing.subtotal,
+          tax_total: pricing.taxTotal,
+          total: pricing.total,
+        };
       });
+
+      if (editingOrderId) {
+        await updateRestaurantOrder(accessToken, editingOrderId, {
+          customer_id: selectedCustomer.id,
+          payment_method_id: Number(paymentMethodId),
+          notes: notes.trim(),
+          items: itemsPayload.map((item) => ({
+            line_no: item.line_no,
+            product_id: item.product_id,
+            unit_id: item.unit_id,
+            description: item.description,
+            qty: item.qty,
+            unit_price: item.unit_price,
+            subtotal: item.subtotal,
+            tax_total: item.tax_total,
+            total: item.total,
+          })),
+        });
+        // Notify ComandasView (kitchen) that this order was modified
+        try {
+          const bc = new BroadcastChannel('restaurant_orders');
+          bc.postMessage({ type: 'ORDER_MODIFIED', orderId: editingOrderId });
+          bc.close();
+        } catch {
+          // BroadcastChannel unavailable — polling will catch up
+        }
+      } else {
+        await createRestaurantOrder(accessToken, {
+          branch_id: branchId!,
+          warehouse_id: warehouseId,
+          table_id: selectedTable.id,
+          series: seriesId,
+          currency_id: Number(currencyId),
+          payment_method_id: Number(paymentMethodId),
+          customer_id: selectedCustomer.id,
+          notes: notes.trim() || undefined,
+          items: itemsPayload.map((item) => ({
+            product_id: item.product_id,
+            description: item.description,
+            quantity: item.quantity,
+            unit_price: item.unit_price,
+            unit_id: item.unit_id,
+            tax_type: item.tax_type,
+            tax_rate: item.tax_rate,
+          })),
+        });
+      }
 
       // Reset form and refresh
       cancelTable();
       setMessage('');
       void loadOrders();
-      // Refresh table statuses
-      const tablesRes = await fetchRestaurantTables(accessToken, { branchId });
-      setTables(tablesRes.data ?? []);
+      if (!editingOrderId) {
+        setTables((prev) => prev.map((table) => (
+          table.id === selectedTable.id ? { ...table, status: 'OCCUPIED' } : table
+        )));
+      }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'No se pudo crear el pedido.');
+      setMessage(error instanceof Error ? error.message : (editingOrderId ? 'No se pudo actualizar el pedido.' : 'No se pudo crear el pedido.'));
     } finally {
       setSubmitting(false);
     }
@@ -475,6 +758,32 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
       {message && <p className="notice restaurant-notice">{message}</p>}
 
+      {/* ── Ready-order toast alerts ── */}
+      {readyAlerts.length > 0 && (
+        <div className="ro-ready-alerts">
+          {readyAlerts.map((alert) => (
+            <div key={alert.id} className="ro-ready-alert">
+              <span className="ro-ready-alert__icon">🛎</span>
+              <div className="ro-ready-alert__body">
+                <strong>¡Pedido listo para servir!</strong>
+                <span>
+                  {alert.tableLabel ? `Mesa ${alert.tableLabel} · ` : ''}
+                  {alert.series}-{String(alert.number).padStart(6, '0')}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="ro-ready-alert__dismiss"
+                onClick={() => dismissReadyAlert(alert.id)}
+                aria-label="Entendido"
+              >
+                ✓ Entendido
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Main layout: form (left) + orders list (right) */}
       <div className="ro-layout">
 
@@ -514,7 +823,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                   <p className="ro-order-form__cap">{selectedTable?.capacity} pax</p>
                 </div>
                 <button type="button" className="restaurant-ghost-btn" onClick={cancelTable}>
-                  Cambiar mesa
+                  {editingOrderId ? 'Cancelar edición' : 'Cambiar mesa'}
                 </button>
               </div>
 
@@ -599,34 +908,87 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
               </div>
 
               {/* Product search */}
-              <div className="ro-product-row" style={{ position: 'relative' }}>
+              <div
+                className="ro-product-row"
+                ref={productPreviewRef}
+                style={{ position: 'relative' }}
+                onMouseEnter={() => {
+                  setProductPreviewOpen(true);
+                  void ensureFeaturedProductsLoaded();
+                }}
+                onMouseLeave={() => setProductPreviewOpen(false)}
+              >
                 <label className="ro-field ro-field--wide">
                   <span>Agregar producto</span>
                   <input
                     className="restaurant-input"
                     placeholder="Buscar por nombre o código..."
                     value={productSearch}
-                    onChange={(e) => setProductSearch(e.target.value)}
+                    onFocus={() => {
+                      setProductPreviewOpen(true);
+                      void ensureFeaturedProductsLoaded();
+                    }}
+                    onChange={(e) => {
+                      setProductSearch(e.target.value);
+                      setProductPreviewOpen(true);
+                    }}
                   />
                 </label>
-                {(productSuggestions.length > 0 || loadingProducts) && (
-                  <div className="ro-suggest-box ro-suggest-box--products">
-                    {loadingProducts && (
-                      <div className="ro-suggest-item ro-suggest-item--hint">Buscando...</div>
+                <div className={`ro-product-preview-panel ${productPreviewOpen ? 'is-open' : ''}`}>
+                    <div className="ro-product-preview-head">
+                      <strong>{productSearch.trim().length >= 2 ? 'Resultados de búsqueda' : 'Catálogo de productos'}</strong>
+                      <span>{restaurantPriceIncludesIgv ? 'IGV incluido' : 'IGV no incluido'}</span>
+                    </div>
+
+                    {/* Category filter chips */}
+                    {productCategories.length > 1 && (
+                      <div className="ro-product-cat-chips">
+                        <button
+                          type="button"
+                          className={`ro-cat-chip ${productCategoryFilter === null ? 'ro-cat-chip--active' : ''}`}
+                          onClick={() => setProductCategoryFilter(null)}
+                        >
+                          Todos
+                        </button>
+                        {productCategories.map((cat) => (
+                          <button
+                            key={cat}
+                            type="button"
+                            className={`ro-cat-chip ${productCategoryFilter === cat ? 'ro-cat-chip--active' : ''}`}
+                            onClick={() => setProductCategoryFilter(cat)}
+                          >
+                            {cat}
+                          </button>
+                        ))}
+                      </div>
                     )}
-                    {productSuggestions.map((p) => (
-                      <button
-                        type="button"
-                        key={p.id}
-                        className="ro-suggest-item"
-                        onClick={() => addProductToCart(p)}
-                      >
-                        <strong>{p.name}</strong>
-                        <span>{formatCurrency(p.sale_price)}</span>
-                      </button>
-                    ))}
+
+                    {loadingProducts ? (
+                      <div className="ro-suggest-item ro-suggest-item--hint">Buscando productos...</div>
+                    ) : productPreviewRows.length > 0 ? (
+                      <div className="ro-product-preview-list">
+                        {productPreviewRows.map((p) => (
+                          <button
+                            type="button"
+                            key={p.id}
+                            className="ro-product-preview-item"
+                            onClick={() => addProductToCart(p)}
+                          >
+                            <div>
+                              <strong>{p.name}</strong>
+                              <span>{p.sku ?? 'SIN-SKU'} · {p.category_name ?? 'General'}</span>
+                            </div>
+                            <em>
+                              {formatCurrency(p.sale_price)}
+                              <small>{restaurantPriceIncludesIgv ? ' inc. IGV' : ' + IGV'}</small>
+                            </em>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="ro-suggest-item ro-suggest-item--hint">No se encontraron productos para esta búsqueda.</div>
+                    )}
                   </div>
-                )}
               </div>
 
               {/* Cart */}
@@ -658,7 +1020,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                         onChange={(e) => updateCartItem(index, 'unit_price', e.target.value)}
                       />
                       <span className="ro-cart-item__subtotal">
-                        {formatCurrency(item.quantity * item.unit_price * (1 + item.tax_rate / 100))}
+                        {formatCurrency(computeLinePricing(item.quantity, item.unit_price, item.tax_rate).total)}
                       </span>
                       <button
                         type="button"
@@ -697,7 +1059,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                   disabled={submitting || cart.length === 0 || seriesLoading || salesOrderSeriesList.length === 0}
                   onClick={() => void handleSubmit()}
                 >
-                  {submitting ? 'Enviando a cocina...' : 'Enviar pedido a cocina'}
+                  {submitting ? (editingOrderId ? 'Actualizando pedido...' : 'Enviando a cocina...') : (editingOrderId ? 'Guardar cambios del pedido' : 'Enviar pedido a cocina')}
                 </button>
               </div>
             </div>
@@ -775,6 +1137,40 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                     </div>
                     {order.notes && (
                       <div className="ro-order-card__notes">{order.notes}</div>
+                    )}
+
+                    {order.items && order.items.length > 0 && (
+                      <div className="ro-order-card__preview ro-order-card__preview--compact">
+                        <div className="ro-order-card__trigger-wrap">
+                          <button type="button" className="ro-order-card__trigger" aria-label="Ver platos del pedido">
+                            Platos ({order.items.length})
+                          </button>
+
+                          <div className="ro-order-card__popover">
+                            <p className="ro-order-card__popover-title">Detalle completo del pedido</p>
+                            <ul className="ro-order-card__popover-list">
+                              {order.items.map((item) => (
+                                <li key={`order-pop-${order.id}-${item.line_no}`}>
+                                  <span>{item.description}</span>
+                                  <strong>x {item.quantity}</strong>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {order.kitchen_status !== 'SERVED' && order.kitchen_status !== 'CANCELLED' && (
+                      <div className="ro-order-card__actions">
+                        <button
+                          type="button"
+                          className="restaurant-ghost-btn"
+                          onClick={() => startEditOrder(order)}
+                        >
+                          Editar pedido
+                        </button>
+                      </div>
                     )}
                   </div>
                 </article>

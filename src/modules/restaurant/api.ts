@@ -138,6 +138,36 @@ export async function createRestaurantOrder(
   });
 }
 
+export async function updateRestaurantOrder(
+  accessToken: string,
+  orderId: number,
+  payload: {
+    customer_id?: number | null;
+    payment_method_id?: number | null;
+    notes?: string;
+    items: Array<{
+      line_no?: number;
+      product_id?: number | null;
+      unit_id?: number | null;
+      description: string;
+      qty: number;
+      unit_price: number;
+      tax_total?: number;
+      subtotal?: number;
+      total?: number;
+    }>;
+  }
+): Promise<{ message: string; data: unknown }> {
+  return apiClient.request(`/api/sales/commercial-documents/${orderId}`, {
+    method: 'PUT',
+    headers: {
+      ...authHeaders(accessToken),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Checkout: convert a SALES_ORDER to INVOICE or RECEIPT + release mesa
 // ---------------------------------------------------------------------------

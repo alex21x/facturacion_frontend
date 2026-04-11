@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
@@ -477,6 +477,7 @@ export function App() {
     const saved = window.localStorage.getItem(UI_DENSITY_STORAGE_KEY);
     return saved === 'normal' ? 'normal' : 'compact';
   });
+  const contentPanelRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -559,6 +560,24 @@ export function App() {
 
     return grouped;
   }, [filteredMenuItems]);
+
+  function handleMenuTabSelect(nextTab: ModuleTab): void {
+    setActiveTab(nextTab);
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    // On mobile/tablet, jump directly to module content after tapping a menu item.
+    if (window.matchMedia('(max-width: 980px)').matches) {
+      window.requestAnimationFrame(() => {
+        contentPanelRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start',
+        });
+      });
+    }
+  }
 
   async function handleLogin(payload: LoginPayload): Promise<void> {
     setIsLoading(true);
@@ -876,7 +895,7 @@ export function App() {
                           key={item.id}
                           className={activeTab === item.id ? 'active' : ''}
                           type="button"
-                          onClick={() => setActiveTab(item.id)}
+                          onClick={() => handleMenuTabSelect(item.id)}
                           aria-current={activeTab === item.id ? 'page' : undefined}
                         >
                           <span className="menu-head">
@@ -900,7 +919,7 @@ export function App() {
               </nav>
             </aside>
 
-            <section className="content-panel">
+            <section ref={contentPanelRef} className="content-panel">
               <header className="active-module-head">
                 <div>
                   <p className="eyebrow">Seccion activa</p>

@@ -32,6 +32,7 @@ type AppConfigViewProps = {
 };
 
 const FEATURE_LABELS: Record<string, string> = {
+  RESTAURANT_MENU_IGV_INCLUDED: 'Restaurante: precio de carta incluye IGV',
   PRODUCT_MULTI_UOM: 'Unidades multiples por producto',
   PRODUCT_UOM_CONVERSIONS: 'Conversion entre unidades de producto',
   PRODUCT_WHOLESALE_PRICING: 'Precios mayoristas por volumen',

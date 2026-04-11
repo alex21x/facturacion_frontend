@@ -33,8 +33,15 @@ export async function fetchModules(accessToken: string): Promise<ModuleRow[]> {
   return response.modules;
 }
 
-export async function fetchFeatureToggles(accessToken: string): Promise<FeatureToggleRow[]> {
-  const response = await apiClient.request<{ features: FeatureToggleRow[] }>('/api/appcfg/feature-toggles', {
+export async function fetchFeatureToggles(accessToken: string, branchId?: number | null): Promise<FeatureToggleRow[]> {
+  const query = new URLSearchParams();
+  if (branchId) {
+    query.set('branch_id', String(branchId));
+  }
+
+  const path = query.toString() ? `/api/appcfg/feature-toggles?${query.toString()}` : '/api/appcfg/feature-toggles';
+
+  const response = await apiClient.request<{ features: FeatureToggleRow[] }>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
