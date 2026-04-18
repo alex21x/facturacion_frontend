@@ -44,8 +44,11 @@ import type { RestaurantTableRow } from '../../restaurant/types';
 import {
   buildCommercialDocument80mmHtml,
   buildCommercialDocumentA4Html,
+  type PrintableCompanyInfo,
   type PrintableSalesDocument,
 } from '../print';
+import { fetchCompanyProfile } from '../../company/api';
+import { apiClient } from '../../../shared/api/client';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import type {
   CommercialDocumentListItem,
@@ -1129,6 +1132,7 @@ function featureSourceBadgeClass(source: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL
 }
 
 export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, activeVerticalCode, currentUserRoleCode, currentUserRoleProfile }: SalesViewProps) {
+  const [companyPrintInfo, setCompanyPrintInfo] = useState<PrintableCompanyInfo | null>(null);
   const [lookups, setLookups] = useState<SalesLookups | null>(null);
   const [series, setSeries] = useState<SeriesNumber[]>([]);
   const [documents, setDocuments] = useState<CommercialDocumentListItem[]>([]);
@@ -1326,6 +1330,30 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     : isCashierUser
       ? 'Inicia en pedidos pendientes para conversion y emision.'
       : 'Configura un perfil VENDEDOR/CAJERO para separar flujos.';
+
+  useEffect(() => {
+    if (!accessToken) return;
+    void (async () => {
+      try {
+        const profile = await fetchCompanyProfile(accessToken);
+        const rawLogoUrl = profile.logo_url ?? null;
+        let resolvedLogoUrl: string | null = null;
+        if (rawLogoUrl) {
+          resolvedLogoUrl = rawLogoUrl.startsWith('http') || rawLogoUrl.startsWith('data:')
+            ? rawLogoUrl
+            : `${apiClient.baseUrl}${rawLogoUrl.startsWith('/') ? '' : '/'}${rawLogoUrl}`;
+        }
+        setCompanyPrintInfo({
+          name: profile.legal_name ?? profile.trade_name ?? null,
+          taxId: profile.tax_id ?? null,
+          address: profile.address ?? null,
+          logoUrl: resolvedLogoUrl,
+        });
+      } catch {
+        // silently ignore — prints will fall back to defaults
+      }
+    })();
+  }, [accessToken]);
 
   useEffect(() => {
     if (!isRestaurantVertical) {
@@ -2989,8 +3017,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
       subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
       html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(issuedPreview.printable, { embedded: true })
-        : buildCommercialDocumentA4Html(issuedPreview.printable, { embedded: true }),
+        ? buildCommercialDocument80mmHtml(issuedPreview.printable, { embedded: true }, companyPrintInfo ?? undefined)
+        : buildCommercialDocumentA4Html(issuedPreview.printable, { embedded: true }, companyPrintInfo ?? undefined),
       variant: format === '80mm' ? 'compact' : 'wide',
     });
   }
@@ -3153,8 +3181,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
         subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
         html: format === '80mm'
-          ? buildCommercialDocument80mmHtml(data, { embedded: true })
-          : buildCommercialDocumentA4Html(data, { embedded: true }),
+          ? buildCommercialDocument80mmHtml(data, { embedded: true }, companyPrintInfo ?? undefined)
+          : buildCommercialDocumentA4Html(data, { embedded: true }, companyPrintInfo ?? undefined),
         variant: format === '80mm' ? 'compact' : 'wide',
       });
     } catch (error) {
@@ -3703,8 +3731,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           subtitle: `${issued.series}-${Number(issued.number).toString().padStart(6, '0')}`,
           html:
             salesFlowMode === 'SELLER_TO_CASHIER'
-              ? buildCommercialDocument80mmHtml(printable, { embedded: true })
-              : buildCommercialDocumentA4Html(printable, { embedded: true }),
+              ? buildCommercialDocument80mmHtml(printable, { embedded: true }, companyPrintInfo ?? undefined)
+              : buildCommercialDocumentA4Html(printable, { embedded: true }, companyPrintInfo ?? undefined),
           variant: salesFlowMode === 'SELLER_TO_CASHIER' ? 'compact' : 'wide',
         });
       }
@@ -3883,7 +3911,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         source,
         targetDocumentKind,
         details,
-        previewHtml: buildCommercialDocumentA4Html(details, { embedded: true }),
+        previewHtml: buildCommercialDocumentA4Html(details, { embedded: true }, companyPrintInfo ?? undefined),
         loading: false,
         error: '',
       });
@@ -4404,8 +4432,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento A4',
       subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
       html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(details, { embedded: true })
-        : buildCommercialDocumentA4Html(details, { embedded: true }),
+        ? buildCommercialDocument80mmHtml(details, { embedded: true }, companyPrintInfo ?? undefined)
+        : buildCommercialDocumentA4Html(details, { embedded: true }, companyPrintInfo ?? undefined),
       variant: format === '80mm' ? 'compact' : 'wide',
     });
     setPostConvertPrintModal(null);
@@ -5275,13 +5303,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                               {(() => {
                                 const stock = stockByProductId.get(row.id) ?? 0;
                                 return (
-                                  <>
-                                    <strong>{row.name}</strong>
-                                    <span>
-                                      {(row.sku ?? 'SIN-SKU')} · Stock:{' '}
-                                      <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
+                                  <span className="suggest-item__row">
+                                    <strong className="suggest-item__name">{row.name}</strong>
+                                    <span className="suggest-item__meta">
+                                      {row.sku ?? 'SIN-SKU'} · <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
                                     </span>
-                                  </>
+                                  </span>
                                 );
                               })()}
                             </button>

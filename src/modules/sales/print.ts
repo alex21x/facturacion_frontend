@@ -1,5 +1,12 @@
 ﻿import { fmtDateLima } from '../../shared/utils/lima';
 
+export type PrintableCompanyInfo = {
+  name?: string | null;
+  taxId?: string | null;
+  address?: string | null;
+  logoUrl?: string | null;
+};
+
 export type PrintableSalesItem = {
   lineNo: number;
   productId?: number | null;
@@ -191,6 +198,7 @@ function resolveNotePrintDetails(doc: PrintableSalesDocument): {
 export function buildCommercialDocumentA4Html(
   doc: PrintableSalesDocument,
   options?: { embedded?: boolean },
+  companyInfo?: PrintableCompanyInfo,
 ): string {
   const meta = kindMeta(doc.documentKind);
   const showTributaryBreakdown = isTributaryKind(doc.documentKind);
@@ -334,16 +342,15 @@ export function buildCommercialDocumentA4Html(
         <section class="sheet">
           <section class="head">
             <article class="brand">
-              <h1>SISTEMA FACTURACION</h1>
-              <p>Comprobante generado desde modulo de ventas</p>
+              ${companyInfo?.logoUrl ? `<img src="${escapeHtml(companyInfo.logoUrl)}" alt="Logo" style="max-height:60px;max-width:180px;object-fit:contain;margin-bottom:6px;display:block" />` : ''}
+              <h1>${companyInfo?.name ? escapeHtml(companyInfo.name) : 'SISTEMA FACTURACION'}</h1>
+              ${companyInfo?.address ? `<p>${escapeHtml(companyInfo.address)}</p>` : '<p>Comprobante generado desde modulo de ventas</p>'}
               <p>Fecha emision: ${formatDate(doc.issueDate)}</p>
-              <p>Estado: ${escapeHtml(doc.status)}</p>
             </article>
             <article class="voucher">
-              <div class="ruc">R.U.C.: 00000000000</div>
+              <div class="ruc">R.U.C.: ${companyInfo?.taxId ? escapeHtml(companyInfo.taxId) : '00000000000'}</div>
               <div class="title">${escapeHtml(meta.title)}</div>
               <div class="docno">No.: ${escapeHtml(doc.series)}-${doc.number}</div>
-              <div>Tipo: ${escapeHtml(meta.shortCode)}</div>
             </article>
           </section>
 
@@ -431,6 +438,7 @@ export function buildCommercialDocumentA4Html(
 export function buildCommercialDocument80mmHtml(
   doc: PrintableSalesDocument,
   options?: { embedded?: boolean },
+  companyInfo?: PrintableCompanyInfo,
 ): string {
   const meta = kindMeta(doc.documentKind);
   const showTributaryBreakdown = isTributaryKind(doc.documentKind);
@@ -686,6 +694,10 @@ export function buildCommercialDocument80mmHtml(
         
         <div class="sheet">
           <div class="header">
+            ${companyInfo?.logoUrl ? `<img src="${escapeHtml(companyInfo.logoUrl)}" alt="Logo" style="max-height:40px;max-width:60mm;object-fit:contain;margin:0 auto 1mm;display:block" />` : ''}
+            ${companyInfo?.name ? `<div style="font-size:9px;font-weight:700;letter-spacing:0.3px;margin-bottom:0.5mm">${escapeHtml(companyInfo.name)}</div>` : ''}
+            ${companyInfo?.taxId ? `<div style="font-size:7px;color:#333;margin-bottom:0.5mm">RUC: ${escapeHtml(companyInfo.taxId)}</div>` : ''}
+            ${companyInfo?.address ? `<div style="font-size:7px;color:#333;margin-bottom:1mm">${escapeHtml(companyInfo.address)}</div>` : ''}
             <div class="title">${escapeHtml(meta.title)}</div>
             <div class="docno">${escapeHtml(doc.series)}-${String(doc.number).padStart(6, '0')}</div>
             <div class="date">${formatDate(doc.issueDate)}</div>
@@ -762,7 +774,6 @@ export function buildCommercialDocument80mmHtml(
 
           <div class="footer">
             <div class="footer-item">Forma Pago: ${escapeHtml(doc.paymentMethodName || '-')}</div>
-            <div class="footer-item">Estado: ${escapeHtml(doc.status)}</div>
             ${sunatPrint.signature
               ? `<div class="sunat-ticket">
                   ${sunatPrint.signature ? `<div class="line"><strong>Firma:</strong> ${escapeHtml(sunatPrint.signature)}</div>` : ''}
@@ -778,13 +789,13 @@ export function buildCommercialDocument80mmHtml(
   `;
 }
 
-export function openCommercialDocumentPrintA4(doc: PrintableSalesDocument): void {
+export function openCommercialDocumentPrintA4(doc: PrintableSalesDocument, companyInfo?: PrintableCompanyInfo): void {
   const printWindow = window.open('', '_blank', 'width=1024,height=920');
   if (!printWindow) {
     return;
   }
 
-  const html = buildCommercialDocumentA4Html(doc);
+  const html = buildCommercialDocumentA4Html(doc, undefined, companyInfo);
   printWindow.document.open();
   printWindow.document.write(html);
   printWindow.document.close();
@@ -801,13 +812,13 @@ export function openCommercialDocumentPrintA4(doc: PrintableSalesDocument): void
   }
 }
 
-export function openCommercialDocumentPreview80mm(doc: PrintableSalesDocument): void {
+export function openCommercialDocumentPreview80mm(doc: PrintableSalesDocument, companyInfo?: PrintableCompanyInfo): void {
   const previewWindow = window.open('', '_blank', 'width=420,height=800');
   if (!previewWindow) {
     return;
   }
 
-  const html = buildCommercialDocument80mmHtml(doc);
+  const html = buildCommercialDocument80mmHtml(doc, undefined, companyInfo);
   previewWindow.document.open();
   previewWindow.document.write(html);
   previewWindow.document.close();

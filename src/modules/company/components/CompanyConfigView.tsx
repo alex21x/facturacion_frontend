@@ -6,6 +6,7 @@ import {
   uploadCompanyLogo,
 } from '../api';
 import type { BankAccount, CompanyCertBridgeDebug, CompanyProfile } from '../types';
+import { apiClient } from '../../../shared/api/client';
 
 type CompanyConfigViewProps = {
   accessToken: string;
@@ -589,7 +590,15 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
               {profile?.logo_url && (
                 <div className="companycfg-image-block">
                   <p className="companycfg-muted">Logo actual:</p>
-                  <img src={profile.logo_url} alt="Logo empresa" className="companycfg-logo-preview" />
+                  <img
+                    src={
+                      profile.logo_url.startsWith('http') || profile.logo_url.startsWith('data:')
+                        ? profile.logo_url
+                        : `${apiClient.baseUrl}${profile.logo_url.startsWith('/') ? '' : '/'}${profile.logo_url}`
+                    }
+                    alt="Logo empresa"
+                    className="companycfg-logo-preview"
+                  />
                 </div>
               )}
               {logoPreview && (
