@@ -12,6 +12,7 @@ export type ModuleRow = {
 
 export type FeatureToggleRow = {
   feature_code: string;
+  feature_label?: string | null;
   is_enabled: boolean;
   company_enabled: boolean | null;
   branch_enabled: boolean | null;
@@ -146,6 +147,7 @@ export type CompanyOperationalLimitMatrixResponse = {
 
 export type CommerceSettingsFeature = {
   feature_code: string;
+  feature_label?: string | null;
   is_enabled: boolean;
   config: unknown;
   vertical_source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null;
@@ -159,6 +161,7 @@ export type SalesTaxBridgeConfig = {
   auth_scheme?: 'none' | 'bearer';
   token?: string;
   auto_send_on_issue?: boolean;
+  force_async_on_issue?: boolean;
   auto_reconcile_enabled?: boolean;
   reconcile_batch_size?: number;
   sol_user?: string;

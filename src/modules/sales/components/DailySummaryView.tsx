@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createDailySummary,
   deleteDailySummary,
+  fetchDailySummaryAuditAttemptDetail,
+  fetchDailySummaryAuditAttempts,
   fetchDailySummaryDetail,
   fetchDailySummaries,
   fetchEligibleDocuments,
@@ -10,6 +12,8 @@ import {
 } from '../api/dailySummary';
 import type {
   DailySummaryDetail,
+  DailySummaryAuditAttempt,
+  DailySummaryAuditAttemptDetail,
   DailySummaryEligibleDoc,
   DailySummaryListItem,
   DailySummaryStatus,
@@ -22,6 +26,7 @@ import type {
 type Props = {
   accessToken: string;
   branchId: number | null;
+  traceabilityEnabled?: boolean;
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,23 +43,68 @@ const STATUS_LABELS: Record<DailySummaryStatus, string> = {
 
 function fmtDate(dateStr: string | null): string {
   if (!dateStr) return '—';
+
+  const trimmed = dateStr.trim();
+  const ymd = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (ymd) {
+    return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
+  }
+
   const d = new Date(dateStr);
-  return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString('es-PE');
+  return isNaN(d.getTime()) ? dateStr : d.toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
 }
 
 function fmtDateTime(dateStr: string | null): string {
   if (!dateStr) return '—';
   const d = new Date(dateStr);
-  return isNaN(d.getTime()) ? dateStr : d.toLocaleString('es-PE');
+  return isNaN(d.getTime()) ? dateStr : d.toLocaleString('es-PE', { timeZone: 'America/Lima' });
+}
+
+function formatDebugJson(value: unknown): string {
+  if (value === null || value === undefined) {
+    return 'null';
+  }
+
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    if (raw === '') {
+      return '""';
+    }
+
+    try {
+      const parsed = JSON.parse(raw);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return raw;
+    }
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  const year = pick('year');
+  const month = pick('month');
+  const day = pick('day');
+
+  return year && month && day ? `${year}-${month}-${day}` : new Date().toISOString().slice(0, 10);
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export function DailySummaryView({ accessToken, branchId }: Props) {
+export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = false }: Props) {
   // ── Tab: 3=Anulación (RA), 1=Declaración (RC) ──────────────────────────────
   const [activeType, setActiveType] = useState<DailySummaryType>(3);
 
@@ -70,6 +120,14 @@ export function DailySummaryView({ accessToken, branchId }: Props) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [detail, setDetail] = useState<DailySummaryDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+
+  // ── Traceability by attempt (RA/RC audit logs) ─────────────────────────────
+  const [summaryAuditLogs, setSummaryAuditLogs] = useState<DailySummaryAuditAttempt[]>([]);
+  const [summaryAuditLoading, setSummaryAuditLoading] = useState(false);
+  const [summaryAuditError, setSummaryAuditError] = useState('');
+  const [summaryAuditSelectedLogId, setSummaryAuditSelectedLogId] = useState<number | null>(null);
+  const [summaryAuditLoadingDetailLogId, setSummaryAuditLoadingDetailLogId] = useState<number | null>(null);
+  const [summaryAuditDetails, setSummaryAuditDetails] = useState<Record<number, DailySummaryAuditAttemptDetail | null | undefined>>({});
 
   // ── New summary wizard ───────────────────────────────────────────────────────
   const [showWizard, setShowWizard] = useState(false);
@@ -132,6 +190,11 @@ export function DailySummaryView({ accessToken, branchId }: Props) {
   useEffect(() => {
     if (selectedId === null) {
       setDetail(null);
+      setSummaryAuditLogs([]);
+      setSummaryAuditSelectedLogId(null);
+      setSummaryAuditDetails({});
+      setSummaryAuditError('');
+      setSummaryAuditLoading(false);
       return;
     }
 
@@ -141,6 +204,78 @@ export function DailySummaryView({ accessToken, branchId }: Props) {
       .catch(() => setDetail(null))
       .finally(() => setDetailLoading(false));
   }, [selectedId, accessToken]);
+
+  useEffect(() => {
+    if (!traceabilityEnabled) {
+      setSummaryAuditLogs([]);
+      setSummaryAuditSelectedLogId(null);
+      setSummaryAuditDetails({});
+      setSummaryAuditError('');
+      setSummaryAuditLoading(false);
+      return;
+    }
+
+    if (!detail) {
+      setSummaryAuditLogs([]);
+      setSummaryAuditSelectedLogId(null);
+      setSummaryAuditDetails({});
+      setSummaryAuditError('');
+      setSummaryAuditLoading(false);
+      return;
+    }
+
+    setSummaryAuditLoading(true);
+    setSummaryAuditError('');
+    setSummaryAuditLogs([]);
+    setSummaryAuditSelectedLogId(null);
+    setSummaryAuditDetails({});
+
+    fetchDailySummaryAuditAttempts(accessToken, {
+      summary_type: detail.summary_type,
+      summary_date: detail.summary_date,
+      identifier: detail.identifier,
+      branch_id: detail.branch_id,
+      limit: 30,
+    })
+      .then((res) => {
+        const logs = Array.isArray(res.logs) ? res.logs : [];
+        setSummaryAuditLogs(logs);
+        if (logs.length > 0) {
+          const firstLogId = logs[0].id;
+          setSummaryAuditSelectedLogId(firstLogId);
+          void loadSummaryAuditAttemptDetail(firstLogId);
+        }
+      })
+      .catch((err: Error) => {
+        setSummaryAuditError(err.message || 'No se pudo cargar el historial de intentos.');
+      })
+      .finally(() => {
+        setSummaryAuditLoading(false);
+      });
+  }, [detail, accessToken, traceabilityEnabled]);
+
+  const loadSummaryAuditAttemptDetail = async (logId: number) => {
+    setSummaryAuditSelectedLogId(logId);
+    setSummaryAuditLoadingDetailLogId(logId);
+    setSummaryAuditError('');
+
+    try {
+      const data = await fetchDailySummaryAuditAttemptDetail(accessToken, logId);
+      setSummaryAuditDetails((prev) => ({
+        ...prev,
+        [logId]: data,
+      }));
+    } catch (err) {
+      const text = err instanceof Error ? err.message : 'No se pudo cargar el intento seleccionado.';
+      setSummaryAuditError(text);
+      setSummaryAuditDetails((prev) => ({
+        ...prev,
+        [logId]: null,
+      }));
+    } finally {
+      setSummaryAuditLoadingDetailLogId(null);
+    }
+  };
 
   // ── Load eligible docs when wizard opens ─────────────────────────────────────
 
@@ -381,6 +516,22 @@ export function DailySummaryView({ accessToken, branchId }: Props) {
                 detail={detail}
                 removingDocumentId={removingDocumentId}
                 onRemoveDocument={handleRemoveDocument}
+                traceabilityEnabled={traceabilityEnabled}
+                summaryAuditLogs={summaryAuditLogs}
+                summaryAuditLoading={summaryAuditLoading}
+                summaryAuditError={summaryAuditError}
+                summaryAuditSelectedLogId={summaryAuditSelectedLogId}
+                summaryAuditLoadingDetailLogId={summaryAuditLoadingDetailLogId}
+                summaryAuditDetails={summaryAuditDetails}
+                onSelectAuditLog={(logId) => {
+                  const hasDetail = Object.prototype.hasOwnProperty.call(summaryAuditDetails, logId);
+                  if (!hasDetail) {
+                    void loadSummaryAuditAttemptDetail(logId);
+                    return;
+                  }
+
+                  setSummaryAuditSelectedLogId(logId);
+                }}
               />
             )}
           </div>
@@ -561,9 +712,29 @@ type SummaryDetailProps = {
   detail: DailySummaryDetail;
   removingDocumentId: number | null;
   onRemoveDocument: (summaryId: number, documentId: number) => void;
+  traceabilityEnabled: boolean;
+  summaryAuditLogs: DailySummaryAuditAttempt[];
+  summaryAuditLoading: boolean;
+  summaryAuditError: string;
+  summaryAuditSelectedLogId: number | null;
+  summaryAuditLoadingDetailLogId: number | null;
+  summaryAuditDetails: Record<number, DailySummaryAuditAttemptDetail | null | undefined>;
+  onSelectAuditLog: (logId: number) => void;
 };
 
-function SummaryDetail({ detail, removingDocumentId, onRemoveDocument }: SummaryDetailProps) {
+function SummaryDetail({
+  detail,
+  removingDocumentId,
+  onRemoveDocument,
+  traceabilityEnabled,
+  summaryAuditLogs,
+  summaryAuditLoading,
+  summaryAuditError,
+  summaryAuditSelectedLogId,
+  summaryAuditLoadingDetailLogId,
+  summaryAuditDetails,
+  onSelectAuditLog,
+}: SummaryDetailProps) {
   const canEditItems = ['DRAFT', 'ERROR', 'REJECTED'].includes(detail.status);
 
   return (
@@ -634,6 +805,119 @@ function SummaryDetail({ detail, removingDocumentId, onRemoveDocument }: Summary
           <pre className="ds-response-box">{JSON.stringify(detail.request_debug, null, 2)}</pre>
         </details>
       )}
+
+      <section style={{ marginTop: 14 }}>
+        <h5 style={{ marginBottom: 6 }}>Trazabilidad de intentos (RA/RC)</h5>
+        {!traceabilityEnabled ? (
+          <p className="ds-hint">La trazabilidad de intentos está deshabilitada por configuración.</p>
+        ) : summaryAuditLoading ? (
+          <p className="ds-hint">Cargando historial de intentos…</p>
+        ) : summaryAuditError ? (
+          <p className="ds-msg ds-msg--error">{summaryAuditError}</p>
+        ) : summaryAuditLogs.length === 0 ? (
+          <p className="ds-hint">Aún no hay intentos registrados para este resumen.</p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(240px, 0.95fr) 1.35fr', gap: '0.7rem' }}>
+            <div style={{ border: '1px solid #dbe4f0', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, fontSize: '0.8rem' }}>
+                Intentos
+              </div>
+              <div style={{ maxHeight: '48vh', overflow: 'auto' }}>
+                {summaryAuditLogs.map((log) => {
+                  const isSelected = summaryAuditSelectedLogId === log.id;
+                  return (
+                    <button
+                      key={log.id}
+                      type="button"
+                      onClick={() => onSelectAuditLog(log.id)}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        border: 'none',
+                        borderBottom: '1px solid #e2e8f0',
+                        padding: '9px 10px',
+                        background: isSelected ? '#ecfeff' : '#fff',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.4rem' }}>
+                        <strong style={{ fontSize: '0.78rem', color: '#0f172a' }}>Intento #{log.attempt_number}</strong>
+                        <span style={{ fontSize: '0.72rem', color: '#334155' }}>{STATUS_LABELS[(String(log.status || '').toUpperCase() as DailySummaryStatus)] ?? log.status}</span>
+                      </div>
+                      <div style={{ marginTop: '0.2rem', fontSize: '0.72rem', color: '#64748b' }}>{fmtDateTime(log.sent_at)}</div>
+                      <div style={{ marginTop: '0.2rem', fontSize: '0.72rem', color: '#475569' }}>
+                        {log.http_code ? `HTTP ${log.http_code}` : 'Sin HTTP'}
+                        {log.response_time_ms !== null && log.response_time_ms !== undefined ? ` · ${Number(log.response_time_ms).toFixed(2)} ms` : ''}
+                        {log.is_retry ? ' · Reintento' : ''}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div style={{ border: '1px solid #dbe4f0', borderRadius: 8, overflow: 'hidden' }}>
+              <div style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, fontSize: '0.8rem' }}>
+                Payload y respuesta por intento
+              </div>
+              <div style={{ padding: '10px' }}>
+                {summaryAuditSelectedLogId === null ? (
+                  <p className="ds-hint">Selecciona un intento para ver detalle.</p>
+                ) : summaryAuditLoadingDetailLogId === summaryAuditSelectedLogId ? (
+                  <p className="ds-hint">Cargando detalle del intento…</p>
+                ) : !summaryAuditDetails[summaryAuditSelectedLogId] ? (
+                  <p className="ds-msg ds-msg--error">No se pudo cargar el detalle del intento seleccionado.</p>
+                ) : (
+                  (() => {
+                    const detailLog = summaryAuditDetails[summaryAuditSelectedLogId] as DailySummaryAuditAttemptDetail;
+                    return (
+                      <>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.55rem', marginBottom: '0.65rem' }}>
+                          <article><strong>Modo</strong><div>{detailLog.bridge.mode || '—'}</div></article>
+                          <article><strong>Estado SUNAT</strong><div>{detailLog.sunat.status || '—'}</div></article>
+                          <article><strong>HTTP</strong><div>{detailLog.response.status_code ? `HTTP ${detailLog.response.status_code}` : '—'}</div></article>
+                          <article><strong>Ticket</strong><div>{detailLog.sunat.ticket || '—'}</div></article>
+                          <article><strong>CDR</strong><div>{detailLog.sunat.cdr_code || '—'}</div></article>
+                          <article><strong>SHA1 payload</strong><div>{detailLog.request.sha1 || '—'}</div></article>
+                        </div>
+
+                        <div style={{ marginBottom: '0.55rem', color: '#334155', fontSize: '0.8rem' }}>
+                          <strong>Endpoint:</strong> {detailLog.bridge.method || 'POST'} {detailLog.bridge.endpoint || '—'}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.6rem' }}>
+                          <section style={{ border: '1px solid #dbe4f0', borderRadius: 8, overflow: 'hidden' }}>
+                            <header style={{ padding: '7px 9px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, fontSize: '0.76rem' }}>
+                              Payload enviado
+                            </header>
+                            <pre style={{ margin: 0, padding: '9px', maxHeight: '32vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.72rem', lineHeight: 1.45 }}>
+                              {formatDebugJson(detailLog.request.payload)}
+                            </pre>
+                          </section>
+                          <section style={{ border: '1px solid #dbe4f0', borderRadius: 8, overflow: 'hidden' }}>
+                            <header style={{ padding: '7px 9px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, fontSize: '0.76rem' }}>
+                              Respuesta del puente
+                            </header>
+                            <pre style={{ margin: 0, padding: '9px', maxHeight: '32vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.72rem', lineHeight: 1.45 }}>
+                              {formatDebugJson(detailLog.response.body)}
+                            </pre>
+                          </section>
+                        </div>
+
+                        {(detailLog.error?.message || detailLog.sunat.message) && (
+                          <p style={{ margin: '9px 0 0', color: '#b91c1c', fontWeight: 600 }}>
+                            Detalle: {detailLog.error?.message || detailLog.sunat.message}
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

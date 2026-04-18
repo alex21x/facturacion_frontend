@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { daysAgoLima, monthsAgoStartLima, todayLima, yearsAgoStartLima, limaDateParts } from '../shared/utils/lima';
 import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
@@ -14,13 +15,35 @@ import { MastersView } from '../modules/masters/components/MastersView';
 import { RestaurantMenuProductsView } from '../modules/products/components/RestaurantMenuProductsView';
 import { RestaurantSuppliesProductsView } from '../modules/products/components/RestaurantSuppliesProductsView';
 import { RetailProductsView } from '../modules/products/components/RetailProductsView';
+import quickAppcfgImg from '../assets/quickhome/icons/appcfg.png';
+import quickCashImg from '../assets/quickhome/icons/cash.png';
+import quickComandasImg from '../assets/quickhome/icons/comandas.png';
+import quickCompanyImg from '../assets/quickhome/icons/company.png';
+import quickCustomersImg from '../assets/quickhome/icons/customers.png';
+import quickDailySummaryImg from '../assets/quickhome/icons/daily-summary.png';
+import quickGenericImg from '../assets/quickhome/icons/generic.png';
+import quickGreGuidesImg from '../assets/quickhome/icons/gre-guides.png';
+import quickInventoryImg from '../assets/quickhome/icons/inventory.png';
+import quickMastersImg from '../assets/quickhome/icons/masters.png';
+import quickProductsImg from '../assets/quickhome/icons/products.png';
+import quickPurchasesImg from '../assets/quickhome/icons/purchases.png';
+import quickReportsImg from '../assets/quickhome/icons/reports.png';
+import quickRestaurantMenuImg from '../assets/quickhome/icons/restaurant-menu.png';
+import quickRestaurantOrdersImg from '../assets/quickhome/icons/restaurant-orders.png';
+import quickRestaurantSuppliesImg from '../assets/quickhome/icons/restaurant-supplies.png';
+import quickSalesImg from '../assets/quickhome/icons/sales.png';
+import quickSunatExceptionsImg from '../assets/quickhome/icons/sunat-exceptions.png';
+import quickTablesImg from '../assets/quickhome/icons/tables.png';
 import { RestaurantPurchasesView } from '../modules/purchases/components/RestaurantPurchasesView';
 import { RetailPurchasesView } from '../modules/purchases/components/RetailPurchasesView';
+import { fetchPurchasesReport } from '../modules/purchases/api';
+import type { StockEntryRow } from '../modules/purchases/types';
 import { ReportsCenterView } from '../modules/reports/components/ReportsCenterView';
 import { ComandasView } from '../modules/restaurant/components/ComandasView';
 import { RestaurantOrderView } from '../modules/restaurant/components/RestaurantOrderView';
 import { TablesView } from '../modules/restaurant/components/TablesView';
-import { fetchSalesLookups } from '../modules/sales/api';
+import { fetchCommercialDocuments, fetchSalesBootstrap } from '../modules/sales/api';
+import type { CommercialDocumentListItem } from '../modules/sales/types';
 import { SalesView } from '../modules/sales/components/SalesView';
 import { DailySummaryView } from '../modules/sales/components/DailySummaryView';
 import { GreGuidesView } from '../modules/sales/components/GreGuidesView';
@@ -35,10 +58,20 @@ import type { AuthSession, LoginPayload } from '../modules/auth/types';
 
 type UiDensity = 'normal' | 'compact';
 type SalesFlowMode = 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
+type BusinessPulseRange = 'DAY' | 'MONTH' | 'YEAR';
+
+type BusinessPulsePoint = {
+  label: string;
+  sales: number;
+  purchases: number;
+};
+
+type BusinessPulseDataset = Record<BusinessPulseRange, BusinessPulsePoint[]>;
 
 const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
 
 type ModuleTab =
+  | 'home'
   | 'cash'
   | 'restaurant-orders'
   | 'comandas'
@@ -73,6 +106,67 @@ const MENU_GROUPS: Array<{ id: MenuGroup; label: string }> = [
   { id: 'administracion', label: 'Configuracion' },
 ];
 
+const QUICK_ACCESS_PRIORITY: ModuleTab[] = [
+  'home',
+  'sales',
+  'cash',
+  'purchases',
+  'inventory',
+  'products',
+  'customers',
+  'daily-summary',
+  'reports',
+  'masters',
+  'appcfg',
+  'restaurant-orders',
+  'comandas',
+  'tables',
+  'restaurant-menu',
+  'restaurant-supplies',
+  'company',
+  'gre-guides',
+  'sunat-exceptions',
+];
+
+const QUICK_ACCESS_FEATURED: ModuleTab[] = ['sales', 'cash', 'purchases', 'inventory'];
+
+const QUICK_ACCESS_META: Partial<Record<ModuleTab, { badge: string; flow: string; emoji: string }>> = {
+  sales: { badge: 'Venta rapida', flow: 'Emitir comprobante en segundos', emoji: 'POS' },
+  cash: { badge: 'Control de caja', flow: 'Apertura, cobro y cierre del turno', emoji: 'S/' },
+  purchases: { badge: 'Compra agil', flow: 'Registrar ingreso y costo de mercaderia', emoji: 'OC' },
+  inventory: { badge: 'Stock al dia', flow: 'Existencias, lotes y alertas de quiebre', emoji: 'INV' },
+};
+
+const BUSINESS_PULSE_RANGES: BusinessPulseRange[] = ['DAY', 'MONTH', 'YEAR'];
+const BUSINESS_PULSE_EMPTY: BusinessPulseDataset = {
+  DAY: [],
+  MONTH: [],
+  YEAR: [],
+};
+
+const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
+  'restaurant-orders': quickRestaurantOrdersImg,
+  comandas: quickComandasImg,
+  tables: quickTablesImg,
+  sales: quickSalesImg,
+  'daily-summary': quickDailySummaryImg,
+  'gre-guides': quickGreGuidesImg,
+  'sunat-exceptions': quickSunatExceptionsImg,
+  cash: quickCashImg,
+  purchases: quickPurchasesImg,
+  reports: quickReportsImg,
+  'restaurant-menu': quickRestaurantMenuImg,
+  'restaurant-supplies': quickRestaurantSuppliesImg,
+  inventory: quickInventoryImg,
+  products: quickProductsImg,
+  customers: quickCustomersImg,
+  masters: quickMastersImg,
+  appcfg: quickAppcfgImg,
+  company: quickCompanyImg,
+};
+
+const QUICK_ACCESS_GENERIC_IMAGE = quickGenericImg;
+
 const MENU_ITEMS: Array<{
   id: ModuleTab;
   group: MenuGroup;
@@ -95,6 +189,18 @@ const MENU_ITEMS: Array<{
    */
   verticalLabels?: Partial<Record<string, { kicker?: string; label?: string; hint?: string }>>;
 }> = [
+  {
+    id: 'home',
+    group: 'operacion',
+    kicker: 'Inicio',
+    label: 'Acceso rapido',
+    hint: 'Pantalla inicial con procesos frecuentes',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5M10 21v-6h4v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
   {
     id: 'cash',
     group: 'operacion',
@@ -453,13 +559,90 @@ function resolveTenantAccessSlugFromPath(): string | null {
   }
 }
 
+// Date arithmetic — all Lima-aware via shared utility
+
+function parseAmount(value: unknown): number {
+  const num = typeof value === 'number' ? value : Number(value ?? 0);
+  return Number.isFinite(num) ? num : 0;
+}
+
+function keyByRange(dateValue: string, range: BusinessPulseRange): string {
+  const parts = limaDateParts(dateValue);
+  if (!parts) return '';
+
+  if (range === 'DAY') {
+    return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  }
+
+  if (range === 'MONTH') {
+    return `${parts.year}-${String(parts.month).padStart(2, '0')}`;
+  }
+
+  return `${parts.year}`;
+}
+
+function labelByRange(key: string, range: BusinessPulseRange): string {
+  if (range === 'YEAR') {
+    return key;
+  }
+
+  if (range === 'MONTH') {
+    const [year, month] = key.split('-').map((v) => Number(v));
+    const d = new Date(year, (month || 1) - 1, 1);
+    return d.toLocaleDateString('es-PE', { month: 'short', timeZone: 'America/Lima' }).replace('.', '');
+  }
+
+  const [year, month, day] = key.split('-').map((v) => Number(v));
+  const d = new Date(year, (month || 1) - 1, day || 1);
+  return d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', timeZone: 'America/Lima' }).replace('.', '');
+}
+
+function aggregateBusinessPulse(
+  salesRows: CommercialDocumentListItem[],
+  purchaseRows: StockEntryRow[],
+  range: BusinessPulseRange,
+): BusinessPulsePoint[] {
+  const map = new Map<string, BusinessPulsePoint>();
+
+  salesRows.forEach((row) => {
+    const key = keyByRange(row.issue_at, range);
+    if (!key) return;
+
+    const current = map.get(key) ?? { label: key, sales: 0, purchases: 0 };
+    current.sales += parseAmount(row.total);
+    map.set(key, current);
+  });
+
+  purchaseRows.forEach((row) => {
+    const key = keyByRange(row.issue_at, range);
+    if (!key) return;
+
+    const current = map.get(key) ?? { label: key, sales: 0, purchases: 0 };
+    current.purchases += parseAmount(row.total_amount);
+    map.set(key, current);
+  });
+
+  return [...map.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([key, value]) => ({
+      ...value,
+      label: labelByRange(key, range),
+      sales: Number(value.sales.toFixed(2)),
+      purchases: Number(value.purchases.toFixed(2)),
+    }));
+}
+
+function resolveQuickAccessImage(tabId: ModuleTab): string {
+  return QUICK_ACCESS_IMAGES[tabId] ?? QUICK_ACCESS_GENERIC_IMAGE;
+}
+
 export function App() {
   const tenantAccessSlug = resolveTenantAccessSlugFromPath();
   const authScope = tenantAccessSlug ? `tenant:${tenantAccessSlug}` : 'default';
   const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession(authScope));
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ModuleTab>('sales');
+  const [activeTab, setActiveTab] = useState<ModuleTab>('home');
   const [menuSearch, setMenuSearch] = useState('');
   const [context, setContext] = useState<OperationalContextResponse | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
@@ -468,7 +651,12 @@ export function App() {
   const [isContextPickerOpen, setIsContextPickerOpen] = useState(false);
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
+  const [taxTraceabilityEnabled, setTaxTraceabilityEnabled] = useState(false);
   const [activeVertical, setActiveVertical] = useState<CompanyVerticalSettingsResponse['active_vertical'] | null>(null);
+  const [businessPulseRange, setBusinessPulseRange] = useState<BusinessPulseRange>('DAY');
+  const [businessPulseData, setBusinessPulseData] = useState<BusinessPulseDataset>(BUSINESS_PULSE_EMPTY);
+  const [businessPulseLoading, setBusinessPulseLoading] = useState(false);
+  const [businessPulseError, setBusinessPulseError] = useState<string | null>(null);
   const [uiDensity, setUiDensity] = useState<UiDensity>(() => {
     if (typeof window === 'undefined') {
       return 'compact';
@@ -507,6 +695,8 @@ export function App() {
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
   const shouldHideCashModule = salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser && !isCashierUser && !isAdminUser;
+  const inventoryPermissions = session?.user?.permissions?.INVENTORY;
+  const canEditPurchaseEntries = Boolean(inventoryPermissions?.can_update) && Boolean(inventoryPermissions?.can_approve);
 
   const permittedMenuItems = useMemo(() => {
     return MENU_ITEMS.filter((item) => {
@@ -560,6 +750,226 @@ export function App() {
 
     return grouped;
   }, [filteredMenuItems]);
+
+  const quickAccessItems = useMemo(() => {
+    const priorityRank = new Map<ModuleTab, number>(
+      QUICK_ACCESS_PRIORITY.map((id, index) => [id, index]),
+    );
+
+    return [...permittedMenuItems]
+      .filter((item) => item.id !== 'home')
+      .sort((a, b) => {
+        const rankA = priorityRank.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const rankB = priorityRank.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return rankA - rankB;
+      })
+      .slice(0, 8)
+      .map((item) => {
+        const resolved = resolveVerticalLabel(item, activeVertical?.code ?? null);
+        return { ...item, ...resolved };
+      });
+  }, [activeVertical?.code, permittedMenuItems]);
+
+  const featuredQuickAccessItems = useMemo(() => {
+    const featuredSet = new Set(QUICK_ACCESS_FEATURED);
+    return quickAccessItems
+      .filter((item) => featuredSet.has(item.id))
+      .sort((a, b) => QUICK_ACCESS_FEATURED.indexOf(a.id) - QUICK_ACCESS_FEATURED.indexOf(b.id));
+  }, [quickAccessItems]);
+
+  const secondaryQuickAccessItems = useMemo(() => {
+    const featuredSet = new Set(QUICK_ACCESS_FEATURED);
+    return quickAccessItems.filter((item) => !featuredSet.has(item.id));
+  }, [quickAccessItems]);
+
+  const activeBusinessPulsePoints = businessPulseData[businessPulseRange] ?? [];
+
+  const businessPulseMaxValue = useMemo(() => {
+    return activeBusinessPulsePoints.reduce((acc, row) => {
+      return Math.max(acc, row.sales, row.purchases);
+    }, 0);
+  }, [activeBusinessPulsePoints]);
+
+  const businessPulseTotals = useMemo(() => {
+    return activeBusinessPulsePoints.reduce(
+      (acc, row) => {
+        acc.sales += row.sales;
+        acc.purchases += row.purchases;
+        return acc;
+      },
+      { sales: 0, purchases: 0 },
+    );
+  }, [activeBusinessPulsePoints]);
+
+  const businessPulseChart = useMemo(() => {
+    const rows = activeBusinessPulsePoints;
+    if (!rows.length || businessPulseMaxValue <= 0) {
+      return {
+        salesPath: '',
+        purchasesPath: '',
+        salesArea: '',
+        purchasesArea: '',
+        salesDots: [] as Array<{ x: number; y: number; key: string }>,
+        purchasesDots: [] as Array<{ x: number; y: number; key: string }>,
+        grid: [25, 50, 75],
+      };
+    }
+
+    const width = 640;
+    const height = 220;
+    const left = 16;
+    const right = 16;
+    const top = 14;
+    const bottom = 18;
+    const innerW = width - left - right;
+    const innerH = height - top - bottom;
+
+    const stepX = rows.length <= 1 ? 0 : innerW / (rows.length - 1);
+
+    const salesPoints = rows.map((row, idx) => {
+      const x = left + stepX * idx;
+      const y = top + innerH - ((row.sales / businessPulseMaxValue) * innerH);
+      return {
+        x,
+        y,
+        point: `${x.toFixed(2)},${y.toFixed(2)}`,
+        key: `${row.label}-s-${idx}`,
+      };
+    });
+
+    const purchasesPoints = rows.map((row, idx) => {
+      const x = left + stepX * idx;
+      const y = top + innerH - ((row.purchases / businessPulseMaxValue) * innerH);
+      return {
+        x,
+        y,
+        point: `${x.toFixed(2)},${y.toFixed(2)}`,
+        key: `${row.label}-p-${idx}`,
+      };
+    });
+
+    const salesPath = salesPoints.map((entry) => entry.point).join(' ');
+    const purchasesPath = purchasesPoints.map((entry) => entry.point).join(' ');
+
+    const baseline = (top + innerH).toFixed(2);
+    const firstX = left.toFixed(2);
+    const lastX = (left + stepX * (rows.length - 1)).toFixed(2);
+    const salesArea = `${firstX},${baseline} ${salesPath} ${lastX},${baseline}`;
+    const purchasesArea = `${firstX},${baseline} ${purchasesPath} ${lastX},${baseline}`;
+
+    return {
+      salesPath,
+      purchasesPath,
+      salesArea,
+      purchasesArea,
+      salesDots: salesPoints.map((entry) => ({ x: entry.x, y: entry.y, key: entry.key })),
+      purchasesDots: purchasesPoints.map((entry) => ({ x: entry.x, y: entry.y, key: entry.key })),
+      grid: [25, 50, 75],
+    };
+  }, [activeBusinessPulsePoints, businessPulseMaxValue]);
+
+  useEffect(() => {
+    if (!session?.accessToken) {
+      setBusinessPulseData(BUSINESS_PULSE_EMPTY);
+      setBusinessPulseError(null);
+      setBusinessPulseLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadBusinessPulse = async () => {
+      setBusinessPulseLoading(true);
+      setBusinessPulseError(null);
+
+      const dailyFrom = daysAgoLima(6);
+      const dailyTo = todayLima();
+      const monthlyFrom = monthsAgoStartLima(5);
+      const yearlyFrom = yearsAgoStartLima(2);
+
+      const fetchSalesRows = async (from: string, to: string): Promise<CommercialDocumentListItem[]> => {
+        const perPage = 100;
+        const maxPages = 4;
+        const rows: CommercialDocumentListItem[] = [];
+
+        for (let page = 1; page <= maxPages; page += 1) {
+          const response = await fetchCommercialDocuments(session.accessToken, {
+            branchId: selectedBranchId,
+            warehouseId: selectedWarehouseId,
+            issueDateFrom: from,
+            issueDateTo: to,
+            page,
+            perPage,
+          });
+
+          rows.push(...(response.data ?? []));
+          if (page >= (response.meta?.last_page ?? 1)) {
+            break;
+          }
+        }
+
+        return rows;
+      };
+
+      const fetchPurchaseRows = async (from: string, to: string): Promise<StockEntryRow[]> => {
+        const perPage = 100;
+        const maxPages = 4;
+        const rows: StockEntryRow[] = [];
+
+        for (let page = 1; page <= maxPages; page += 1) {
+          const response = await fetchPurchasesReport(session.accessToken, {
+            warehouseId: selectedWarehouseId,
+            dateFrom: from,
+            dateTo: to,
+            page,
+            perPage,
+          });
+
+          rows.push(...(response.data ?? []));
+          if (page >= (response.pagination?.total_pages ?? 1)) {
+            break;
+          }
+        }
+
+        return rows;
+      };
+
+      try {
+        const [dailySales, dailyPurchases, monthlySales, monthlyPurchases, yearlySales, yearlyPurchases] = await Promise.all([
+          fetchSalesRows(dailyFrom, dailyTo),
+          fetchPurchaseRows(dailyFrom, dailyTo),
+          fetchSalesRows(monthlyFrom, dailyTo),
+          fetchPurchaseRows(monthlyFrom, dailyTo),
+          fetchSalesRows(yearlyFrom, dailyTo),
+          fetchPurchaseRows(yearlyFrom, dailyTo),
+        ]);
+
+        if (cancelled) {
+          return;
+        }
+
+        setBusinessPulseData({
+          DAY: aggregateBusinessPulse(dailySales, dailyPurchases, 'DAY'),
+          MONTH: aggregateBusinessPulse(monthlySales, monthlyPurchases, 'MONTH'),
+          YEAR: aggregateBusinessPulse(yearlySales, yearlyPurchases, 'YEAR'),
+        });
+      } catch (error) {
+        if (!cancelled) {
+          setBusinessPulseError(error instanceof Error ? error.message : 'No se pudo cargar el pulso del negocio.');
+        }
+      } finally {
+        if (!cancelled) {
+          setBusinessPulseLoading(false);
+        }
+      }
+    };
+
+    void loadBusinessPulse();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accessToken, selectedBranchId, selectedWarehouseId]);
 
   function handleMenuTabSelect(nextTab: ModuleTab): void {
     setActiveTab(nextTab);
@@ -727,9 +1137,11 @@ export function App() {
 
     void (async () => {
       try {
-        const lookups = await fetchSalesLookups(session.accessToken, {
+        const bootstrap = await fetchSalesBootstrap(session.accessToken, {
           branchId: selectedBranchId,
+          includeDocuments: false,
         });
+        const lookups = bootstrap.lookups;
 
         if (cancelled) {
           return;
@@ -738,11 +1150,16 @@ export function App() {
         const isSeparatedMode = Boolean(
           (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_SELLER_TO_CASHIER')?.is_enabled
         );
+        const isTaxTraceabilityEnabled = Boolean(
+          (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_TAX_BRIDGE_DEBUG_VIEW')?.is_enabled
+        );
 
         setSalesFlowMode(isSeparatedMode ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER');
+        setTaxTraceabilityEnabled(isTaxTraceabilityEnabled);
       } catch {
         if (!cancelled) {
           setSalesFlowMode('DIRECT_CASHIER');
+          setTaxTraceabilityEnabled(false);
         }
       }
     })();
@@ -920,6 +1337,177 @@ export function App() {
             </aside>
 
             <section ref={contentPanelRef} className="content-panel">
+              {activeTab === 'home' && (
+                <section className="quick-home-panel" aria-label="Inicio y accesos rapidos">
+                  <header className="quick-home-head">
+                    <div>
+                      <p className="eyebrow">Inicio</p>
+                      <h2>Acceso rapido</h2>
+                      <p>Atajos de alta rotacion para operar mas rapido, con foco en venta, caja y abastecimiento.</p>
+                    </div>
+                  </header>
+
+                  {featuredQuickAccessItems.length > 0 && (
+                    <section className="quick-home-featured" aria-label="Procesos clave">
+                      <p className="quick-home-section-title">Procesos clave</p>
+                      <div className="quick-home-featured-grid">
+                        {featuredQuickAccessItems.map((item) => {
+                          const meta = QUICK_ACCESS_META[item.id];
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className={`quick-home-card quick-home-card-featured module-${item.id}`}
+                              onClick={() => handleMenuTabSelect(item.id)}
+                            >
+                              <span className={`quick-home-visual theme-${item.group}`} aria-hidden="true">
+                                <img className="quick-home-visual-img" src={resolveQuickAccessImage(item.id)} alt="" />
+                              </span>
+                              <span className="quick-home-card-body">
+                                <span className="quick-home-icon">{item.icon}</span>
+                                <span className="quick-home-copy">
+                                  <span className="quick-home-badge">{meta?.badge ?? 'Acceso rapido'}</span>
+                                  <strong>{item.label}</strong>
+                                  <small>{item.hint}</small>
+                                  <small className="quick-home-flow">{meta?.flow ?? 'Abrir modulo para continuar'}</small>
+                                </span>
+                              </span>
+                              <span className="quick-home-go" aria-hidden="true">Entrar ahora</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  {secondaryQuickAccessItems.length > 0 && (
+                    <section className="quick-home-secondary" aria-label="Accesos adicionales">
+                      <p className="quick-home-section-title">Accesos adicionales</p>
+                      <div className="quick-home-grid">
+                        {secondaryQuickAccessItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`quick-home-card module-${item.id}`}
+                        onClick={() => handleMenuTabSelect(item.id)}
+                      >
+                        <span className={`quick-home-visual theme-${item.group}`} aria-hidden="true">
+                          <img className="quick-home-visual-img" src={resolveQuickAccessImage(item.id)} alt="" />
+                        </span>
+                        <span className="quick-home-card-body">
+                          <span className="quick-home-icon">{item.icon}</span>
+                          <span className="quick-home-copy">
+                            <strong>{item.label}</strong>
+                            <small>{item.hint}</small>
+                          </span>
+                        </span>
+                        <span className="quick-home-go" aria-hidden="true">Abrir modulo</span>
+                      </button>
+                    ))}
+                      </div>
+                    </section>
+                  )}
+
+                  <section className="quick-home-pulse" aria-label="Pulso del negocio">
+                    <div className="quick-home-pulse-head">
+                      <div>
+                        <p className="quick-home-section-title">Pulso del negocio</p>
+                        <h3>Ventas vs Compras</h3>
+                        <p>Vista rapida con grafica para entender como se mueve el negocio.</p>
+                      </div>
+                      <div className="quick-home-pulse-tabs" role="tablist" aria-label="Rango del pulso de negocio">
+                        {BUSINESS_PULSE_RANGES.map((range) => (
+                          <button
+                            key={range}
+                            type="button"
+                            role="tab"
+                            className={businessPulseRange === range ? 'is-active' : ''}
+                            aria-selected={businessPulseRange === range}
+                            onClick={() => setBusinessPulseRange(range)}
+                          >
+                            {range === 'DAY' ? 'Dias' : range === 'MONTH' ? 'Meses' : 'Anios'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="quick-home-pulse-kpis">
+                      <article>
+                        <span>Ventas ({businessPulseRange === 'DAY' ? '7d' : businessPulseRange === 'MONTH' ? '6m' : '3a'})</span>
+                        <strong>S/ {businessPulseTotals.sales.toFixed(2)}</strong>
+                      </article>
+                      <article>
+                        <span>Compras ({businessPulseRange === 'DAY' ? '7d' : businessPulseRange === 'MONTH' ? '6m' : '3a'})</span>
+                        <strong>S/ {businessPulseTotals.purchases.toFixed(2)}</strong>
+                      </article>
+                      <article>
+                        <span>Balance</span>
+                        <strong>S/ {(businessPulseTotals.sales - businessPulseTotals.purchases).toFixed(2)}</strong>
+                      </article>
+                    </div>
+
+                    {businessPulseError && <p className="notice" style={{ margin: 0 }}>{businessPulseError}</p>}
+
+                    {businessPulseLoading ? (
+                      <p className="notice" style={{ margin: 0 }}>Cargando grafica de movimiento...</p>
+                    ) : (
+                      <div className="quick-home-pulse-chart" role="img" aria-label="Grafica comparativa de ventas y compras">
+                        {activeBusinessPulsePoints.length === 0 && (
+                          <p className="notice" style={{ margin: 0 }}>Sin datos suficientes para este periodo.</p>
+                        )}
+
+                        {activeBusinessPulsePoints.length > 0 && (
+                          <>
+                            <div className="quick-home-pulse-legend">
+                              <span className="dot-sales">Ventas</span>
+                              <span className="dot-purchases">Compras</span>
+                            </div>
+                            <svg viewBox="0 0 640 220" className="quick-home-pulse-svg" aria-hidden="true">
+                              <defs>
+                                <linearGradient id="pulseSalesFill" x1="0" y1="20" x2="0" y2="220" gradientUnits="userSpaceOnUse">
+                                  <stop offset="0" stopColor="#16A34A" stopOpacity="0.34" />
+                                  <stop offset="1" stopColor="#16A34A" stopOpacity="0.04" />
+                                </linearGradient>
+                                <linearGradient id="pulsePurchasesFill" x1="0" y1="20" x2="0" y2="220" gradientUnits="userSpaceOnUse">
+                                  <stop offset="0" stopColor="#EA580C" stopOpacity="0.32" />
+                                  <stop offset="1" stopColor="#EA580C" stopOpacity="0.04" />
+                                </linearGradient>
+                              </defs>
+                              {businessPulseChart.grid.map((pct) => (
+                                <line
+                                  key={pct}
+                                  x1="16"
+                                  y1={14 + ((100 - pct) / 100) * (220 - 14 - 18)}
+                                  x2="624"
+                                  y2={14 + ((100 - pct) / 100) * (220 - 14 - 18)}
+                                  className="pulse-grid-line"
+                                />
+                              ))}
+                              <polygon className="pulse-area-purchases" points={businessPulseChart.purchasesArea} />
+                              <polygon className="pulse-area-sales" points={businessPulseChart.salesArea} />
+                              <polyline className="pulse-line-sales" points={businessPulseChart.salesPath} />
+                              <polyline className="pulse-line-purchases" points={businessPulseChart.purchasesPath} />
+                              {businessPulseChart.salesDots.map((dot) => (
+                                <circle key={dot.key} className="pulse-dot-sales" cx={dot.x} cy={dot.y} r="4.6" />
+                              ))}
+                              {businessPulseChart.purchasesDots.map((dot) => (
+                                <circle key={dot.key} className="pulse-dot-purchases" cx={dot.x} cy={dot.y} r="4.4" />
+                              ))}
+                            </svg>
+                            <div className="quick-home-pulse-axis">
+                              {activeBusinessPulsePoints.map((row) => (
+                                <span key={row.label}>{row.label}</span>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                </section>
+              )}
+
+              {activeTab !== 'home' && (
               <header className="active-module-head">
                 <div>
                   <p className="eyebrow">Seccion activa</p>
@@ -1005,7 +1593,9 @@ export function App() {
                   )}
                 </div>
               </header>
+              )}
 
+              {activeTab === 'home' && null}
               {activeTab === 'cash' && (
                 <CashView
                   accessToken={session.accessToken}
@@ -1048,6 +1638,7 @@ export function App() {
                 <DailySummaryView
                   accessToken={session.accessToken}
                   branchId={selectedBranchId}
+                  traceabilityEnabled={taxTraceabilityEnabled}
                 />
               )}
               {activeTab === 'gre-guides' && (
@@ -1083,12 +1674,14 @@ export function App() {
                     accessToken={session.accessToken}
                     warehouseId={selectedWarehouseId}
                     activeVerticalCode={activeVertical?.code ?? null}
+                    canEditPurchaseEntries={canEditPurchaseEntries}
                   />
                 ) : (
                   <RetailPurchasesView
                     accessToken={session.accessToken}
                     warehouseId={selectedWarehouseId}
                     activeVerticalCode={activeVertical?.code ?? null}
+                    canEditPurchaseEntries={canEditPurchaseEntries}
                   />
                 )
               )}

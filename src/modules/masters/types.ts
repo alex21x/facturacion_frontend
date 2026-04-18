@@ -71,7 +71,8 @@ export type LotRow = {
 };
 
 export type DocumentKindRow = {
-  code: 'QUOTATION' | 'SALES_ORDER' | 'INVOICE' | 'RECEIPT' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
+  id: number;
+  code: string;
   label: string;
   feature_code: string;
   is_enabled: boolean;

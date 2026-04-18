@@ -29,8 +29,8 @@ type Mode = 'create' | 'edit';
 const EMPTY_PAYLOAD: GreGuidePayload = {
   guide_type: 'REMITENTE',
   series: 'T001',
-  issue_date: new Date().toISOString().slice(0, 10),
-  transfer_date: new Date().toISOString().slice(0, 10),
+  issue_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
+  transfer_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
   motivo_traslado: '01',
   transport_mode_code: '02',
   weight_kg: 1,

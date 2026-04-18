@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
-import { fetchInventoryProducts } from '../../inventory/api';
+import { fetchInventoryProducts, importInventoryProductsBulk, type InventoryBulkImportRow } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
 
 type ProductsViewProps = {
@@ -114,6 +114,69 @@ type ProductFormState = {
 
 type ProductUiTab = 'catalogo' | 'formulario' | 'maestros' | 'comercial';
 type ProductFormStep = 1 | 2 | 3;
+
+const PRODUCT_BULK_TEMPLATE_HEADERS = [
+  'ID',
+  'SKU',
+  'CODIGO_BARRAS',
+  'NOMBRE',
+  'TIPO',
+  'PRECIO_VENTA',
+  'PRECIO_COSTO',
+  'CODIGO_UNIDAD',
+  'CODIGO_SUNAT',
+  'AFECTO_STOCK',
+  'SEGUIMIENTO_LOTE',
+  'CON_VENCIMIENTO',
+  'ESTADO',
+  'STOCK_INICIAL',
+  'COSTO_INICIAL',
+  'ALMACEN_CODIGO',
+];
+
+function normalizeExcelHeader(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeImportRows(rawRows: Array<Record<string, unknown>>): InventoryBulkImportRow[] {
+  return rawRows
+    .map((raw) => {
+      const row = Object.entries(raw).reduce<Record<string, unknown>>((acc, [key, value]) => {
+        acc[normalizeExcelHeader(key)] = value;
+        return acc;
+      }, {});
+
+      const idRaw = String(row.ID ?? '').trim();
+      const payload: InventoryBulkImportRow = {
+        id: idRaw !== '' && Number.isFinite(Number(idRaw)) ? Number(idRaw) : undefined,
+        sku: String(row.SKU ?? '').trim() || undefined,
+        barcode: String(row.CODIGO_BARRAS ?? row.BARCODE ?? '').trim() || undefined,
+        name: String(row.NOMBRE ?? row.NAME ?? '').trim() || undefined,
+        product_nature: String(row.TIPO ?? row.NATURALEZA ?? '').trim() || undefined,
+        sale_price: String(row.PRECIO_VENTA ?? row.VENTA ?? '').trim() || undefined,
+        cost_price: String(row.PRECIO_COSTO ?? row.COSTO ?? '').trim() || undefined,
+        unit_code: String(row.CODIGO_UNIDAD ?? row.UNIDAD ?? '').trim() || 'NIU',
+        sunat_code: String(row.CODIGO_SUNAT ?? row.SUNAT_CODE ?? '').trim() || undefined,
+        is_stockable: String(row.AFECTO_STOCK ?? row.STOCKABLE ?? '').trim() || undefined,
+        lot_tracking: String(row.SEGUIMIENTO_LOTE ?? row.LOT_TRACKING ?? '').trim() || undefined,
+        has_expiration: String(row.CON_VENCIMIENTO ?? row.HAS_EXPIRATION ?? '').trim() || undefined,
+        status: String(row.ESTADO ?? row.STATUS ?? '').trim() || undefined,
+        initial_qty: String(row.STOCK_INICIAL ?? row.INITIAL_QTY ?? '').trim() || undefined,
+        initial_cost: String(row.COSTO_INICIAL ?? row.INITIAL_COST ?? '').trim() || undefined,
+        warehouse_code: String(row.ALMACEN_CODIGO ?? row.WAREHOUSE_CODE ?? '').trim() || undefined,
+      };
+
+      const hasData = Object.values(payload).some((value) => value !== undefined && String(value).trim() !== '');
+      return hasData ? payload : null;
+    })
+    .filter((row): row is InventoryBulkImportRow => row !== null);
+}
 
 const EMPTY_FORM: ProductFormState = {
   sku: '',
@@ -280,6 +343,8 @@ export function ProductsView({
   const [canManageProducts, setCanManageProducts] = useState(true);
   const [canManageProductMasters, setCanManageProductMasters] = useState(true);
   const [natureFilter, setNatureFilter] = useState<'ALL' | 'PRODUCT' | 'SUPPLY'>('ALL');
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const resolvedProfile = uiProfile
     ?? (((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT') ? 'RESTAURANT_SUPPLIES' : 'RETAIL');
@@ -753,11 +818,132 @@ export function ProductsView({
     }
   }
 
+  async function downloadBulkTemplate() {
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+
+      const productsSheet = XLSX.utils.aoa_to_sheet([
+        PRODUCT_BULK_TEMPLATE_HEADERS,
+        ['', 'SKU-001', '7751234567890', 'Producto ejemplo', 'PRODUCT', '12.50', '8.00', 'NIU', '', 'SI', 'NO', 'NO', '1', '10', '8.00', 'PRINCIPAL'],
+      ]);
+      productsSheet['!cols'] = [
+        { wch: 8 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 38 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 16 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 16 },
+        { wch: 10 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 18 },
+      ];
+
+      const instructionsSheet = XLSX.utils.aoa_to_sheet([
+        ['CAMPO', 'REGLA'],
+        ['NOMBRE', 'Obligatorio.'],
+        ['TIPO', 'PRODUCT o SUPPLY. Si va vacío, se usa PRODUCT.'],
+        ['CODIGO_UNIDAD', 'Si va vacío, se usa NIU (UNIDAD (BIENES)).'],
+        ['ESTADO', '1/SI/TRUE para activo, 0/NO/FALSE para inactivo.'],
+        ['ID', 'Opcional: si existe, actualiza ese producto.'],
+        ['SKU/CODIGO_BARRAS', 'Si coincide con uno existente, se actualiza.'],
+        ['STOCK_INICIAL', 'Opcional. Si es > 0, registra una entrada de Kardex.'],
+        ['ALMACEN_CODIGO', 'Opcional. Si va vacio y STOCK_INICIAL > 0, se aplica al almacen principal/preferente.'],
+        ['COSTO_INICIAL', 'Opcional. Si va vacio, usa PRECIO_COSTO.'],
+      ]);
+      instructionsSheet['!cols'] = [{ wch: 26 }, { wch: 78 }];
+
+      XLSX.utils.book_append_sheet(workbook, productsSheet, 'PRODUCTOS');
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'INSTRUCCIONES');
+      XLSX.writeFile(workbook, 'formato_importacion_productos.xlsx');
+      setMessage('Formato Excel descargado.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo descargar la plantilla Excel');
+    }
+  }
+
+  async function handleImportFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!canManageProducts) {
+      setMessage('No tienes permiso para importar productos.');
+      return;
+    }
+
+    setBulkImporting(true);
+    setMessage('');
+
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const firstSheet = workbook.Sheets[firstSheetName];
+
+      if (!firstSheet) {
+        throw new Error('El archivo no contiene una hoja válida.');
+      }
+
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+      const rows = normalizeImportRows(rawRows);
+
+      if (rows.length === 0) {
+        throw new Error('No se encontraron filas válidas para importar.');
+      }
+
+      const response = await importInventoryProductsBulk(accessToken, rows, file.name);
+      const summary = response.summary;
+      const firstError = response.errors[0]?.message;
+      const batchRef = response.batch_id ? ` (lote #${response.batch_id})` : '';
+      const stockSummary =
+        typeof summary.stock_applied === 'number'
+          ? ` Stock aplicado: ${summary.stock_applied}${typeof summary.stock_skipped === 'number' ? `, stock omitido: ${summary.stock_skipped}` : ''}.`
+          : '';
+      setMessage(
+        `Importación procesada${batchRef}: ${summary.created} creados, ${summary.updated} actualizados, ${summary.skipped} omitidos.${stockSummary}${firstError ? ` Primer error: ${firstError}` : ''}`
+      );
+      await loadProducts();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo importar el archivo Excel');
+    } finally {
+      setBulkImporting(false);
+    }
+  }
+
   return (
     <section className="module-panel">
       <div className="module-header">
         <h3>{isRestaurant ? 'Carta e Insumos' : 'Productos'}</h3>
         <div className="entity-actions">
+          <button type="button" onClick={() => void downloadBulkTemplate()}>
+            Descargar formato Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => importFileInputRef.current?.click()}
+            disabled={!canManageProducts || bulkImporting}
+          >
+            {bulkImporting ? 'Importando...' : 'Cargar Excel'}
+          </button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={(event) => void handleImportFileChange(event)}
+            style={{ display: 'none' }}
+          />
           <button type="button" onClick={() => { setUiTab('formulario'); setFormStep(1); }} disabled={!canManageProducts}>
             Nuevo producto
           </button>

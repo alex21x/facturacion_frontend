@@ -91,6 +91,73 @@ export type DailySummarySendResult = {
   debug: Record<string, unknown> | null;
 };
 
+export type DailySummaryAuditAttempt = {
+  id: number;
+  document: string;
+  document_kind: string;
+  tributary_type: string;
+  status: string;
+  http_code: number | null;
+  response_time_ms: number | null;
+  attempt_number: number;
+  is_retry: boolean;
+  error_kind: string | null;
+  message: string | null;
+  sent_at: string | null;
+  initiated_by: string | null;
+};
+
+export type DailySummaryAuditAttemptDetail = {
+  id: number;
+  document: {
+    id: number | null;
+    kind: string | null;
+    series: string | null;
+    number: string | null;
+    full_number: string | null;
+  };
+  tributary_type: string;
+  attempt: {
+    number: number;
+    is_retry: boolean;
+    is_manual: boolean;
+  };
+  bridge: {
+    mode: string | null;
+    endpoint: string | null;
+    method: string | null;
+    content_type: string | null;
+  };
+  request: {
+    size_bytes: number | null;
+    sha1: string | null;
+    payload: unknown;
+  };
+  response: {
+    status_code: number | null;
+    size_bytes: number | null;
+    time_ms: number | null;
+    body: unknown;
+  };
+  sunat: {
+    status: string | null;
+    code: string | null;
+    message: string | null;
+    ticket: string | null;
+    cdr_code: string | null;
+  };
+  error: {
+    kind: string;
+    message: string | null;
+  } | null;
+  audit: {
+    initiated_by_user_id: number | null;
+    initiated_by_username: string | null;
+    sent_at: string | null;
+    received_at: string | null;
+  };
+};
+
 // ── API functions ──────────────────────────────────────────────────────────
 
 export async function fetchDailySummaries(
@@ -206,5 +273,44 @@ export async function removeDailySummaryDocument(
   return apiClient.request<{ message: string; deleted: boolean; summary_id: number; remaining_items: number }>(
     `/api/sales/daily-summaries/${summaryId}/documents/${documentId}${q}`,
     { method: 'DELETE', headers: authHeaders(accessToken) }
+  );
+}
+
+export async function fetchDailySummaryAuditAttempts(
+  accessToken: string,
+  params: {
+    summary_type: DailySummaryType;
+    summary_date: string;
+    identifier: string;
+    branch_id?: number | null;
+    company_id?: number;
+    limit?: number;
+  }
+): Promise<{ count: number; logs: DailySummaryAuditAttempt[] }> {
+  const q = new URLSearchParams();
+  q.set('tributary_type', params.summary_type === 1 ? 'SUMMARY_RC' : 'SUMMARY_RA');
+  q.set('document_series', params.summary_date);
+  q.set('document_number', params.identifier);
+  q.set('limit', String(params.limit ?? 30));
+  if (params.branch_id != null) q.set('branch_id', String(params.branch_id));
+  if (params.company_id) q.set('company_id', String(params.company_id));
+
+  return apiClient.request<{ count: number; logs: DailySummaryAuditAttempt[] }>(
+    `/api/tax-bridge/audit/branch?${q.toString()}`,
+    { method: 'GET', headers: authHeaders(accessToken) }
+  );
+}
+
+export async function fetchDailySummaryAuditAttemptDetail(
+  accessToken: string,
+  logId: number,
+  companyId?: number
+): Promise<DailySummaryAuditAttemptDetail> {
+  const q = new URLSearchParams();
+  if (companyId) q.set('company_id', String(companyId));
+
+  return apiClient.request<DailySummaryAuditAttemptDetail>(
+    q.toString() ? `/api/tax-bridge/audit/${logId}?${q.toString()}` : `/api/tax-bridge/audit/${logId}`,
+    { method: 'GET', headers: authHeaders(accessToken) }
   );
 }

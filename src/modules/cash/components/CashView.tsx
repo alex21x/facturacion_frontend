@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   closeCashSession,
   createCashMovement,
@@ -90,10 +91,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const description = (item.description || '').trim() || 'Producto sin descripcion';
         const unitCode = (item.unit_code || '').trim() || '-';
         const paymentMethod = (doc.payment_method_name || '').trim() || '-';
-        const rawDocumentKind = (doc.document_kind || '').trim();
-        const documentKind = rawDocumentKind
-          ? ({'QUOTATION':'Cotizacion','SALES_ORDER':'Nota de Pedido','INVOICE':'Factura','RECEIPT':'Boleta','CREDIT_NOTE':'Nota de Credito','DEBIT_NOTE':'Nota de Debito'} as Record<string,string>)[rawDocumentKind] ?? rawDocumentKind
-          : '-';
+        const documentKind = (doc.document_kind_label || doc.document_kind || '').trim() || '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
         const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}`;
         const current = grouped.get(key);
@@ -345,7 +343,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         {
           closingBalance: countedBalance,
           difference,
-          closedAt: new Date().toISOString(),
+          closedAt: new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()).replace(' ', 'T') + '-05:00',
         },
       );
       setPreviewDialog({
@@ -806,7 +804,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                     <tbody key={`session-${s.id}`}>
                       <tr onClick={() => void handleExpandSession(s.id)} style={{ cursor: 'pointer', backgroundColor: isExpanded ? '#f0f0f0' : undefined }}>
                         <td style={{ textAlign: 'center', padding: '10px 12px' }}>{isExpanded ? '▼' : '▶'}</td>
-                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.opened_at ? new Date(s.opened_at).toLocaleString() : '-'}</td>
+                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.opened_at ? fmtDateTimeLima(s.opened_at) : '-'}</td>
                         <td style={{ padding: '10px 14px', minWidth: '320px' }}>{s.cash_register_name ?? s.cash_register_code ?? s.cash_register_id}</td>
                         <td style={{ textAlign:'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{Number(s.opening_balance).toFixed(2)}</td>
                         <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.closing_balance != null ? Number(s.closing_balance).toFixed(2) : '-'}</td>

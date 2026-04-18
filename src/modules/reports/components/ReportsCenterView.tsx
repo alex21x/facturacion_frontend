@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   createReportRequest,
   fetchReportRequestDetail,
@@ -19,23 +20,7 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 function fmtDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(value.trim());
-  const normalized = hasOffset ? value.trim() : value.trim() + 'Z';
-  const d = new Date(normalized);
-  if (Number.isNaN(d.getTime())) return value;
-
-  return d.toLocaleDateString('es-PE', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    timeZone: 'America/Lima',
-  }) + ' ' + d.toLocaleTimeString('es-PE', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: true,
-    timeZone: 'America/Lima',
-  });
+  return fmtDateTimeLima(value);
 }
 
 type ReportsCenterViewProps = {

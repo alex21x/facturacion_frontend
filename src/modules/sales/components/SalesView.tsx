@@ -1,10 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { docKindLabel } from '../../../shared/utils/docKind';
+import { fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
+import {
+  computeLineTotals,
+  computeSalesDraftAmounts,
+  normalizePrintableTotals,
+  unitLabelForPrint,
+} from '../utils/draft-calculations';
 import {
   fetchSalesInventoryLots,
   fetchSalesInventoryProducts,
+  fetchSalesInventoryStock,
   type InventoryLotRow,
   type InventoryProduct,
+  type InventoryStockRow,
 } from '../api/facade';
 import {
   convertCommercialDocument,
@@ -13,12 +22,17 @@ import {
   exportCommercialDocumentsJson,
   fetchCommercialDocumentDetails,
   fetchCustomerAutocomplete,
-  fetchCommercialDocuments,
   fetchReferenceDocuments,
   fetchProductCommercialConfig,
-  fetchSalesLookups,
+  fetchSalesBootstrap,
+  resolveCustomerByDocument,
   fetchSeriesNumbers,
   retryTaxBridgeSend,
+  fetchTaxBridgeAuditAttemptDetail,
+  fetchTaxBridgeAuditDocumentHistory,
+  type TaxBridgeAuditAttempt,
+  type TaxBridgeAuditAttemptDetail,
+  fetchTaxBridgeDebug,
   sendSunatVoidCommunication,
   downloadSunatXml,
   downloadSunatCdr,
@@ -40,6 +54,7 @@ import type {
   SalesCustomerSuggestion,
   SalesDraftItem,
   SalesLookups,
+  SalesNoteReason,
   SalesReferenceDocument,
   SeriesNumber,
 } from '../types';
@@ -134,25 +149,6 @@ type CashierReportPanelMode = 'PENDING' | 'FULL';
 type PriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
 
 const SALES_REPORT_FILTERS_STORAGE_KEY = 'sales.report.filters.v1';
-
-function computeLineTotals(qty: number, unitPrice: number, taxRate: number, priceIncludesTax: boolean) {
-  const safeQty = Number.isFinite(qty) ? qty : 0;
-  const safePrice = Number.isFinite(unitPrice) ? unitPrice : 0;
-  const safeRate = Number.isFinite(taxRate) ? taxRate : 0;
-  const includes = priceIncludesTax && safeRate > 0;
-  const gross = safeQty * safePrice;
-
-  if (includes) {
-    const divisor = 1 + safeRate / 100;
-    const subtotal = divisor > 0 ? gross / divisor : gross;
-    const tax = gross - subtotal;
-    return { subtotal, tax, total: gross };
-  }
-
-  const subtotal = gross;
-  const tax = subtotal * (safeRate / 100);
-  return { subtotal, tax, total: subtotal + tax };
-}
 
 const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
@@ -297,79 +293,7 @@ function resolveCustomerProfilePrice(
   return wholesale;
 }
 
-function todayAsInputDate(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-
-  return `${year}-${month}-${day}`;
-}
-
-function unitLabelForPrint(units: SalesLookups['units'] | null, unitId: number | null): string {
-  if (!unitId) {
-    return '-';
-  }
-
-  return units?.find((row) => row.id === unitId)?.code ?? String(unitId);
-}
-
-function normalizePrintableTotals(lookups: SalesLookups | null, items: SalesDraftItem[]) {
-  const taxCategories = lookups?.tax_categories ?? [];
-
-  let subtotal = 0;
-  let taxTotal = 0;
-  let grandTotal = 0;
-  let gravadaTotal = 0;
-  let inafectaTotal = 0;
-  let exoneradaTotal = 0;
-
-  for (const item of items) {
-    const category = taxCategories.find((row) => row.id === item.taxCategoryId) ?? null;
-    const ratePercent = Number(item.taxRate ?? category?.rate_percent ?? 0);
-    const line = computeLineTotals(
-      Number(item.qty),
-      Number(item.unitPrice),
-      ratePercent,
-      Boolean(item.priceIncludesTax)
-    );
-    const lineSubtotal = line.subtotal;
-    const code = String(category?.code ?? '').trim();
-    const lineTax = line.tax;
-
-    subtotal += lineSubtotal;
-    taxTotal += lineTax;
-    grandTotal += lineSubtotal + lineTax;
-
-    const isFreeTransfer = code === '21' || code === '37';
-    const isGravada = /^1\d$/.test(code);
-    const isExonerada = /^2\d$/.test(code) && !isFreeTransfer;
-    const isInafecta = /^3\d$/.test(code) && !isFreeTransfer;
-
-    if (isGravada) {
-      gravadaTotal += lineSubtotal;
-    } else if (isExonerada) {
-      exoneradaTotal += lineSubtotal;
-    } else if (isInafecta) {
-      inafectaTotal += lineSubtotal;
-    } else if (ratePercent <= 0) {
-      inafectaTotal += lineSubtotal;
-    } else {
-      gravadaTotal += lineSubtotal;
-    }
-  }
-
-  return {
-    subtotal,
-    taxTotal,
-    grandTotal,
-    gravadaTotal,
-    inafectaTotal,
-    exoneradaTotal,
-  };
-}
-
-const TODAY = todayAsInputDate();
+const TODAY = todayLima();
 
 function createCreditInstallmentRow(dueDate: string, amount = 0, observation = '') {
   return {
@@ -385,7 +309,7 @@ const initialForm: CreateDocumentForm = {
   documentKind: 'RECEIPT',
   customerId: 0,
   currencyId: 1,
-  paymentMethodId: 1,
+  paymentMethodId: 0,
   productId: null,
   unitId: null,
   lotId: null,
@@ -411,6 +335,9 @@ const initialForm: CreateDocumentForm = {
   isCreditSale: false,
   creditInstallments: [],
   advanceAmount: 0,
+  globalDiscountAmount: 0,
+  draftLineDiscount: 0,
+  draftIsFreeOperation: false,
   qty: 1,
   unitPrice: 0,
 };
@@ -420,6 +347,25 @@ const TRIBUTARY_DOCUMENTS: CreateDocumentForm['documentKind'][] = [
   'RECEIPT',
   'CREDIT_NOTE',
   'DEBIT_NOTE',
+];
+
+const DEFAULT_CREDIT_NOTE_REASONS: SalesNoteReason[] = [
+  { id: 1, code: '01', description: 'Anulacion de la operacion' },
+  { id: 2, code: '02', description: 'Anulacion por error en el RUC' },
+  { id: 3, code: '03', description: 'Correccion por error en la descripcion' },
+  { id: 4, code: '04', description: 'Descuento global' },
+  { id: 5, code: '05', description: 'Descuento por item' },
+  { id: 6, code: '06', description: 'Devolucion total' },
+  { id: 7, code: '07', description: 'Devolucion por item' },
+  { id: 8, code: '08', description: 'Bonificacion' },
+  { id: 9, code: '09', description: 'Disminucion en el valor' },
+  { id: 10, code: '10', description: 'Otros conceptos' },
+];
+
+const DEFAULT_DEBIT_NOTE_REASONS: SalesNoteReason[] = [
+  { id: 1, code: '01', description: 'Interes por mora' },
+  { id: 2, code: '02', description: 'Aumento en el valor' },
+  { id: 3, code: '03', description: 'Penalidades u otros conceptos' },
 ];
 
 function toBooleanFlag(value: unknown): boolean {
@@ -441,15 +387,91 @@ function toPositiveInt(value: unknown): number | null {
   if (!Number.isFinite(parsed)) {
     return null;
   }
-
   const normalized = Math.trunc(parsed);
   return normalized > 0 ? normalized : null;
 }
 
-function buildDocumentFilterParams(filter: DocumentViewFilter): {
+
+function isCreditNoteKindCode(kind: string | null | undefined): boolean {
+  const normalized = String(kind ?? '').trim().toUpperCase();
+  return normalized === 'CREDIT_NOTE' || normalized.startsWith('CREDIT_NOTE_');
+}
+
+function isDebitNoteKindCode(kind: string | null | undefined): boolean {
+  const normalized = String(kind ?? '').trim().toUpperCase();
+  return normalized === 'DEBIT_NOTE' || normalized.startsWith('DEBIT_NOTE_');
+}
+
+function resolveDocumentKindBase(kind: string | null | undefined): string {
+  const normalized = String(kind ?? '').trim().toUpperCase();
+  if (isCreditNoteKindCode(normalized)) {
+    return 'CREDIT_NOTE';
+  }
+  if (isDebitNoteKindCode(normalized)) {
+    return 'DEBIT_NOTE';
+  }
+  return normalized;
+}
+
+function resolveRowDocumentKindBase(row: Pick<CommercialDocumentListItem, 'document_kind' | 'document_kind_base'>): string {
+  const baseFromCatalog = String(row.document_kind_base ?? '').trim().toUpperCase();
+  if (baseFromCatalog !== '') {
+    return resolveDocumentKindBase(baseFromCatalog);
+  }
+
+  return resolveDocumentKindBase(row.document_kind);
+}
+
+function buildDocumentFilterParams(
+  filter: DocumentViewFilter,
+  lookupsRows: SalesLookups['document_kinds']
+): {
   documentKind?: string;
+  documentKindId?: string;
   conversionState?: 'PENDING' | 'CONVERTED';
 } {
+  const resolveKindIds = (): string | undefined => {
+    const selectedIds = lookupsRows
+      .filter((row) => {
+        const base = String(row.base_kind ?? '').toUpperCase();
+        const group = String(row.kind_group ?? '').toUpperCase();
+
+        if (filter === 'TRIBUTARY') {
+          return group !== 'PRE_DOCUMENT';
+        }
+
+        if (filter === 'QUOTATION') {
+          return base === 'QUOTATION';
+        }
+
+        if (filter === 'SALES_ORDER') {
+          return base === 'SALES_ORDER';
+        }
+
+        if (filter === 'PENDING_CONVERSION' || filter === 'CONVERTED') {
+          return group === 'PRE_DOCUMENT' || base === 'QUOTATION' || base === 'SALES_ORDER';
+        }
+
+        return false;
+      })
+      .map((row) => Number(row.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    return selectedIds.length > 0 ? selectedIds.join(',') : undefined;
+  };
+
+  const kindIds = resolveKindIds();
+
+  if (kindIds) {
+    if (filter === 'PENDING_CONVERSION') {
+      return { documentKindId: kindIds, conversionState: 'PENDING' };
+    }
+    if (filter === 'CONVERTED') {
+      return { documentKindId: kindIds, conversionState: 'CONVERTED' };
+    }
+    return { documentKindId: kindIds };
+  }
+
   if (filter === 'TRIBUTARY') {
     return { documentKind: 'INVOICE,RECEIPT,CREDIT_NOTE,DEBIT_NOTE' };
   }
@@ -525,6 +547,35 @@ type SunatToastState = {
   detail: string;
 };
 
+type SunatBridgeDebugState = {
+  documentId: number;
+  title: string;
+  loading: boolean;
+  error: string;
+  attempts: TaxBridgeAuditAttempt[];
+  selectedLogId: number | null;
+  loadingDetailLogId: number | null;
+  attemptDetails: Record<number, TaxBridgeAuditAttemptDetail | null | undefined>;
+  debug: {
+    bridge_mode?: string;
+    sunat_status?: string;
+    sunat_status_label?: string;
+    endpoint?: string;
+    method?: string;
+    content_type?: string;
+    form_key?: string;
+    payload?: unknown;
+    payload_length?: number | null;
+    payload_sha1?: string | null;
+    bridge_http_code?: number | null;
+    bridge_response?: unknown;
+    sunat_ticket?: string | null;
+    bridge_note?: string;
+    sunat_error_code?: string | null;
+    sunat_error_message?: string | null;
+  } | null;
+};
+
 type EditingDocumentContext = {
   id: number;
   documentKind: string;
@@ -533,7 +584,7 @@ type EditingDocumentContext = {
 };
 
 function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFilter {
-  const normalized = String(documentKind || '').toUpperCase();
+  const normalized = resolveDocumentKindBase(documentKind);
 
   if (['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(normalized)) {
     return 'TRIBUTARY';
@@ -639,7 +690,7 @@ function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: bo
     return false;
   }
 
-  if (!['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(String(row.document_kind).toUpperCase())) {
+  if (!isTributaryRow(row)) {
     return false;
   }
 
@@ -660,7 +711,7 @@ function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocument
     return false;
   }
 
-  if (!isTributaryDocumentKind(row.document_kind)) {
+  if (!isTributaryRow(row)) {
     return false;
   }
 
@@ -679,7 +730,9 @@ function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocument
 function canRequestSunatVoidCommunication(
   row: CommercialDocumentListItem
 ): boolean {
-  if (!['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(String(row.document_kind).toUpperCase())) {
+  const baseKind = resolveRowDocumentKindBase(row);
+
+  if (!['INVOICE', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(baseKind)) {
     return false;
   }
 
@@ -692,7 +745,7 @@ function canRequestSunatVoidCommunication(
 }
 
 function isReceiptDocument(row: CommercialDocumentListItem): boolean {
-  return String(row.document_kind ?? '').toUpperCase() === 'RECEIPT';
+  return resolveRowDocumentKindBase(row) === 'RECEIPT';
 }
 
 function canAddReceiptToDeclarationSummary(
@@ -745,7 +798,7 @@ function canOpenSunatActionsMenu(
   canVoidDocuments: boolean
 ): boolean {
   // Any ISSUED tributary doc that is ACCEPTED should always open (XML/CDR/NC/ND options)
-  if (isTributaryDocumentKind(row.document_kind)
+  if (isTributaryRow(row)
     && String(row.status).toUpperCase() === 'ISSUED'
     && String(row.sunat_status ?? '').toUpperCase() === 'ACCEPTED') {
     return true;
@@ -757,9 +810,63 @@ function canOpenSunatActionsMenu(
     || canAnulateAcceptedReceipt(row);
 }
 
+function isPendingManualSunat(row: CommercialDocumentListItem): boolean {
+  return String(row.sunat_status ?? '').trim().toUpperCase() === 'PENDING_MANUAL';
+}
+
 function isTributaryDocumentKind(kind: string | null | undefined): boolean {
-  const normalized = String(kind ?? '').toUpperCase();
+  const normalized = resolveDocumentKindBase(kind);
   return ['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(normalized);
+}
+
+function isTributaryRow(row: CommercialDocumentListItem): boolean {
+  const normalized = resolveRowDocumentKindBase(row);
+  if (['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(normalized)) {
+    return true;
+  }
+
+  if (row.is_tributary_document !== undefined && row.is_tributary_document !== null) {
+    return toBooleanFlag(row.is_tributary_document);
+  }
+
+  return String(row.sunat_status ?? '').trim() !== ''
+    || String(row.sunat_void_status ?? '').trim() !== ''
+    || toPositiveInt(row.sunat_summary_id) !== null
+    || toPositiveInt(row.sunat_void_summary_id) !== null;
+}
+
+function documentKindRequiresRuc(
+  kind: string | null | undefined,
+  options?: {
+    noteTargetKind?: string | null;
+    referenceDocumentKind?: string | null;
+  }
+): boolean {
+  const normalized = resolveDocumentKindBase(kind);
+
+  if (normalized === 'INVOICE') {
+    return true;
+  }
+
+  if (normalized === 'CREDIT_NOTE' || normalized === 'DEBIT_NOTE') {
+    const referenceBaseKind = resolveDocumentKindBase(options?.referenceDocumentKind ?? options?.noteTargetKind ?? '');
+    return referenceBaseKind === 'INVOICE';
+  }
+
+  return false;
+}
+
+function customerHasRuc(customer: SalesCustomerSuggestion | null): boolean {
+  if (!customer) {
+    return false;
+  }
+
+  const docType = String(customer.doc_type ?? '').trim().toUpperCase();
+  const docDigits = String(customer.doc_number ?? '').replace(/\D+/g, '');
+  const sunatType = Number(customer.customer_type_sunat_code ?? 0);
+  const hasRucType = docType === '6' || docType === '06' || docType === 'RUC' || sunatType === 6;
+
+  return hasRucType && docDigits.length === 11;
 }
 
 function canEditCommercialDocument(
@@ -773,8 +880,13 @@ function canEditCommercialDocument(
     return allowDraftEdit;
   }
 
-  if (status === 'ISSUED' && isTributaryDocumentKind(row.document_kind)) {
+  if (status === 'ISSUED' && isTributaryRow(row)) {
     return allowIssuedBeforeFinalSunatEdit && !resolveSunatUiState(row).isFinal;
+  }
+
+  // Allow editing QUOTATION and SALES_ORDER in ISSUED status if draft edit is allowed
+  if (status === 'ISSUED' && ['QUOTATION', 'SALES_ORDER'].includes(resolveRowDocumentKindBase(row))) {
+    return allowDraftEdit;
   }
 
   return false;
@@ -799,7 +911,7 @@ function resolveEditControlState(
     };
   }
 
-  if (status === 'ISSUED' && isTributaryDocumentKind(row.document_kind)) {
+  if (status === 'ISSUED' && isTributaryRow(row)) {
     const sunatUi = resolveSunatUiState(row);
     if (sunatUi.isFinal) {
       return {
@@ -910,44 +1022,26 @@ function summarizeSunatDiagnostic(code: string | null | undefined, message: stri
 
 function formatStoredDateTime(value: string): string {
   const raw = String(value || '').trim();
-  if (!raw) {
-    return '-';
+  if (!raw) return '-';
+
+  // Keep wall-clock when backend returns PostgreSQL style 'YYYY-MM-DD HH:mm:ss+00'.
+  const pgMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::\d{2})?[+-]\d{2}(?::?\d{2})?$/);
+  if (pgMatch) {
+    const [, year, month, day, hour, minute] = pgMatch;
+    return `${day}/${month}/${year}, ${hour}:${minute}`;
   }
 
-  const parsed = new Date(raw);
-  if (!Number.isNaN(parsed.getTime())) {
-    const parts = new Intl.DateTimeFormat('es-PE', {
-      timeZone: 'America/Lima',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    }).formatToParts(parsed);
+  return fmtDateTimeFullLima(raw);
+}
 
-    const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
-    const day = pick('day');
-    const month = pick('month');
-    const year = pick('year');
-    const hour = pick('hour');
-    const minute = pick('minute');
-    const second = pick('second');
-
-    if (day && month && year && hour && minute && second) {
-      return `${day}/${month}/${year}, ${hour}:${minute}:${second}`;
-    }
-
-    return new Intl.DateTimeFormat('es-PE', {
-      timeZone: 'America/Lima',
-      dateStyle: 'short',
-      timeStyle: 'medium',
-      hour12: false,
-    }).format(parsed);
+function stockToneClass(stock: number): 'stock-chip--danger' | 'stock-chip--warn' | 'stock-chip--ok' {
+  if (!Number.isFinite(stock) || stock <= 0) {
+    return 'stock-chip--danger';
   }
-
-  return raw;
+  if (stock <= 5) {
+    return 'stock-chip--warn';
+  }
+  return 'stock-chip--ok';
 }
 
 function resolveSalesFlowMode(features: Array<{ feature_code: string; is_enabled: boolean }>): SalesFlowMode {
@@ -958,6 +1052,43 @@ function resolveSalesFlowMode(features: Array<{ feature_code: string; is_enabled
 function featureEnabled(features: Array<{ feature_code: string; is_enabled: boolean }> | undefined, code: string, defaultValue = false): boolean {
   const row = (features ?? []).find((item) => item.feature_code === code);
   return row ? Boolean(row.is_enabled) : defaultValue;
+}
+
+function featureConfig(features: Array<{ feature_code: string; config?: unknown }> | undefined, code: string): Record<string, unknown> | null {
+  const row = (features ?? []).find((item) => item.feature_code === code);
+  return row && row.config && typeof row.config === 'object' ? row.config as Record<string, unknown> : null;
+}
+
+function normalizeAllowedRoleCodes(rawValue: unknown): string[] {
+  if (Array.isArray(rawValue)) {
+    return Array.from(new Set(rawValue.map((value) => String(value).trim().toUpperCase()).filter((value) => value !== '')));
+  }
+
+  if (typeof rawValue === 'string') {
+    return Array.from(new Set(rawValue
+      .split(/[;,\n\r]+/)
+      .map((value) => value.trim().toUpperCase())
+      .filter((value) => value !== '')));
+  }
+
+  return [];
+}
+
+function resolveDefaultPaymentMethodId(paymentMethods: SalesLookups['payment_methods'] | undefined, fallbackId: number): number {
+  const rows = paymentMethods ?? [];
+  const preferred = rows.find((row) => {
+    const code = String(row.code ?? '').trim().toUpperCase();
+    const name = String(row.name ?? '').trim().toUpperCase();
+
+    return code.includes('EFECT')
+      || code.includes('CASH')
+      || code.includes('CONTADO')
+      || name.includes('EFECTIVO')
+      || name.includes('CASH')
+      || name.includes('CONTADO');
+  });
+
+  return preferred?.id ?? rows[0]?.id ?? fallbackId;
 }
 
 function featureSource(features: Array<{ feature_code: string; vertical_source?: string | null }> | undefined, code: string): 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | 'FALLBACK' {
@@ -1006,6 +1137,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [documentViewFilter, setDocumentViewFilter] = useState<DocumentViewFilter>('ALL');
   const [customerSuggestions, setCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [productSuggestions, setProductSuggestions] = useState<InventoryProduct[]>([]);
+  const [stockRows, setStockRows] = useState<InventoryStockRow[]>([]);
   const [lots, setLots] = useState<InventoryLotRow[]>([]);
   const [restaurantTables, setRestaurantTables] = useState<RestaurantTableRow[]>([]);
   const [referenceDocuments, setReferenceDocuments] = useState<SalesReferenceDocument[]>([]);
@@ -1015,6 +1147,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [message, setMessage] = useState<string>('');
   const [sunatToast, setSunatToast] = useState<SunatToastState | null>(null);
   const [sunatSendingDocumentId, setSunatSendingDocumentId] = useState<number | null>(null);
+  const [sunatBridgeDebugState, setSunatBridgeDebugState] = useState<SunatBridgeDebugState | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<SalesCustomerSuggestion | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<InventoryProduct | null>(null);
   const [selectedProductCommercialConfig, setSelectedProductCommercialConfig] = useState<ProductCommercialConfig | null>(null);
@@ -1026,8 +1159,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [autoPriceDiscountPercent, setAutoPriceDiscountPercent] = useState(0);
   const [cart, setCart] = useState<SalesDraftItem[]>([]);
   const [showTaxBreakdown, setShowTaxBreakdown] = useState(false);
+  const [customerInputFocused, setCustomerInputFocused] = useState(false);
   const [activeCustomerIndex, setActiveCustomerIndex] = useState(-1);
   const [activeProductIndex, setActiveProductIndex] = useState(-1);
+  const [resolvingCustomerDocument, setResolvingCustomerDocument] = useState(false);
   const [issuedPreview, setIssuedPreview] = useState<null | {
     id: number;
     document_kind: string;
@@ -1086,6 +1221,27 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(initialDocumentAdvancedFilters);
   const [exportingDocuments, setExportingDocuments] = useState(false);
 
+  const documentKindLabelMap = useMemo(() => {
+    const map = new Map<string, string>();
+    (lookups?.document_kinds ?? []).forEach((row) => {
+      const code = String(row.code ?? '').trim().toUpperCase();
+      const label = String(row.label ?? '').trim();
+      if (code !== '' && label !== '') {
+        map.set(code, label);
+      }
+    });
+    return map;
+  }, [lookups?.document_kinds]);
+
+  function docKindLabelResolved(code: string | null | undefined): string {
+    if (!code) {
+      return '-';
+    }
+
+    const normalized = code.trim().toUpperCase();
+    return documentKindLabelMap.get(normalized) ?? docKindLabel(code);
+  }
+
   const [salesWorkspaceMode, setSalesWorkspaceMode] = useState<SalesWorkspaceMode>('SELL');
   const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('FULL');
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
@@ -1105,6 +1261,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
   const isAdminUser = normalizedRoleCode.includes('ADMIN');
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
+  const isTechnicalUser = isAdminUser
+    || normalizedRoleCode.includes('SOPORTE')
+    || normalizedRoleCode.includes('TECH')
+    || normalizedRoleCode.includes('TECNIC')
+    || normalizedRoleCode.includes('SISTEM')
+    || normalizedRoleCode.includes('DEV');
   const isSeparatedMode = salesFlowMode === 'SELLER_TO_CASHIER';
   const isRestaurantVertical = (activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT';
   const canUseSellWorkspace = true;
@@ -1128,8 +1290,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         : false;
   const canVoidDocumentsInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID', true) && canVoidByProfile;
   const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
+  const stockByProductId = useMemo(() => {
+    const stockMap = new Map<number, number>();
+    stockRows.forEach((row) => {
+      const current = stockMap.get(row.product_id) ?? 0;
+      stockMap.set(row.product_id, current + Number(row.stock ?? 0));
+    });
+    return stockMap;
+  }, [stockRows]);
   const advancesEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ANTICIPO_ENABLED', false);
+  const salesGlobalDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_GLOBAL_DISCOUNT_ENABLED', false);
+  const salesItemDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ITEM_DISCOUNT_ENABLED', false);
+  const salesFreeItemsEnabled = featureEnabled(lookups?.commerce_features, 'SALES_FREE_ITEMS_ENABLED', false);
   const taxBridgeEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE', false);
+  const taxBridgeDebugEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE_DEBUG_VIEW', false);
+  const taxBridgeDebugConfig = featureConfig(lookups?.commerce_features, 'SALES_TAX_BRIDGE_DEBUG_VIEW');
+  const taxBridgeDebugAllowedRoleCodes = normalizeAllowedRoleCodes(taxBridgeDebugConfig?.allowed_role_codes);
+  const canViewTaxBridgeDebug = taxBridgeEnabled
+    && taxBridgeDebugEnabled
+    && (
+      taxBridgeDebugAllowedRoleCodes.length > 0
+        ? taxBridgeDebugAllowedRoleCodes.includes(normalizedRoleCode) || taxBridgeDebugAllowedRoleCodes.includes(normalizedRoleProfile)
+        : isTechnicalUser
+    );
   const sellerToCashierSource = featureSource(lookups?.commerce_features, 'SALES_SELLER_TO_CASHIER');
   const taxBridgeSource = featureSource(lookups?.commerce_features, 'SALES_TAX_BRIDGE');
   const documentVoidSource = featureSource(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID');
@@ -1214,6 +1397,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const submitButtonRef = useRef<HTMLButtonElement | null>(null);
   const focusedReportRowRef = useRef<HTMLTableRowElement | null>(null);
   const suppressNextPinnedResetRef = useRef(false);
+  const suppressNextCustomerAutocompleteRef = useRef(false);
 
   useEffect(() => {
     if (!sunatToast) {
@@ -1269,18 +1453,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [documentViewFilter, documentsPage]);
 
   const isTributaryDocument = useMemo(() => {
+    const row = (lookups?.document_kinds ?? []).find((item) => item.code === form.documentKind);
+    if (row) {
+      return row.kind_group !== 'PRE_DOCUMENT';
+    }
     return TRIBUTARY_DOCUMENTS.includes(form.documentKind);
-  }, [form.documentKind]);
+  }, [form.documentKind, lookups?.document_kinds]);
   const effectiveDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
-  const isCreditNote = effectiveDocumentKind === 'CREDIT_NOTE';
-  const isDebitNote = effectiveDocumentKind === 'DEBIT_NOTE';
+  const selectedEffectiveDocumentKind = useMemo(() => {
+    return (lookups?.document_kinds ?? []).find((row) => row.code === effectiveDocumentKind) ?? null;
+  }, [effectiveDocumentKind, lookups?.document_kinds]);
+  const effectiveDocumentKindBase = selectedEffectiveDocumentKind?.base_kind ?? resolveDocumentKindBase(effectiveDocumentKind);
+  const effectiveDocumentKindGroup = selectedEffectiveDocumentKind?.kind_group
+    ?? (effectiveDocumentKindBase === 'QUOTATION' || effectiveDocumentKindBase === 'SALES_ORDER' ? 'PRE_DOCUMENT' : 'TRIBUTARY');
+  const noteTargetDocumentKind = selectedEffectiveDocumentKind?.note_target_kind ?? null;
+  const isCreditNote = effectiveDocumentKindGroup === 'NOTE_CREDIT';
+  const isDebitNote = effectiveDocumentKindGroup === 'NOTE_DEBIT';
   const isNoteDocument = isCreditNote || isDebitNote;
-  const isCurrentPreDocument = effectiveDocumentKind === 'QUOTATION' || effectiveDocumentKind === 'SALES_ORDER';
+  const isCurrentPreDocument = effectiveDocumentKindGroup === 'PRE_DOCUMENT';
   const canCreateDocumentInCurrentMode = !isSeparatedMode || !isCashierUser || !isCurrentPreDocument;
   const activeNoteReasons = isCreditNote
-    ? (lookups?.credit_note_reasons ?? [])
+    ? ((lookups?.credit_note_reasons ?? []).length > 0 ? (lookups?.credit_note_reasons ?? []) : DEFAULT_CREDIT_NOTE_REASONS)
     : isDebitNote
-      ? (lookups?.debit_note_reasons ?? [])
+      ? ((lookups?.debit_note_reasons ?? []).length > 0 ? (lookups?.debit_note_reasons ?? []) : DEFAULT_DEBIT_NOTE_REASONS)
       : [];
   const selectedReferenceDocument = referenceDocuments.find((row) => row.id === Number(form.noteAffectedDocumentId ?? 0)) ?? null;
 
@@ -1296,13 +1491,41 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return Number(selectedTaxCategory?.rate_percent ?? 0);
   }, [isTributaryDocument, selectedTaxCategory]);
 
+  const inventorySettings = lookups?.inventory_settings ?? null;
+  const inventoryProEnabled = Boolean(inventorySettings?.enable_inventory_pro);
+  const lotTrackingEnabled = inventoryProEnabled && Boolean(inventorySettings?.enable_lot_tracking);
+  const lotOutflowStrategy = inventorySettings?.lot_outflow_strategy ?? 'MANUAL';
+  const manualLotSelectionEnabled = lotTrackingEnabled && lotOutflowStrategy === 'MANUAL';
+  const resolvedDraftLotId = !manualLotSelectionEnabled || form.isManualItem ? null : form.lotId;
+
   const isDraftPriceTaxInclusive = isTributaryDocument && priceTaxMode === 'INCLUSIVE';
   const draftLineTotals = useMemo(() => {
     return computeLineTotals(Number(form.qty), Number(form.unitPrice), draftTaxRate, isDraftPriceTaxInclusive);
   }, [draftTaxRate, form.qty, form.unitPrice, isDraftPriceTaxInclusive]);
   const draftSubtotal = useMemo(() => draftLineTotals.subtotal, [draftLineTotals]);
   const draftTaxTotal = useMemo(() => draftLineTotals.tax, [draftLineTotals]);
-  const draftGrandTotal = useMemo(() => draftLineTotals.total, [draftLineTotals]);
+  const draftLineDiscountTotal = useMemo(() => {
+    if (!salesItemDiscountEnabled && !salesFreeItemsEnabled) {
+      return 0;
+    }
+
+    return computeSalesDraftAmounts({
+      productId: form.isManualItem ? null : form.productId,
+      unitId: form.unitId,
+      lotId: resolvedDraftLotId,
+      taxCategoryId: isTributaryDocument ? form.taxCategoryId : null,
+      priceIncludesTax: isDraftPriceTaxInclusive,
+      taxRate: draftTaxRate,
+      taxLabel: isTributaryDocument ? (selectedTaxCategory?.label ?? 'IGV') : 'Sin IGV',
+      isManual: form.isManualItem,
+      description: '',
+      qty: Number(form.qty),
+      unitPrice: Number(form.unitPrice),
+      discountTotal: salesItemDiscountEnabled ? Number(form.draftLineDiscount ?? 0) : 0,
+      isFreeOperation: salesFreeItemsEnabled ? Boolean(form.draftIsFreeOperation) : false,
+    }).discountTotal;
+  }, [draftTaxRate, form.draftIsFreeOperation, form.draftLineDiscount, form.isManualItem, form.productId, form.qty, form.taxCategoryId, form.unitId, form.unitPrice, isDraftPriceTaxInclusive, isTributaryDocument, resolvedDraftLotId, salesFreeItemsEnabled, salesItemDiscountEnabled, selectedTaxCategory]);
+  const draftGrandTotal = useMemo(() => Math.max(draftLineTotals.total - draftLineDiscountTotal, 0), [draftLineDiscountTotal, draftLineTotals.total]);
   const draftConversionFactor = useMemo(() => {
     if (form.isManualItem) {
       return 1;
@@ -1314,27 +1537,30 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
   const subtotal = useMemo(() => {
     return cart.reduce((acc, item) => {
-      const line = computeLineTotals(
-        Number(item.qty),
-        Number(item.unitPrice),
-        Number(item.taxRate ?? 0),
-        Boolean(item.priceIncludesTax)
-      );
+      const line = computeSalesDraftAmounts(item);
       return acc + line.subtotal;
     }, 0);
   }, [cart]);
   const taxTotal = useMemo(() => {
     return cart.reduce((acc, item) => {
-      const line = computeLineTotals(
-        Number(item.qty),
-        Number(item.unitPrice),
-        Number(item.taxRate ?? 0),
-        Boolean(item.priceIncludesTax)
-      );
+      const line = computeSalesDraftAmounts(item);
       return acc + line.tax;
     }, 0);
   }, [cart]);
-  const grandTotal = useMemo(() => subtotal + taxTotal, [subtotal, taxTotal]);
+  const itemDiscountTotal = useMemo(() => {
+    return cart.reduce((acc, item) => acc + computeSalesDraftAmounts(item).discountTotal, 0);
+  }, [cart]);
+  const globalDiscountAmount = useMemo(() => {
+    if (!salesGlobalDiscountEnabled) {
+      return 0;
+    }
+
+    return Math.min(
+      Math.max(Number(form.globalDiscountAmount ?? 0), 0),
+      Math.max(subtotal + taxTotal - itemDiscountTotal, 0)
+    );
+  }, [form.globalDiscountAmount, itemDiscountTotal, salesGlobalDiscountEnabled, subtotal, taxTotal]);
+  const grandTotal = useMemo(() => Math.max(subtotal + taxTotal - itemDiscountTotal - globalDiscountAmount, 0), [globalDiscountAmount, itemDiscountTotal, subtotal, taxTotal]);
   const creditInstallments = form.creditInstallments ?? [];
   const normalizedAdvanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
   const cappedAdvanceAmount = Math.min(normalizedAdvanceAmount, grandTotal);
@@ -1348,7 +1574,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return code.includes('CREDIT') || code.includes('CREDITO') || name.includes('CREDITO') || name.includes('CRÉDITO');
   }, [lookups?.payment_methods, form.paymentMethodId]);
 
-  const isInvoiceDocument = effectiveDocumentKind === 'INVOICE';
+  const isInvoiceDocument = effectiveDocumentKindBase === 'INVOICE';
   const selectedDetractionService = useMemo(() => {
     if (!isInvoiceDocument || !form.hasDetraccion || !form.detraccionServiceCode) {
       return null;
@@ -1367,6 +1593,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const pickOperationTypeCode = (regime: 'NONE' | 'DETRACCION' | 'RETENCION' | 'PERCEPCION'): string => {
     return (
       sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === regime)?.code
+      ?? sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'NONE')?.code
+      ?? sunatOperationTypes.find((row) => row.code === '0101')?.code
       ?? sunatOperationTypes[0]?.code
       ?? ''
     );
@@ -1412,18 +1640,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     if (!form.sunatOperationTypeCode) {
       if (form.hasDetraccion) {
-        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'DETRACCION') ?? sunatOperationTypes[0] ?? null;
+        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'DETRACCION') ?? null;
       }
       if (form.hasRetencion) {
-        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'RETENCION') ?? sunatOperationTypes[0] ?? null;
+        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'RETENCION') ?? null;
       }
       if (form.hasPercepcion) {
-        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'PERCEPCION') ?? sunatOperationTypes[0] ?? null;
+        return sunatOperationTypes.find((row) => (row.regime ?? 'NONE') === 'PERCEPCION') ?? null;
       }
-      return sunatOperationTypes[0] ?? null;
+      return null;
     }
 
-    return sunatOperationTypes.find((row) => row.code === form.sunatOperationTypeCode) ?? sunatOperationTypes[0] ?? null;
+    return sunatOperationTypes.find((row) => row.code === form.sunatOperationTypeCode) ?? null;
   }, [form.hasDetraccion, form.hasRetencion, form.hasPercepcion, form.sunatOperationTypeCode, sunatOperationTypes]);
 
   useEffect(() => {
@@ -1432,6 +1660,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     const regime = selectedSunatOperationType.regime ?? 'NONE';
+    if (regime !== 'DETRACCION' && regime !== 'RETENCION' && regime !== 'PERCEPCION') {
+      return;
+    }
 
     setForm((prev) => {
       const nextState = {
@@ -1468,13 +1699,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return lookups?.currencies.find((row) => row.id === form.currencyId) ?? null;
   }, [lookups, form.currencyId]);
 
-  const inventorySettings = lookups?.inventory_settings ?? null;
-  const inventoryProEnabled = Boolean(inventorySettings?.enable_inventory_pro);
-  const lotTrackingEnabled = inventoryProEnabled && Boolean(inventorySettings?.enable_lot_tracking);
-  const lotOutflowStrategy = inventorySettings?.lot_outflow_strategy ?? 'MANUAL';
-  const manualLotSelectionEnabled = lotTrackingEnabled && lotOutflowStrategy === 'MANUAL';
-  const resolvedDraftLotId = !manualLotSelectionEnabled || form.isManualItem ? null : form.lotId;
-
   const defaultEnabledUnit = useMemo(() => {
     return lookups?.units?.[0] ?? null;
   }, [lookups]);
@@ -1485,7 +1709,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     setForm((prev) => {
-      if (prev.hasDetraccion) {
+      if (prev.hasDetraccion || prev.hasRetencion || prev.hasPercepcion) {
         return prev;
       }
 
@@ -1652,11 +1876,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         description: draftDescription,
         qty: Number(form.qty),
         unitPrice: Number(form.unitPrice),
+        discountTotal: salesItemDiscountEnabled ? Number(form.draftLineDiscount ?? 0) : 0,
+        isFreeOperation: salesFreeItemsEnabled ? Boolean(form.draftIsFreeOperation) : false,
       },
     ];
   }, [
     canAddDraftItem,
     cart,
+    draftConversionFactor,
+    draftQtyBase,
+    draftTaxRate,
+    form.draftIsFreeOperation,
+    form.draftLineDiscount,
     form.isManualItem,
     form.manualDescription,
     form.productId,
@@ -1664,13 +1895,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     form.taxCategoryId,
     form.unitId,
     form.unitPrice,
+    isDraftPriceTaxInclusive,
     isTributaryDocument,
     resolvedDraftLotId,
+    salesFreeItemsEnabled,
+    salesItemDiscountEnabled,
     selectedProduct,
-    draftQtyBase,
-    draftConversionFactor,
-    draftTaxRate,
-    isDraftPriceTaxInclusive,
     selectedTaxCategory,
   ]);
 
@@ -1700,33 +1930,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const category = categories.find((row) => row.id === item.taxCategoryId) ?? null;
       const code = String(category?.code ?? '').trim();
       const ratePercent = Number(item.taxRate ?? category?.rate_percent ?? 0);
-      const line = computeLineTotals(
-        Number(item.qty),
-        Number(item.unitPrice),
-        ratePercent,
-        Boolean(item.priceIncludesTax)
-      );
+      const line = computeSalesDraftAmounts({
+        ...item,
+        taxRate: ratePercent,
+      });
       const subtotalValue = line.subtotal;
       const taxValue = line.tax;
 
-      const isFreeTransfer = code === '21' || code === '37';
+      const isFreeTransfer = code === '21' || code === '37' || line.isFreeOperation;
       const isGravada = /^1\d$/.test(code);
       const isExonerada = /^2\d$/.test(code) && !isFreeTransfer;
       const isInafecta = /^3\d$/.test(code) && !isFreeTransfer;
 
       if (isFreeTransfer) {
-        base.gratuitaTotal += subtotalValue;
+        base.gratuitaTotal += line.gratuitaTotal || subtotalValue;
+        base.discountTotal += line.discountTotal;
       } else if (isGravada) {
         base.gravadaTotal += subtotalValue;
         base.igvTotal += taxValue;
+        base.discountTotal += line.discountTotal;
 
         if (firstGravadaRate === null && ratePercent > 0) {
           firstGravadaRate = ratePercent;
         }
       } else if (isExonerada) {
         base.exoneradaTotal += subtotalValue;
+        base.discountTotal += line.discountTotal;
       } else if (isInafecta) {
         base.inafectaTotal += subtotalValue;
+        base.discountTotal += line.discountTotal;
       } else {
         if (ratePercent > 0) {
           base.gravadaTotal += subtotalValue;
@@ -1734,6 +1966,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         } else {
           base.inafectaTotal += subtotalValue;
         }
+        base.discountTotal += line.discountTotal;
       }
     }
 
@@ -1743,26 +1976,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       base.exoneradaTotal +
       base.inafectaTotal +
       base.igvTotal +
-      base.otherChargesTotal;
+      base.otherChargesTotal -
+      globalDiscountAmount -
+      base.discountTotal;
+
+    if (base.grandTotal < 0) {
+      base.grandTotal = 0;
+    }
 
     return base;
-  }, [isTributaryDocument, lookups, previewItems]);
+  }, [globalDiscountAmount, isTributaryDocument, lookups, previewItems]);
 
   const previewSummaryTotals = useMemo(() => {
     return previewItems.reduce((acc, item) => {
-      const line = computeLineTotals(
-        Number(item.qty),
-        Number(item.unitPrice),
-        Number(item.taxRate ?? 0),
-        Boolean(item.priceIncludesTax)
-      );
+      const line = computeSalesDraftAmounts(item);
 
       acc.subtotal += line.subtotal;
       acc.tax += line.tax;
-      acc.total += line.total;
+      acc.discount += line.discountTotal;
+      acc.total += line.finalTotal;
       return acc;
-    }, { subtotal: 0, tax: 0, total: 0 });
-  }, [previewItems]);
+    }, { subtotal: 0, tax: 0, discount: globalDiscountAmount, total: -globalDiscountAmount });
+  }, [globalDiscountAmount, previewItems]);
 
   async function loadData() {
     setLoading(true);
@@ -1773,19 +2008,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         shouldPrioritizePendingOrders
         && cashierReportPanelMode === 'PENDING'
         && documentViewFilter === 'PENDING_CONVERSION';
-      const filterParams = isCashierPendingQueue
-        ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
-        : buildDocumentFilterParams(documentViewFilter);
-      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
-      const [lookupRows, docs] = await Promise.all([
-        fetchSalesLookups(accessToken, { branchId }),
-        salesWorkspaceMode === 'REPORT'
-          ? fetchCommercialDocuments(accessToken, {
-              branchId,
-              warehouseId,
-              cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
-              documentKind: filterParams.documentKind,
-              conversionState: filterParams.conversionState,
+
+      const bootstrap = await fetchSalesBootstrap(accessToken, {
+        branchId,
+        warehouseId,
+        cashRegisterId: shouldApplyCashRegisterFilter() ? cashRegisterId : null,
+        includeDocuments: salesWorkspaceMode === 'REPORT',
+        ...(salesWorkspaceMode === 'REPORT'
+          ? {
+              ...buildDocumentFilterParams(
+                isCashierPendingQueue ? 'PENDING_CONVERSION' : documentViewFilter,
+                (lookups?.document_kinds ?? [])
+              ),
               status: documentFiltersApplied.status || undefined,
               customer: documentFiltersApplied.customer || undefined,
               issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
@@ -1794,9 +2028,24 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               number: documentFiltersApplied.number || undefined,
               page: documentsPage,
               perPage: documentsMeta.per_page,
-            })
-          : Promise.resolve(null),
-      ]);
+            }
+          : {}),
+      });
+
+      const lookupRows = bootstrap.lookups;
+
+      let docs = bootstrap.documents;
+      if (salesWorkspaceMode === 'REPORT' && docs == null) {
+        docs = {
+          data: [],
+          meta: {
+            page: documentsPage,
+            per_page: documentsMeta.per_page,
+            total: 0,
+            last_page: 1,
+          },
+        };
+      }
 
       setLookups(lookupRows);
       const commerceFeatures = lookupRows.commerce_features ?? [];
@@ -1811,7 +2060,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       }
 
       const defaultCurrency = lookupRows.currencies.find((row) => row.is_default) ?? lookupRows.currencies[0];
-      const defaultPayment = lookupRows.payment_methods[0];
+      const defaultPaymentMethodId = resolveDefaultPaymentMethodId(lookupRows.payment_methods, initialForm.paymentMethodId || 1);
       const defaultTaxCategory = lookupRows.tax_categories.find((row) => Number(row.rate_percent) > 0)
         ?? lookupRows.tax_categories[0]
         ?? null;
@@ -1819,7 +2068,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setForm((prev) => ({
         ...prev,
         currencyId: prev.currencyId || defaultCurrency?.id || 1,
-        paymentMethodId: prev.paymentMethodId || defaultPayment?.id || 1,
+        paymentMethodId: prev.paymentMethodId || defaultPaymentMethodId,
         unitId: prev.unitId || lookupRows.units?.[0]?.id || null,
         taxCategoryId: prev.taxCategoryId || defaultTaxCategory?.id || null,
         documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
@@ -1882,8 +2131,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
+        if (suppressNextCustomerAutocompleteRef.current) {
+          suppressNextCustomerAutocompleteRef.current = false;
+          setCustomerSuggestions([]);
+          setActiveCustomerIndex(-1);
+          return;
+        }
+
+        if (!customerInputFocused) {
+          setCustomerSuggestions([]);
+          setActiveCustomerIndex(-1);
+          return;
+        }
+
         if (form.customerQuery.trim().length < 2) {
           setCustomerSuggestions([]);
+          setActiveCustomerIndex(-1);
           return;
         }
 
@@ -1898,7 +2161,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }, 200);
 
     return () => clearTimeout(timer);
-  }, [accessToken, form.customerQuery]);
+  }, [accessToken, form.customerQuery, customerInputFocused]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -1925,6 +2188,27 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [accessToken, form.productQuery, warehouseId]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const rows = await fetchSalesInventoryStock(accessToken, { warehouseId });
+        if (!cancelled) {
+          setStockRows(rows);
+        }
+      } catch {
+        if (!cancelled) {
+          setStockRows([]);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, warehouseId]);
+
+  useEffect(() => {
     if (!isNoteDocument || !form.customerId) {
       setReferenceDocuments([]);
       setLoadingReferenceDocument(false);
@@ -1944,17 +2228,32 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         const rows = await fetchReferenceDocuments(accessToken, {
           customerId: Number(form.customerId),
           branchId,
+          documentKindId: selectedEffectiveDocumentKind?.id ?? null,
           noteKind: isCreditNote ? 'CREDIT_NOTE' : isDebitNote ? 'DEBIT_NOTE' : null,
           limit: 120,
         });
+
+        const fallbackRows = (rows.length === 0 && branchId)
+          ? await fetchReferenceDocuments(accessToken, {
+              customerId: Number(form.customerId),
+              documentKindId: selectedEffectiveDocumentKind?.id ?? null,
+              noteKind: isCreditNote ? 'CREDIT_NOTE' : isDebitNote ? 'DEBIT_NOTE' : null,
+              limit: 120,
+            })
+          : rows;
 
         if (cancelled) {
           return;
         }
 
-        setReferenceDocuments(rows);
-        const hasCurrent = rows.some((row) => row.id === Number(form.noteAffectedDocumentId ?? 0));
-        const autoId = hasCurrent ? Number(form.noteAffectedDocumentId ?? 0) : (rows[0]?.id ?? 0);
+        const expectedTargetKind = noteTargetDocumentKind ?? 'RECEIPT';
+        const allowedRows = fallbackRows.filter((row) => String(row.document_kind ?? '').toUpperCase() === expectedTargetKind);
+        setReferenceDocuments(allowedRows);
+        if (allowedRows.length === 0) {
+          setMessage(`No hay comprobantes ${expectedTargetKind === 'RECEIPT' ? 'boleta' : 'factura'} disponibles para afectar con este cliente.`);
+        }
+        const hasCurrent = allowedRows.some((row) => row.id === Number(form.noteAffectedDocumentId ?? 0));
+        const autoId = hasCurrent ? Number(form.noteAffectedDocumentId ?? 0) : (allowedRows[0]?.id ?? 0);
 
         setForm((prev) => ({
           ...prev,
@@ -1980,7 +2279,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return () => {
       cancelled = true;
     };
-  }, [accessToken, branchId, form.customerId, isCreditNote, isDebitNote, isNoteDocument]);
+  }, [accessToken, branchId, form.customerId, isCreditNote, isDebitNote, isNoteDocument, noteTargetDocumentKind, selectedEffectiveDocumentKind?.id]);
 
   useEffect(() => {
     if (!isNoteDocument) {
@@ -2112,6 +2411,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, []);
 
   function chooseCustomer(customer: SalesCustomerSuggestion) {
+    suppressNextCustomerAutocompleteRef.current = true;
     setSelectedCustomer(customer);
     setForm((prev) => ({
       ...prev,
@@ -2154,6 +2454,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setAutoPriceTierId(auto.priceTierId);
       setAutoPriceDiscountPercent(auto.discountPercent);
       setForm((prev) => ({ ...prev, unitPrice: auto.price }));
+    }
+  }
+
+  async function resolveCustomerFromPadron() {
+    const document = (form.customerQuery ?? '').replace(/\D+/g, '').trim();
+
+    if (document.length !== 8 && document.length !== 11) {
+      setMessage('Ingrese un DNI (8) o RUC (11) para consultar.');
+      return;
+    }
+
+    try {
+      setResolvingCustomerDocument(true);
+      setMessage('Consultando padron...');
+      const resolved = await resolveCustomerByDocument(accessToken, document);
+      chooseCustomer(resolved.data);
+      setMessage(resolved.message);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo consultar el documento';
+      setMessage(text);
+    } finally {
+      setResolvingCustomerDocument(false);
     }
   }
 
@@ -2295,6 +2617,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  function handleCustomerSuggestBlur(event: React.FocusEvent<HTMLElement>) {
+    const nextTarget = event.relatedTarget as Node | null;
+    if (nextTarget && event.currentTarget.contains(nextTarget)) {
+      return;
+    }
+
+    setCustomerInputFocused(false);
+    setCustomerSuggestions([]);
+    setActiveCustomerIndex(-1);
+  }
+
   function handleProductKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (productSuggestions.length === 0) {
       return;
@@ -2342,33 +2675,76 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       ? Number(form.unitPrice || 0) / (1 + (itemTaxRate / 100))
       : Number(form.unitPrice || 0);
 
-    setCart((prev) => [
-      ...prev,
-      {
-        productId: form.isManualItem ? null : form.productId,
-        unitId: form.unitId,
-        lotId: resolvedDraftLotId,
-        taxCategoryId: isTributaryDocument ? form.taxCategoryId : null,
-        priceIncludesTax: isDraftPriceTaxInclusive,
-        qtyBase: form.isManualItem ? null : Number(draftQtyBase),
-        conversionFactor: form.isManualItem ? null : Number(draftConversionFactor),
-        baseUnitPrice:
-          form.isManualItem
-            ? null
-            : Number(normalizedUnitPrice || 0) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
-        taxRate: itemTaxRate,
-        taxLabel: isTributaryDocument
-          ? (currentTaxCategory?.label ?? 'IGV')
-          : 'Sin IGV',
-        isManual: form.isManualItem,
-        description,
-        qty: Number(form.qty),
-        unitPrice: Number(form.unitPrice),
-      },
-    ]);
+    const draftItem: SalesDraftItem = {
+      productId: form.isManualItem ? null : form.productId,
+      unitId: form.unitId,
+      lotId: resolvedDraftLotId,
+      taxCategoryId: isTributaryDocument ? form.taxCategoryId : null,
+      priceIncludesTax: isDraftPriceTaxInclusive,
+      qtyBase: form.isManualItem ? null : Number(draftQtyBase),
+      conversionFactor: form.isManualItem ? null : Number(draftConversionFactor),
+      baseUnitPrice:
+        form.isManualItem
+          ? null
+          : Number(normalizedUnitPrice || 0) / Math.max(Number(draftConversionFactor || 1), 0.00000001),
+      taxRate: itemTaxRate,
+      taxLabel: isTributaryDocument
+        ? (currentTaxCategory?.label ?? 'IGV')
+        : 'Sin IGV',
+      isManual: form.isManualItem,
+      description,
+      qty: Number(form.qty),
+      unitPrice: Number(form.unitPrice),
+      discountTotal: salesItemDiscountEnabled ? Number(form.draftLineDiscount ?? 0) : 0,
+      isFreeOperation: salesFreeItemsEnabled ? Boolean(form.draftIsFreeOperation) : false,
+    };
+
+    setCart((prev) => {
+      if (draftItem.isManual) {
+        return [...prev, draftItem];
+      }
+
+      const mergeIndex = prev.findIndex((row) => {
+        if (row.isManual) {
+          return false;
+        }
+
+        return row.productId === draftItem.productId
+          && row.unitId === draftItem.unitId
+          && row.lotId === draftItem.lotId
+          && row.taxCategoryId === draftItem.taxCategoryId
+          && Boolean(row.priceIncludesTax) === Boolean(draftItem.priceIncludesTax)
+          && Math.abs(Number(row.unitPrice) - Number(draftItem.unitPrice)) < 0.000001;
+      });
+
+      if (mergeIndex < 0) {
+        return [...prev, draftItem];
+      }
+
+      return prev.map((row, index) => {
+        if (index !== mergeIndex) {
+          return row;
+        }
+
+        const mergedQty = Number(row.qty) + Number(draftItem.qty);
+        const rowQtyBase = row.qtyBase != null ? Number(row.qtyBase) : null;
+        const draftQtyBaseNumber = draftItem.qtyBase != null ? Number(draftItem.qtyBase) : null;
+        const mergedQtyBase = rowQtyBase !== null || draftQtyBaseNumber !== null
+          ? Number((rowQtyBase ?? 0) + (draftQtyBaseNumber ?? 0))
+          : null;
+
+        return {
+          ...row,
+          qty: mergedQty,
+          qtyBase: mergedQtyBase,
+        };
+      });
+    });
 
     setForm((prev) => ({
       ...prev,
+      draftIsFreeOperation: false,
+      draftLineDiscount: 0,
       qty: 1,
     }));
 
@@ -2457,6 +2833,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         description: item.description,
         qty: Number(item.qty),
         unitPrice: Number(item.unitPrice),
+        discountTotal: Number((item.metadata?.descuento ?? item.metadata?.discount_total ?? 0) || 0),
+        isFreeOperation: Boolean(item.metadata?.is_free_operation),
+        freeOperationTotal: Number((item.metadata?.gratuitas ?? item.metadata?.free_operation_total ?? 0) || 0),
       }));
 
       setCart(rows);
@@ -2531,7 +2910,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setCart((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function updateDraftItem(index: number, field: 'qty' | 'unitPrice', value: number) {
+  function updateDraftItem(
+    index: number,
+    field: 'qty' | 'unitPrice' | 'discountTotal' | 'isFreeOperation',
+    value: number | boolean
+  ) {
     setCart((prev) =>
       prev.map((row, i) => {
         if (i !== index) {
@@ -2592,6 +2975,157 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         : buildCommercialDocumentA4Html(issuedPreview.printable, { embedded: true }),
       variant: format === '80mm' ? 'compact' : 'wide',
     });
+  }
+
+  function formatDebugJson(value: unknown): string {
+    if (value === null || value === undefined) {
+      return 'null';
+    }
+
+    if (typeof value === 'string') {
+      const raw = value.trim();
+      if (raw === '') {
+        return '""';
+      }
+
+      try {
+        const parsed = JSON.parse(raw);
+        return JSON.stringify(parsed, null, 2);
+      } catch {
+        return raw;
+      }
+    }
+
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  }
+
+  async function handleToggleSunatBridgeDebug(row: CommercialDocumentListItem) {
+    if (!canViewTaxBridgeDebug) {
+      return;
+    }
+
+    if (sunatBridgeDebugState?.documentId === row.id) {
+      setSunatBridgeDebugState(null);
+      return;
+    }
+
+    const title = `${docKindLabelResolved(row.document_kind)} ${row.series}-${String(row.number).padStart(6, '0')}`;
+    setSunatBridgeDebugState({
+      documentId: row.id,
+      title,
+      loading: true,
+      error: '',
+      attempts: [],
+      selectedLogId: null,
+      loadingDetailLogId: null,
+      attemptDetails: {},
+      debug: null,
+    });
+
+    try {
+      const history = await fetchTaxBridgeAuditDocumentHistory(accessToken, row.id, 50);
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.documentId !== row.id) {
+          return prev;
+        }
+
+        const firstLogId = history.logs.length > 0 ? history.logs[0].id : null;
+
+        return {
+          ...prev,
+          loading: false,
+          error: '',
+          attempts: history.logs,
+          selectedLogId: firstLogId,
+          debug: null,
+        };
+      });
+
+      if (history.logs.length > 0) {
+        await loadSunatAuditAttemptDetail(row.id, history.logs[0].id);
+        return;
+      }
+
+      const response = await fetchTaxBridgeDebug(accessToken, row.id);
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.documentId !== row.id) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          debug: response.debug ?? null,
+        };
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo obtener el detalle técnico del puente SUNAT';
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.documentId !== row.id) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          loading: false,
+          error: text,
+          debug: null,
+        };
+      });
+    }
+  }
+
+  async function loadSunatAuditAttemptDetail(documentId: number, logId: number) {
+    setSunatBridgeDebugState((prev) => {
+      if (!prev || prev.documentId !== documentId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        selectedLogId: logId,
+        loadingDetailLogId: logId,
+        error: '',
+      };
+    });
+
+    try {
+      const detail = await fetchTaxBridgeAuditAttemptDetail(accessToken, logId);
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.documentId !== documentId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          loadingDetailLogId: null,
+          attemptDetails: {
+            ...prev.attemptDetails,
+            [logId]: detail,
+          },
+        };
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo cargar el intento seleccionado';
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.documentId !== documentId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          loadingDetailLogId: null,
+          error: text,
+          attemptDetails: {
+            ...prev.attemptDetails,
+            [logId]: null,
+          },
+        };
+      });
+    }
   }
 
   async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
@@ -2673,15 +3207,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         shouldPrioritizePendingOrders
         && cashierReportPanelMode === 'PENDING'
         && documentViewFilter === 'PENDING_CONVERSION';
+      const pendingFilterParams = buildDocumentFilterParams('PENDING_CONVERSION', lookups?.document_kinds ?? []);
       const filterParams = isCashierPendingQueue
-        ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
-        : buildDocumentFilterParams(documentViewFilter);
+        ? pendingFilterParams
+        : buildDocumentFilterParams(documentViewFilter, lookups?.document_kinds ?? []);
       const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
       const result = await exportCommercialDocumentsExcel(accessToken, {
         branchId,
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
         documentKind: filterParams.documentKind,
+        documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         customer: documentFiltersApplied.customer || undefined,
@@ -2716,15 +3252,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         shouldPrioritizePendingOrders
         && cashierReportPanelMode === 'PENDING'
         && documentViewFilter === 'PENDING_CONVERSION';
+      const pendingFilterParams = buildDocumentFilterParams('PENDING_CONVERSION', lookups?.document_kinds ?? []);
       const filterParams = isCashierPendingQueue
-        ? { documentKind: 'QUOTATION', conversionState: 'PENDING' as const }
-        : buildDocumentFilterParams(documentViewFilter);
+        ? pendingFilterParams
+        : buildDocumentFilterParams(documentViewFilter, lookups?.document_kinds ?? []);
       const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
       const rows = await exportCommercialDocumentsJson(accessToken, {
         branchId,
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
         documentKind: filterParams.documentKind,
+        documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         customer: documentFiltersApplied.customer || undefined,
@@ -2737,7 +3275,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const sheetRows = rows.map((row) => ({
         ID: row.id,
-        Documento: docKindLabel(row.document_kind),
+        Documento: docKindLabelResolved(row.document_kind),
         Serie: row.series,
         Numero: row.number,
         FechaEmision: row.issue_at,
@@ -2825,6 +3363,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         }
       }
 
+      const selectedCustomerForValidation = selectedCustomer && Number(selectedCustomer.id) === Number(form.customerId)
+        ? selectedCustomer
+        : null;
+
+      if (documentKindRequiresRuc(effectiveDocumentKind, {
+        noteTargetKind: noteTargetDocumentKind,
+        referenceDocumentKind: selectedReferenceDocument?.document_kind ?? null,
+      })
+        && selectedCustomerForValidation
+        && !customerHasRuc(selectedCustomerForValidation)) {
+        setMessage('Para este documento, el cliente debe tener RUC válido (11 dígitos).');
+        setLoading(false);
+        return;
+      }
+
       const computedAdvance = advancesEnabled ? Math.min(Math.max(0, Number(form.advanceAmount ?? 0)), grandTotal) : 0;
       if (form.isCreditSale) {
         const installments = (form.creditInstallments ?? []).map((row) => ({
@@ -2886,6 +3439,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   : `${selectedProduct?.sku ?? 'SIN-SKU'} - ${selectedProduct?.name ?? ''}`.trim(),
                 qty: Number(form.qty),
                 unitPrice: Number(form.unitPrice),
+                discountTotal: salesItemDiscountEnabled ? Number(form.draftLineDiscount ?? 0) : 0,
+                isFreeOperation: salesFreeItemsEnabled ? Boolean(form.draftIsFreeOperation) : false,
               },
             ]
           : [];
@@ -2896,19 +3451,40 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
+      const normalizedDocumentMetadata = {
+        customer_address: form.customerAddress?.trim() || null,
+        discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
+        has_detraccion: form.hasDetraccion ?? false,
+        detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
+        has_retencion: form.hasRetencion ?? false,
+        retencion_type_code: form.hasRetencion ? (form.retencionTypeCode ?? null) : null,
+        has_percepcion: form.hasPercepcion ?? false,
+        percepcion_type_code: form.hasPercepcion ? (form.percepcionTypeCode ?? null) : null,
+        sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion)
+          ? (form.sunatOperationTypeCode || selectedSunatOperationType?.code || null)
+          : null,
+        payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
+        credit_installments: form.isCreditSale
+          ? (form.creditInstallments ?? []).map((row, index) => ({
+              installment_no: index + 1,
+              amount: Number(Number(row.amount ?? 0).toFixed(2)),
+              due_at: row.dueDate,
+              notes: String(row.observation ?? '').trim() || null,
+            }))
+          : [],
+        credit_total: form.isCreditSale ? Number(creditPendingTotal.toFixed(2)) : 0,
+        has_advance: advancesEnabled && cappedAdvanceAmount > 0,
+        advance_amount: advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
+      };
+
       if (editingDocumentId) {
         const currentEditingContext = editingDocumentContext;
         const targetDocumentId = currentEditingContext?.id ?? editingDocumentId;
         const itemsPayload = payloadItems.map((item) => {
           const qty = Number(item.qty);
-          const unitPrice = Number(item.unitPrice);
           const taxRate = Number(item.taxRate ?? 0);
           const includesTax = Boolean(item.priceIncludesTax) && taxRate > 0;
-          const divisor = 1 + (taxRate / 100);
-          const grossLine = qty * unitPrice;
-          const subtotal = includesTax ? +(grossLine / divisor).toFixed(2) : +(grossLine).toFixed(2);
-          const taxTotal = includesTax ? +(grossLine - subtotal).toFixed(2) : +(subtotal * (taxRate / 100)).toFixed(2);
-          const total = includesTax ? +(grossLine).toFixed(2) : +(subtotal + taxTotal).toFixed(2);
+          const lineAmounts = computeSalesDraftAmounts(item);
 
           return {
             description: item.description,
@@ -2922,19 +3498,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             qty_base: item.qtyBase != null ? Number(item.qtyBase) : undefined,
             conversion_factor: item.conversionFactor != null ? Number(item.conversionFactor) : undefined,
             base_unit_price: item.baseUnitPrice != null ? Number(item.baseUnitPrice) : undefined,
-            unit_price: unitPrice,
+            unit_price: Number(item.unitPrice),
             unit_cost: 0,
-            subtotal,
-            tax_total: taxTotal,
-            total,
+            discount_total: lineAmounts.discountTotal > 0 ? Number(lineAmounts.discountTotal.toFixed(2)) : undefined,
+            subtotal: Number(lineAmounts.subtotal.toFixed(2)),
+            tax_total: Number(lineAmounts.tax.toFixed(2)),
+            total: Number(lineAmounts.finalTotal.toFixed(2)),
             metadata: {
               price_includes_tax: includesTax,
+              descuento: lineAmounts.discountTotal > 0 ? Number(lineAmounts.discountTotal.toFixed(2)) : 0,
+              gratuitas: lineAmounts.gratuitaTotal > 0 ? Number(lineAmounts.gratuitaTotal.toFixed(2)) : 0,
+              is_free_operation: lineAmounts.isFreeOperation,
             },
             lots: item.lotId ? [{ lot_id: Number(item.lotId), qty }] : undefined,
           };
         });
 
         await updateCommercialDocument(accessToken, editingDocumentId, {
+          document_kind: effectiveDocumentKind,
+          document_kind_id: selectedEffectiveDocumentKind?.id ?? null,
           branch_id: branchId,
           warehouse_id: warehouseId,
           cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
@@ -2942,9 +3524,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           currency_id: Number(form.currencyId),
           payment_method_id: Number(form.paymentMethodId),
           due_at: form.dueDate || null,
-          metadata: {
-            customer_address: form.customerAddress?.trim() || null,
-          },
+          metadata: normalizedDocumentMetadata,
           items: itemsPayload,
         });
 
@@ -2983,7 +3563,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const response = await createCommercialDocument(accessToken, {
         ...form,
+        globalDiscountAmount,
         documentKind: effectiveDocumentKind,
+        documentKindId: selectedEffectiveDocumentKind?.id ?? null,
         restaurantTableLabel: selectedRestaurantTable?.name ?? form.restaurantTableLabel ?? '',
         status: targetStatus,
         noteAffectedDocumentId: form.noteAffectedDocumentId ?? null,
@@ -3007,6 +3589,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       if (issued) {
         const printTotals = normalizePrintableTotals(lookups, payloadItems);
+        const printableGrandTotal = Math.max(printTotals.grandTotal - globalDiscountAmount, 0);
+        const selectedNoteReason = activeNoteReasons.find((row) => row.code === (form.noteReasonCode ?? '')) ?? null;
+        const selectedReferenceDocumentNumber = selectedReferenceDocument
+          ? `${selectedReferenceDocument.series}-${String(selectedReferenceDocument.number).padStart(6, '0')}`
+          : '';
         const printable: PrintableSalesDocument = {
           id: Number(issued.id),
           documentKind: form.documentKind,
@@ -3023,12 +3610,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           customerAddress: form.customerAddress,
           subtotal: printTotals.subtotal,
           taxTotal: printTotals.taxTotal,
-          grandTotal: printTotals.grandTotal,
+          grandTotal: printableGrandTotal,
           gravadaTotal: printTotals.gravadaTotal,
           inafectaTotal: printTotals.inafectaTotal,
           exoneradaTotal: printTotals.exoneradaTotal,
           metadata: {
+            discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
             table_label: selectedRestaurantTable?.name ?? null,
+            source_document_id: form.noteAffectedDocumentId ?? null,
+            source_document_kind: selectedReferenceDocument?.document_kind ?? null,
+            source_document_number: selectedReferenceDocumentNumber || null,
+            note_reason_code: form.noteReasonCode ?? null,
+            note_reason_description: selectedNoteReason?.description ?? null,
             has_detraccion: form.hasDetraccion ?? false,
             detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
             detraccion_service_name: selectedDetractionService?.name ?? null,
@@ -3104,19 +3697,33 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           : 'Documento comercial creado correctamente.'
       );
 
-      if (salesFlowMode === 'DIRECT_CASHIER' && (effectiveDocumentKind === 'RECEIPT' || effectiveDocumentKind === 'INVOICE')) {
-        setSalesWorkspaceMode('REPORT');
-        setCashierReportPanelMode('FULL');
-        setDocumentViewFilter('TRIBUTARY');
-        setDocumentFiltersDraft(initialDocumentAdvancedFilters);
-        setDocumentFiltersApplied(initialDocumentAdvancedFilters);
+      const nextFilter = resolveViewFilterForDocumentKind(effectiveDocumentKind);
+      const nextAdvancedFilters: DocumentAdvancedFilters = {
+        ...initialDocumentAdvancedFilters,
+        series: issued?.series ?? '',
+        number: issued?.number != null ? String(issued.number) : '',
+      };
+
+      setSalesWorkspaceMode('REPORT');
+      setCashierReportPanelMode('FULL');
+      setDocumentViewFilter(nextFilter);
+      setDocumentFiltersDraft(nextAdvancedFilters);
+      setDocumentFiltersApplied(nextAdvancedFilters);
+      suppressNextPinnedResetRef.current = true;
+      if (issued?.id != null) {
+        setPinnedDocumentId(Number(issued.id));
+        setFocusDocumentId(Number(issued.id));
       }
+      setDocumentsPage(1);
 
       setCart([]);
       setForm((prev) => ({
         ...prev,
-        productId: prev.isManualItem ? null : prev.productId,
-        lotId: !manualLotSelectionEnabled || prev.isManualItem ? null : prev.lotId,
+        productId: null,
+        productQuery: '',
+        unitId: null,
+        lotId: null,
+        isManualItem: false,
         manualDescription: '',
         hasDetraccion: false,
         detraccionServiceCode: '',
@@ -3131,7 +3738,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         creditInstallments: [],
         advanceAmount: 0,
         qty: 1,
-        unitPrice: prev.unitPrice,
+        unitPrice: 0,
       }));
       if (documentsPage !== 1) {
         setDocumentsPage(1);
@@ -3168,12 +3775,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
-      const nowIso = new Date().toISOString();
+      const nowIso = nowLimaIso();
       const conversionResponse = await convertCommercialDocument(accessToken, source.id, {
         target_document_kind: targetDocumentKind,
         series: targetSeries,
         issue_at: nowIso,
         cash_register_id: cashRegisterId ?? undefined,
+        payment_method_id: form.paymentMethodId ? Number(form.paymentMethodId) : undefined,
+        defer_sunat_send: true,
       });
 
       const convertedId = Number((conversionResponse as { data?: { id?: number } })?.data?.id ?? 0);
@@ -3279,7 +3888,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     const isReceipt = isReceiptDocument(row);
-    const docLabel = docKindLabel(row.document_kind);
+    const docLabel = docKindLabelResolved(row.document_kind);
     const accepted = window.confirm(`Se anulara ${docLabel} ${row.series}-${row.number}. Desea continuar?`);
     if (!accepted) {
       return;
@@ -3293,7 +3902,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const response = await voidCommercialDocument(accessToken, row.id, {
         reason: reason.trim() || undefined,
         notes: reason.trim() || undefined,
-        void_at: new Date().toISOString(),
+        void_at: nowLimaIso(),
       });
       const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
       const summaryType = isReceipt ? 'RA' : 'baja SUNAT';
@@ -3571,6 +4180,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         description: item.description,
         qty: Number(item.qty),
         unitPrice: Number(item.unitPrice),
+        discountTotal: Number((item.metadata?.descuento ?? item.metadata?.discount_total ?? 0) || 0),
+        isFreeOperation: Boolean(item.metadata?.is_free_operation),
+        freeOperationTotal: Number((item.metadata?.gratuitas ?? item.metadata?.free_operation_total ?? 0) || 0),
       }));
 
       setCart(editableItems);
@@ -3698,11 +4310,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         issueDate: details.issueDate ? String(details.issueDate).slice(0, 10) : prev.issueDate,
         dueDate: details.dueDate ? String(details.dueDate).slice(0, 10) : '',
         series: details.series ?? prev.series,
+        globalDiscountAmount: Number((details.metadata?.discount_total ?? 0) || 0),
         productId: null,
         productQuery: '',
         lotId: null,
         manualDescription: '',
         isManualItem: false,
+        draftIsFreeOperation: false,
+        draftLineDiscount: 0,
         qty: 1,
       }));
 
@@ -3723,7 +4338,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         number: Number(row.number ?? 0),
       });
       setSalesWorkspaceMode('SELL');
-      setMessage(`Editando ${docKindLabel(row.document_kind)} ${row.series}-${row.number}.`);
+      setMessage(`Editando ${docKindLabelResolved(row.document_kind)} ${row.series}-${row.number}.`);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo cargar el documento para edicion';
       setMessage(text);
@@ -3778,21 +4393,84 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setPostConvertPrintModal(null);
   }
 
+  function handleSwitchToSellWorkspace() {
+    const defaultDocumentKind = (salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser)
+      ? 'QUOTATION'
+      : initialForm.documentKind;
+    const defaultSeries = effectiveDocumentKind === defaultDocumentKind
+      ? (series.find((row) => row.series === form.series)?.series ?? series[0]?.series ?? '')
+      : '';
+
+    setSalesWorkspaceMode('SELL');
+    setLoadingReferenceDocument(false);
+    setEditingDocumentId(null);
+    setEditingDocumentContext(null);
+    setConvertPreviewModal(null);
+    setPostConvertPrintModal(null);
+    setPreviewDialog(null);
+    setSunatBridgeDebugState(null);
+    setSunatToast(null);
+    setMessage('');
+    setCart([]);
+    setLots([]);
+    setReferenceDocuments([]);
+    setSelectedCustomer(null);
+    setSelectedProduct(null);
+    setSelectedProductCommercialConfig(null);
+    setSelectedProductUnitOptions(lookups?.units ?? []);
+    setCustomerSuggestions([]);
+    setProductSuggestions([]);
+    setActiveCustomerIndex(-1);
+    setActiveProductIndex(-1);
+    setCustomerInputFocused(false);
+    setResolvingCustomerDocument(false);
+    setCreditPlanModalOpen(false);
+    setIssuedPreview(null);
+    setFocusDocumentId(null);
+    setHighlightedDocumentId(null);
+    setPinnedDocumentId(null);
+    setAutoPriceHint('');
+    setAutoPriceSource('MANUAL');
+    setAutoPriceTierId(null);
+    setAutoPriceDiscountPercent(0);
+
+    const defaultCurrencyId = (lookups?.currencies.find((row) => row.is_default)?.id ?? lookups?.currencies?.[0]?.id ?? initialForm.currencyId);
+    const defaultPaymentMethodId = resolveDefaultPaymentMethodId(lookups?.payment_methods, initialForm.paymentMethodId || 1);
+    const defaultTaxCategoryId = (
+      lookups?.tax_categories.find((row) => Number(row.rate_percent) > 0)?.id
+      ?? lookups?.tax_categories?.[0]?.id
+      ?? initialForm.taxCategoryId
+    );
+
+    setForm({
+      ...initialForm,
+      documentKind: defaultDocumentKind,
+      series: defaultSeries,
+      currencyId: defaultCurrencyId,
+      paymentMethodId: defaultPaymentMethodId,
+      taxCategoryId: defaultTaxCategoryId,
+      issueDate: TODAY,
+      dueDate: TODAY,
+      receiptSendMode: 'DIRECT',
+    });
+  }
+
   return (
     <section className="module-panel">
       <div className="module-header">
-        <h3>Sales</h3>
+        <h3>Ventas</h3>
         <button type="button" onClick={() => void loadData()} disabled={loading}>
           Refrescar
         </button>
       </div>
 
+      <div className="sales-topbar">
       <div className="workspace-mode-switch">
         {canUseSellWorkspace && (
           <button
             type="button"
             className={`mode-btn${salesWorkspaceMode === 'SELL' ? ' mode-btn-active' : ''}`}
-            onClick={() => setSalesWorkspaceMode('SELL')}
+            onClick={handleSwitchToSellWorkspace}
           >
             {shouldPrioritizePendingOrders ? '🧾 Venta / Emision manual' : '🛒 Venta rápida'}
           </button>
@@ -3877,6 +4555,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           {showModeSummaryDetails ? 'Ocultar detalle' : 'Ver detalle'}
         </button>
       </div>
+      </div>{/* /sales-topbar */}
 
       {showModeSummaryDetails && isSeparatedMode && (
         <p className="notice" style={{ marginTop: '0.25rem' }}>
@@ -3892,19 +4571,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <label>
             Tipo de comprobante
             <select
-              value={effectiveDocumentKind}
+              value={selectedEffectiveDocumentKind?.id ?? ''}
               disabled={salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser}
-              onChange={(e) =>
+              onChange={(e) => {
+                const selectedId = Number(e.target.value || 0);
+                const selectedKind = (lookups?.document_kinds ?? []).find((kind) => kind.id === selectedId);
+                if (!selectedKind) {
+                  return;
+                }
+
                 setForm((prev) => ({
                   ...prev,
-                  documentKind: e.target.value as CreateDocumentForm['documentKind'],
-                }))
-              }
+                  documentKind: selectedKind.code as CreateDocumentForm['documentKind'],
+                }));
+              }}
             >
               {(lookups?.document_kinds ?? [])
                 .filter((kind) => !isSeparatedMode || !isCashierUser || (kind.code !== 'QUOTATION' && kind.code !== 'SALES_ORDER'))
                 .map((kind) => (
-                <option key={kind.code} value={kind.code}>
+                <option key={kind.id} value={kind.id}>
                   {kind.label}
                 </option>
                 ))}
@@ -3955,13 +4640,27 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
         </div>
 
-        <div className="sales-grid-meta">
-          <label className="with-suggest sales-field-customer-meta">
-            Cliente
+        <div className="sales-grid-meta sales-grid-meta-primary">
+          <label className="with-suggest sales-field-customer-meta" onBlur={handleCustomerSuggestBlur}>
+            <div className="sales-customer-field-head">
+              <span>Cliente</span>
+              <button
+                type="button"
+                className="btn-mini sales-customer-resolve-btn"
+                onClick={() => void resolveCustomerFromPadron()}
+                disabled={loading || resolvingCustomerDocument}
+              >
+                {resolvingCustomerDocument ? 'Consultando...' : 'Consultar DNI/RUC'}
+              </button>
+            </div>
             <input
               ref={customerInputRef}
               value={form.customerQuery}
-              onChange={(e) => setForm((prev) => ({ ...prev, customerQuery: e.target.value }))}
+              onChange={(e) => {
+                setCustomerInputFocused(true);
+                setForm((prev) => ({ ...prev, customerQuery: e.target.value }));
+              }}
+              onFocus={() => setCustomerInputFocused(true)}
               onKeyDown={handleCustomerKeyDown}
               placeholder="Buscar por nombre, documento o placa"
             />
@@ -3971,6 +4670,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <button
                     type="button"
                     key={row.id}
+                    onMouseDown={(event) => event.preventDefault()}
                     onClick={() => chooseCustomer(row)}
                     className={`suggest-item ${index === activeCustomerIndex ? 'active' : ''}`}
                   >
@@ -3985,41 +4685,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
 
           <label className="sales-field-address">
-            Direccion cliente
+            Dirección
             <input
               value={form.customerAddress}
               onChange={(e) => setForm((prev) => ({ ...prev, customerAddress: e.target.value }))}
-              placeholder="Direccion para impresion"
+              placeholder="Dirección del cliente"
             />
           </label>
-
-          {isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER' && (
-            <label className="sales-field-address">
-              Mesa / zona
-              <select
-                value={form.restaurantTableId ?? ''}
-                onChange={(e) => {
-                  const nextId = e.target.value ? Number(e.target.value) : null;
-                  const selected = restaurantTables.find((row) => row.id === nextId) ?? null;
-
-                  setForm((prev) => ({
-                    ...prev,
-                    restaurantTableId: nextId,
-                    restaurantTableLabel: selected ? selected.name : '',
-                  }));
-                }}
-              >
-                <option value="">Sin mesa asignada</option>
-                {restaurantTables
-                  .filter((row) => row.status !== 'DISABLED')
-                  .map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.code} - {row.name} ({row.status})
-                    </option>
-                  ))}
-              </select>
-            </label>
-          )}
 
           <label className="sales-field-issue-date">
             Fecha emision
@@ -4031,109 +4703,160 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
 
           <label className="sales-field-due-date">
-            Fecha vencimiento
+            Vencimiento
             <input
               type="date"
               value={form.dueDate}
               onChange={(e) => setForm((prev) => ({ ...prev, dueDate: e.target.value || prev.issueDate || TODAY }))}
             />
           </label>
+        </div>
 
-          {effectiveDocumentKind === 'RECEIPT' && (
-            <label className="sales-field-due-date">
-              Envio SUNAT boleta
-              <select
-                value={form.receiptSendMode ?? 'DIRECT'}
-                onChange={(e) => {
-                  const nextMode = e.target.value === 'SUMMARY' ? 'SUMMARY' : 'DIRECT';
-                  setForm((prev) => ({ ...prev, receiptSendMode: nextMode }));
-                }}
-              >
-                <option value="DIRECT">Directo (send_xml)</option>
-                <option value="SUMMARY">Por resumen diario (RC)</option>
-              </select>
-            </label>
-          )}
+        <details className="sales-meta-collapse" open={isNoteDocument || form.isCreditSale || form.hasDetraccion || form.hasRetencion || form.hasPercepcion || (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER')}>
+          <summary className="sales-meta-collapse-summary">Datos adicionales</summary>
+          <div className="sales-grid-meta sales-grid-meta-secondary">
+            <div className="sales-igv-toggle-row">
+              <div className="tax-mode-toggle" role="group" aria-label="Modo de precio IGV">
+                <label className="tax-mode-toggle-label">
+                  <input
+                    type="checkbox"
+                    checked={priceTaxMode === 'INCLUSIVE'}
+                    onChange={(e) => setPriceTaxMode(e.target.checked ? 'INCLUSIVE' : 'EXCLUSIVE')}
+                  />
+                  Incluye IGV en precios
+                </label>
+              </div>
+              <span className="sales-igv-toggle-row-hint">
+                {priceTaxMode === 'INCLUSIVE' ? 'Los precios ingresados ya incluyen IGV' : 'IGV se calcula sobre el precio base'}
+              </span>
+            </div>
+            {isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER' && (
+              <label className="sales-field-address">
+                Mesa / zona
+                <select
+                  value={form.restaurantTableId ?? ''}
+                  onChange={(e) => {
+                    const nextId = e.target.value ? Number(e.target.value) : null;
+                    const selected = restaurantTables.find((row) => row.id === nextId) ?? null;
 
-          {(effectiveDocumentKind === 'INVOICE' || effectiveDocumentKind === 'RECEIPT') && (
-            <div className="sales-tributary-slot">
-              <details className="sales-tributary-panel sales-credit-summary-panel">
-                <summary className="sales-tributary-summary sales-credit-summary-bar">
-                  <div className="sales-credit-summary-left">
-                    <span className="sales-tributary-title">Condición de pago SUNAT</span>
-                    <span className={`sales-tributary-chip ${form.isCreditSale ? 'is-active' : ''}`}>
-                      {form.isCreditSale ? 'Crédito' : 'Contado'}
-                    </span>
-                    {form.isCreditSale && (
-                      <span className="sales-tributary-chip is-warning">Cuotas {creditInstallments.length}</span>
-                    )}
-                    {form.isCreditSale && creditObservationCount > 0 && (
-                      <span className="sales-tributary-chip is-soft">Obs. {creditObservationCount}</span>
-                    )}
-                    {advancesEnabled && cappedAdvanceAmount > 0 && (
-                      <span className="sales-tributary-chip is-soft">Anticipo {selectedCurrency?.symbol ?? ''} {cappedAdvanceAmount.toFixed(2)}</span>
-                    )}
-                  </div>
+                    setForm((prev) => ({
+                      ...prev,
+                      restaurantTableId: nextId,
+                      restaurantTableLabel: selected ? selected.name : '',
+                    }));
+                  }}
+                >
+                  <option value="">Sin mesa asignada</option>
+                  {restaurantTables
+                    .filter((row) => row.status !== 'DISABLED')
+                    .map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.code} - {row.name} ({row.status})
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
 
-                  {form.isCreditSale && (
-                    <div className="sales-credit-summary-right">
-                      <span className="sales-credit-total-pill">
-                        <strong>Cuotas</strong>
-                        <span>{selectedCurrency?.symbol ?? ''} {creditInstallmentsTotal.toFixed(2)}</span>
-                      </span>
-                      <span className="sales-credit-total-pill is-highlight">
-                        <strong>Saldo</strong>
-                        <span>{selectedCurrency?.symbol ?? ''} {creditPendingTotal.toFixed(2)}</span>
-                      </span>
-                    </div>
+            {isTributaryDocument && (
+              <label className="sales-field-due-date">
+                Envío SUNAT
+                <select
+                  value={form.receiptSendMode ?? 'DIRECT'}
+                  onChange={(e) => {
+                    const nextMode = e.target.value === 'SUMMARY'
+                      ? 'SUMMARY'
+                      : (e.target.value === 'NO_SEND' ? 'NO_SEND' : 'DIRECT');
+                    setForm((prev) => ({ ...prev, receiptSendMode: nextMode }));
+                  }}
+                >
+                  <option value="DIRECT">Directo (send_xml)</option>
+                  {effectiveDocumentKindBase === 'RECEIPT' && (
+                    <option value="SUMMARY">Por resumen diario (RC)</option>
                   )}
-                </summary>
+                  <option value="NO_SEND">No enviar ahora</option>
+                </select>
+              </label>
+            )}
 
-                <div className="sales-tributary-grid sales-credit-summary-grid">
-                  <label className="sales-tributary-toggle">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(form.isCreditSale)}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setForm((prev) => ({
-                          ...prev,
-                          isCreditSale: checked,
-                          creditInstallments: checked
-                            ? (prev.creditInstallments && prev.creditInstallments.length > 0
-                              ? prev.creditInstallments
-                              : [createCreditInstallmentRow(
-                                  prev.dueDate || prev.issueDate || TODAY,
-                                  Math.max(0, grandTotal - Math.max(0, Number(prev.advanceAmount ?? 0)))
-                                )])
-                            : [],
-                        }));
+            {(effectiveDocumentKindBase === 'INVOICE' || effectiveDocumentKindBase === 'RECEIPT') && (
+              <div className="sales-tributary-slot">
+                <details className="sales-tributary-panel sales-credit-summary-panel">
+                  <summary className="sales-tributary-summary sales-credit-summary-bar">
+                    <div className="sales-credit-summary-left">
+                      <span className="sales-tributary-title">Condición de pago SUNAT</span>
+                      <span className={`sales-tributary-chip ${form.isCreditSale ? 'is-active' : ''}`}>
+                        {form.isCreditSale ? 'Crédito' : 'Contado'}
+                      </span>
+                      {form.isCreditSale && (
+                        <span className="sales-tributary-chip is-warning">Cuotas {creditInstallments.length}</span>
+                      )}
+                      {form.isCreditSale && creditObservationCount > 0 && (
+                        <span className="sales-tributary-chip is-soft">Obs. {creditObservationCount}</span>
+                      )}
+                      {advancesEnabled && cappedAdvanceAmount > 0 && (
+                        <span className="sales-tributary-chip is-soft">Anticipo {selectedCurrency?.symbol ?? ''} {cappedAdvanceAmount.toFixed(2)}</span>
+                      )}
+                    </div>
 
-                        setCreditPlanModalOpen(checked);
-                      }}
-                    />
-                    <span>Venta al crédito</span>
-                  </label>
+                    {form.isCreditSale && (
+                      <div className="sales-credit-summary-right">
+                        <span className="sales-credit-total-pill">
+                          <strong>Cuotas</strong>
+                          <span>{selectedCurrency?.symbol ?? ''} {creditInstallmentsTotal.toFixed(2)}</span>
+                        </span>
+                        <span className="sales-credit-total-pill is-highlight">
+                          <strong>Saldo</strong>
+                          <span>{selectedCurrency?.symbol ?? ''} {creditPendingTotal.toFixed(2)}</span>
+                        </span>
+                      </div>
+                    )}
+                  </summary>
 
-                  {advancesEnabled && (
-                    <label className="sales-tributary-field">
-                      <span>Anticipo aplicado</span>
+                  <div className="sales-tributary-grid sales-credit-summary-grid">
+                    <label className="sales-tributary-toggle">
                       <input
-                        type="number"
-                        min={0}
-                        max={grandTotal}
-                        step="0.01"
-                        value={form.advanceAmount ?? 0}
+                        type="checkbox"
+                        checked={Boolean(form.isCreditSale)}
                         onChange={(e) => {
-                          const next = Math.max(0, Number(e.target.value || 0));
-                          setForm((prev) => ({ ...prev, advanceAmount: next }));
+                          const checked = e.target.checked;
+                          setForm((prev) => ({
+                            ...prev,
+                            isCreditSale: checked,
+                            creditInstallments: checked
+                              ? (prev.creditInstallments && prev.creditInstallments.length > 0
+                                ? prev.creditInstallments
+                                : [createCreditInstallmentRow(
+                                    prev.dueDate || prev.issueDate || TODAY,
+                                    Math.max(0, grandTotal - Math.max(0, Number(prev.advanceAmount ?? 0)))
+                                  )])
+                              : [],
+                          }));
+
+                          setCreditPlanModalOpen(checked);
                         }}
                       />
+                      <span>Venta al crédito</span>
                     </label>
-                  )}
 
-                  {form.isCreditSale && (
-                    <>
+                    {advancesEnabled && (
+                      <label className="sales-tributary-field">
+                        <span>Anticipo aplicado</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={grandTotal}
+                          step="0.01"
+                          value={form.advanceAmount ?? 0}
+                          onChange={(e) => {
+                            const next = Math.max(0, Number(e.target.value || 0));
+                            setForm((prev) => ({ ...prev, advanceAmount: next }));
+                          }}
+                        />
+                      </label>
+                    )}
+
+                    {form.isCreditSale && (
                       <div className="sales-credit-config-bar">
                         <div className="sales-credit-config-inline">
                           <button
@@ -4148,372 +4871,349 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           </span>
                         </div>
                       </div>
-                    </>
-                  )}
-                </div>
-              </details>
-            </div>
-          )}
+                    )}
+                  </div>
+                </details>
+              </div>
+            )}
 
-          {isNoteDocument && (
-            <>
-              <label className="sales-field-customer-meta">
-                Documento afectado
-                <select
-                  value={form.noteAffectedDocumentId ?? ''}
-                  onChange={(e) => {
-                    const value = e.target.value ? Number(e.target.value) : null;
-                    setForm((prev) => ({ ...prev, noteAffectedDocumentId: value }));
-                    if (value) {
-                      void chooseReferenceDocument(value);
-                    } else {
-                      setCart([]);
-                    }
-                  }}
-                  disabled={loadingReferenceDocument || !form.customerId}
-                >
-                  <option value="">Seleccionar comprobante</option>
-                  {referenceDocuments.map((row) => {
-                    const sourceTotal = Number(row.total ?? 0);
-                    const appliedTotal = isCreditNote
-                      ? Number(row.applied_credit_total ?? 0)
-                      : Number(row.applied_debit_total ?? 0);
-                    const remainingTotal = Math.max(0, sourceTotal - appliedTotal);
+            {isNoteDocument && (
+              <>
+                <label className="sales-field-customer-meta">
+                  Documento afectado
+                  <select
+                    value={form.noteAffectedDocumentId ?? ''}
+                    onChange={(e) => {
+                      const value = e.target.value ? Number(e.target.value) : null;
+                      setForm((prev) => ({ ...prev, noteAffectedDocumentId: value }));
+                      if (value) {
+                        void chooseReferenceDocument(value);
+                      } else {
+                        setCart([]);
+                      }
+                    }}
+                    disabled={loadingReferenceDocument || !form.customerId}
+                  >
+                    <option value="">Seleccionar comprobante</option>
+                    {referenceDocuments.map((row) => {
+                      const sourceTotal = Number(row.total ?? 0);
+                      const appliedTotal = isCreditNote
+                        ? Number(row.applied_credit_total ?? 0)
+                        : Number(row.applied_debit_total ?? 0);
+                      const remainingTotal = Math.max(0, sourceTotal - appliedTotal);
 
-                    return (
-                      <option key={row.id} value={row.id}>
-                        {docKindLabel(row.document_kind)} {row.series}-{String(row.number).padStart(6, '0')} | Disponible: {remainingTotal.toFixed(2)}
+                      return (
+                        <option key={row.id} value={row.id}>
+                          {docKindLabelResolved(row.document_kind)} {row.series}-{String(row.number).padStart(6, '0')} | Disponible: {remainingTotal.toFixed(2)}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+
+                <label className="sales-field-address">
+                  Tipo de {isCreditNote ? 'nota de credito' : 'nota de debito'}
+                  <select
+                    value={form.noteReasonCode ?? ''}
+                    onChange={(e) => setForm((prev) => ({ ...prev, noteReasonCode: e.target.value }))}
+                  >
+                    <option value="">Seleccionar tipo</option>
+                    {activeNoteReasons.map((row) => (
+                      <option key={row.id} value={row.code}>
+                        {row.code} - {row.description}
                       </option>
-                    );
-                  })}
-                </select>
-              </label>
+                    ))}
+                  </select>
+                </label>
 
-              <label className="sales-field-address">
-                Tipo de {isCreditNote ? 'nota de credito' : 'nota de debito'}
-                <select
-                  value={form.noteReasonCode ?? ''}
-                  onChange={(e) => setForm((prev) => ({ ...prev, noteReasonCode: e.target.value }))}
-                >
-                  <option value="">Seleccionar tipo</option>
-                  {activeNoteReasons.map((row) => (
-                    <option key={row.id} value={row.code}>
-                      {row.code} - {row.description}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                {selectedReferenceDocument && (
+                  <p className="notice sales-note-affected-compact">
+                    Afectando: {docKindLabelResolved(selectedReferenceDocument.document_kind)} {selectedReferenceDocument.series}-{String(selectedReferenceDocument.number).padStart(6, '0')}
+                  </p>
+                )}
+              </>
+            )}
 
-              {selectedReferenceDocument && (
-                <p className="notice" style={{ margin: 0 }}>
-                  Afectando: {docKindLabel(selectedReferenceDocument.document_kind)} {selectedReferenceDocument.series}-{String(selectedReferenceDocument.number).padStart(6, '0')}
-                </p>
-              )}
-            </>
-          )}
-
-          {isInvoiceDocument && ((lookups?.detraccion_service_codes ?? []).length > 0 || (lookups?.retencion_types ?? []).length > 0 || (lookups?.percepcion_types ?? []).length > 0 || (lookups?.retencion_percentage ?? null) !== null) && (
-            <div className="sales-tributary-slot">
-              <details className="sales-tributary-panel">
-                <summary className="sales-tributary-summary">
-                  <span className="sales-tributary-title">Condiciones tributarias</span>
-                  <span className={`sales-tributary-chip ${form.hasDetraccion ? 'is-active' : ''}`}>
-                    Detracción {form.hasDetraccion ? 'activa' : 'off'}
-                  </span>
-                  <span className={`sales-tributary-chip ${form.hasRetencion ? 'is-active' : ''}`}>
-                    Retención {form.hasRetencion ? 'activa' : 'off'}
-                  </span>
-                  <span className={`sales-tributary-chip ${form.hasPercepcion ? 'is-active' : ''}`}>
-                    Percepción {form.hasPercepcion ? 'activa' : 'off'}
-                  </span>
-                  {!form.hasDetraccion && grandTotal >= detractionMinAmount && (
-                    <span className="sales-tributary-chip is-warning">Umbral S/ {detractionMinAmount.toFixed(2)}</span>
-                  )}
-                  {selectedSunatOperationType && (
-                    <span className="sales-tributary-chip is-soft">
-                      Op. SUNAT {selectedSunatOperationType.code}
+            {isInvoiceDocument && ((lookups?.detraccion_service_codes ?? []).length > 0 || (lookups?.retencion_types ?? []).length > 0 || (lookups?.percepcion_types ?? []).length > 0 || (lookups?.retencion_percentage ?? null) !== null) && (
+              <div className="sales-tributary-slot">
+                <details className="sales-tributary-panel">
+                  <summary className="sales-tributary-summary">
+                    <span className="sales-tributary-title">Condiciones tributarias</span>
+                    <span className={`sales-tributary-chip ${form.hasDetraccion ? 'is-active' : ''}`}>
+                      Detracción {form.hasDetraccion ? 'activa' : 'off'}
                     </span>
-                  )}
-                  {lookups?.detraccion_account?.account_number && (
-                    <span className="sales-tributary-chip is-soft">Cta Detr. {lookups.detraccion_account.account_number}</span>
-                  )}
-                  {lookups?.retencion_account?.account_number && (
-                    <span className="sales-tributary-chip is-soft">Cta Ret. {lookups.retencion_account.account_number}</span>
-                  )}
-                  {lookups?.percepcion_account?.account_number && (
-                    <span className="sales-tributary-chip is-soft">Cta Perc. {lookups.percepcion_account.account_number}</span>
-                  )}
-                  {form.hasDetraccion && detraccionAmount > 0 && (
-                    <span className="sales-tributary-chip is-soft">Detr. {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}</span>
-                  )}
-                  {form.hasRetencion && retencionAmount > 0 && (
-                    <span className="sales-tributary-chip is-soft">Ret. {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}</span>
-                  )}
-                  {form.hasPercepcion && percepcionAmount > 0 && (
-                    <span className="sales-tributary-chip is-soft">Perc. {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}</span>
-                  )}
-                </summary>
+                    <span className={`sales-tributary-chip ${form.hasRetencion ? 'is-active' : ''}`}>
+                      Retención {form.hasRetencion ? 'activa' : 'off'}
+                    </span>
+                    <span className={`sales-tributary-chip ${form.hasPercepcion ? 'is-active' : ''}`}>
+                      Percepción {form.hasPercepcion ? 'activa' : 'off'}
+                    </span>
+                    {!form.hasDetraccion && grandTotal >= detractionMinAmount && (
+                      <span className="sales-tributary-chip is-warning">Umbral S/ {detractionMinAmount.toFixed(2)}</span>
+                    )}
+                    {selectedSunatOperationType && (
+                      <span className="sales-tributary-chip is-soft">Op. SUNAT {selectedSunatOperationType.code}</span>
+                    )}
+                    {lookups?.detraccion_account?.account_number && (
+                      <span className="sales-tributary-chip is-soft">Cta Detr. {lookups.detraccion_account.account_number}</span>
+                    )}
+                    {lookups?.retencion_account?.account_number && (
+                      <span className="sales-tributary-chip is-soft">Cta Ret. {lookups.retencion_account.account_number}</span>
+                    )}
+                    {lookups?.percepcion_account?.account_number && (
+                      <span className="sales-tributary-chip is-soft">Cta Perc. {lookups.percepcion_account.account_number}</span>
+                    )}
+                  </summary>
 
-                <div className="sales-tributary-grid">
-                  {(lookups?.detraccion_service_codes ?? []).length > 0 && (
-                    <label className="sales-tributary-toggle">
-                      <input
-                        type="checkbox"
-                        checked={form.hasDetraccion ?? false}
-                        onChange={(e) => {
-                          setForm((prev) => ({
-                            ...prev,
-                            hasDetraccion: e.target.checked,
-                            detraccionServiceCode: e.target.checked ? prev.detraccionServiceCode : '',
-                            hasRetencion: e.target.checked ? false : prev.hasRetencion,
-                            retencionTypeCode: e.target.checked ? '' : prev.retencionTypeCode,
-                            hasPercepcion: e.target.checked ? false : prev.hasPercepcion,
-                            percepcionTypeCode: e.target.checked ? '' : prev.percepcionTypeCode,
-                            sunatOperationTypeCode:
-                              e.target.checked
-                                ? pickOperationTypeCode('DETRACCION')
-                                : prev.hasRetencion
-                                  ? pickOperationTypeCode('RETENCION')
-                                  : prev.hasPercepcion
-                                    ? pickOperationTypeCode('PERCEPCION')
-                                : '',
-                          }));
-                        }}
-                      />
-                      <span>Detracción SPOT</span>
-                    </label>
-                  )}
-
-                  {((lookups?.retencion_types ?? []).length > 0 || (lookups?.retencion_percentage ?? null) !== null) && (
-                    <label className="sales-tributary-toggle">
-                      <input
-                        type="checkbox"
-                        checked={form.hasRetencion ?? false}
-                        onChange={(e) => {
-                          setForm((prev) => ({
-                            ...prev,
-                            hasRetencion: e.target.checked,
-                            retencionTypeCode: e.target.checked ? (prev.retencionTypeCode || (retencionTypes[0]?.code ?? '')) : '',
-                            hasDetraccion: e.target.checked ? false : prev.hasDetraccion,
-                            detraccionServiceCode: e.target.checked ? '' : prev.detraccionServiceCode,
-                            hasPercepcion: e.target.checked ? false : prev.hasPercepcion,
-                            percepcionTypeCode: e.target.checked ? '' : prev.percepcionTypeCode,
-                            sunatOperationTypeCode:
-                              e.target.checked
-                                ? pickOperationTypeCode('RETENCION')
-                                : prev.hasDetraccion
-                                  ? pickOperationTypeCode('DETRACCION')
-                                  : prev.hasPercepcion
-                                    ? pickOperationTypeCode('PERCEPCION')
-                                : '',
-                          }));
-                        }}
-                      />
-                      <span>Retención</span>
-                    </label>
-                  )}
-
-                  {(lookups?.percepcion_types ?? []).length > 0 && (
-                    <label className="sales-tributary-toggle">
-                      <input
-                        type="checkbox"
-                        checked={form.hasPercepcion ?? false}
-                        onChange={(e) => {
-                          setForm((prev) => ({
-                            ...prev,
-                            hasPercepcion: e.target.checked,
-                            percepcionTypeCode: e.target.checked ? (prev.percepcionTypeCode || (percepcionTypes[0]?.code ?? '')) : '',
-                            hasDetraccion: e.target.checked ? false : prev.hasDetraccion,
-                            detraccionServiceCode: e.target.checked ? '' : prev.detraccionServiceCode,
-                            hasRetencion: e.target.checked ? false : prev.hasRetencion,
-                            retencionTypeCode: e.target.checked ? '' : prev.retencionTypeCode,
-                            sunatOperationTypeCode:
-                              e.target.checked
-                                ? pickOperationTypeCode('PERCEPCION')
-                                : prev.hasDetraccion
+                  <div className="sales-tributary-grid">
+                    {(lookups?.detraccion_service_codes ?? []).length > 0 && (
+                      <label className="sales-tributary-toggle">
+                        <input
+                          type="checkbox"
+                          checked={form.hasDetraccion ?? false}
+                          onChange={(e) => {
+                            setForm((prev) => ({
+                              ...prev,
+                              hasDetraccion: e.target.checked,
+                              detraccionServiceCode: e.target.checked ? prev.detraccionServiceCode : '',
+                              hasRetencion: e.target.checked ? false : prev.hasRetencion,
+                              retencionTypeCode: e.target.checked ? '' : prev.retencionTypeCode,
+                              hasPercepcion: e.target.checked ? false : prev.hasPercepcion,
+                              percepcionTypeCode: e.target.checked ? '' : prev.percepcionTypeCode,
+                              sunatOperationTypeCode:
+                                e.target.checked
                                   ? pickOperationTypeCode('DETRACCION')
                                   : prev.hasRetencion
                                     ? pickOperationTypeCode('RETENCION')
-                                : '',
-                          }));
-                        }}
-                      />
-                      <span>Percepción</span>
-                    </label>
-                  )}
+                                    : prev.hasPercepcion
+                                      ? pickOperationTypeCode('PERCEPCION')
+                                  : '',
+                            }));
+                          }}
+                        />
+                        <span>Detracción SPOT</span>
+                      </label>
+                    )}
 
-                  {sunatOperationTypes.length > 0 && (
-                    <label className="sales-tributary-field">
-                      <span>Operación SUNAT</span>
-                      <select
-                        value={form.sunatOperationTypeCode ?? ''}
-                        onChange={(e) => setForm((prev) => ({ ...prev, sunatOperationTypeCode: e.target.value }))}
-                      >
-                        <option value="">Seleccionar tipo</option>
-                        {sunatOperationTypes.map((row) => (
-                          <option key={row.code} value={row.code}>
-                            {row.code} - {row.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  )}
+                    {((lookups?.retencion_types ?? []).length > 0 || (lookups?.retencion_percentage ?? null) !== null) && (
+                      <label className="sales-tributary-toggle">
+                        <input
+                          type="checkbox"
+                          checked={form.hasRetencion ?? false}
+                          onChange={(e) => {
+                            setForm((prev) => ({
+                              ...prev,
+                              hasRetencion: e.target.checked,
+                              retencionTypeCode: e.target.checked ? (prev.retencionTypeCode || (retencionTypes[0]?.code ?? '')) : '',
+                              hasDetraccion: e.target.checked ? false : prev.hasDetraccion,
+                              detraccionServiceCode: e.target.checked ? '' : prev.detraccionServiceCode,
+                              hasPercepcion: e.target.checked ? false : prev.hasPercepcion,
+                              percepcionTypeCode: e.target.checked ? '' : prev.percepcionTypeCode,
+                              sunatOperationTypeCode:
+                                e.target.checked
+                                  ? pickOperationTypeCode('RETENCION')
+                                  : prev.hasDetraccion
+                                    ? pickOperationTypeCode('DETRACCION')
+                                    : prev.hasPercepcion
+                                      ? pickOperationTypeCode('PERCEPCION')
+                                  : '',
+                            }));
+                          }}
+                        />
+                        <span>Retención</span>
+                      </label>
+                    )}
 
-                  {form.hasDetraccion && (
-                    <>
-                      <label className="sales-tributary-field sales-tributary-field-wide">
-                        <span>Tipo de detracción</span>
+                    {(lookups?.percepcion_types ?? []).length > 0 && (
+                      <label className="sales-tributary-toggle">
+                        <input
+                          type="checkbox"
+                          checked={form.hasPercepcion ?? false}
+                          onChange={(e) => {
+                            setForm((prev) => ({
+                              ...prev,
+                              hasPercepcion: e.target.checked,
+                              percepcionTypeCode: e.target.checked ? (prev.percepcionTypeCode || (percepcionTypes[0]?.code ?? '')) : '',
+                              hasDetraccion: e.target.checked ? false : prev.hasDetraccion,
+                              detraccionServiceCode: e.target.checked ? '' : prev.detraccionServiceCode,
+                              hasRetencion: e.target.checked ? false : prev.hasRetencion,
+                              retencionTypeCode: e.target.checked ? '' : prev.retencionTypeCode,
+                              sunatOperationTypeCode:
+                                e.target.checked
+                                  ? pickOperationTypeCode('PERCEPCION')
+                                  : prev.hasDetraccion
+                                    ? pickOperationTypeCode('DETRACCION')
+                                    : prev.hasRetencion
+                                      ? pickOperationTypeCode('RETENCION')
+                                  : '',
+                            }));
+                          }}
+                        />
+                        <span>Percepción</span>
+                      </label>
+                    )}
+
+                    {sunatOperationTypes.length > 0 && (
+                      <label className="sales-tributary-field">
+                        <span>Operación SUNAT</span>
                         <select
-                          value={form.detraccionServiceCode ?? ''}
-                          onChange={(e) => setForm((prev) => ({ ...prev, detraccionServiceCode: e.target.value }))}
+                          value={form.sunatOperationTypeCode ?? ''}
+                          onChange={(e) => setForm((prev) => ({ ...prev, sunatOperationTypeCode: e.target.value }))}
                         >
-                          <option value="">Seleccionar código</option>
-                          {(lookups?.detraccion_service_codes ?? []).map((row) => (
-                            <option key={row.id} value={row.code}>
-                              {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                          <option value="">Seleccionar tipo</option>
+                          {sunatOperationTypes.map((row) => (
+                            <option key={row.code} value={row.code}>
+                              {row.code} - {row.name}
                             </option>
                           ))}
                         </select>
                       </label>
+                    )}
 
-                      <div className="sales-tributary-inline-note sales-tributary-field-wide">
-                        <span>SPOT aplica según código SUNAT para bienes y servicios.</span>
-                        {selectedDetractionService && detraccionAmount > 0 && (
-                          <strong>{selectedDetractionService.rate_percent.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}</strong>
+                    {form.hasDetraccion && (
+                      <>
+                        <label className="sales-tributary-field sales-tributary-field-wide">
+                          <span>Tipo de detracción</span>
+                          <select
+                            value={form.detraccionServiceCode ?? ''}
+                            onChange={(e) => setForm((prev) => ({ ...prev, detraccionServiceCode: e.target.value }))}
+                          >
+                            <option value="">Seleccionar código</option>
+                            {(lookups?.detraccion_service_codes ?? []).map((row) => (
+                              <option key={row.id} value={row.code}>
+                                {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div className="sales-tributary-inline-note sales-tributary-field-wide">
+                          <span>SPOT aplica según código SUNAT para bienes y servicios.</span>
+                          {selectedDetractionService && detraccionAmount > 0 && (
+                            <strong>{selectedDetractionService.rate_percent.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}</strong>
+                          )}
+                          {lookups?.detraccion_account?.account_number && (
+                            <span>
+                              Cta: {lookups.detraccion_account.account_number}
+                              {lookups.detraccion_account.bank_name ? ` (${lookups.detraccion_account.bank_name})` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {form.hasRetencion && (
+                      <>
+                        {retencionTypes.length > 0 && (
+                          <label className="sales-tributary-field">
+                            <span>Tipo de retención</span>
+                            <select
+                              value={form.retencionTypeCode ?? ''}
+                              onChange={(e) => setForm((prev) => ({ ...prev, retencionTypeCode: e.target.value }))}
+                            >
+                              <option value="">Seleccionar tipo</option>
+                              {retencionTypes.map((row) => (
+                                <option key={row.code} value={row.code}>
+                                  {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         )}
-                        {lookups?.detraccion_account?.account_number && (
-                          <span>
-                            Cta: {lookups.detraccion_account.account_number}
-                            {lookups.detraccion_account.bank_name ? ` (${lookups.detraccion_account.bank_name})` : ''}
-                          </span>
+
+                        <div className="sales-tributary-inline-note sales-tributary-field-wide">
+                          {retencionAmount > 0 && (
+                            <strong>
+                              {selectedRetencionType ? `${selectedRetencionType.name} ` : 'Retención '}| {retencionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}
+                            </strong>
+                          )}
+                          {lookups?.retencion_account?.account_number && (
+                            <span>
+                              Cta: {lookups.retencion_account.account_number}
+                              {lookups.retencion_account.bank_name ? ` (${lookups.retencion_account.bank_name})` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {form.hasPercepcion && (
+                      <>
+                        {percepcionTypes.length > 0 && (
+                          <label className="sales-tributary-field">
+                            <span>Tipo de percepción</span>
+                            <select
+                              value={form.percepcionTypeCode ?? ''}
+                              onChange={(e) => setForm((prev) => ({ ...prev, percepcionTypeCode: e.target.value }))}
+                            >
+                              <option value="">Seleccionar tipo</option>
+                              {percepcionTypes.map((row) => (
+                                <option key={row.code} value={row.code}>
+                                  {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
+                                </option>
+                              ))}
+                            </select>
+                          </label>
                         )}
-                      </div>
-                    </>
+
+                        <div className="sales-tributary-inline-note sales-tributary-field-wide">
+                          {percepcionAmount > 0 && (
+                            <strong>
+                              {selectedPercepcionType ? `${selectedPercepcionType.name} ` : 'Percepción '}| {percepcionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}
+                            </strong>
+                          )}
+                          {lookups?.percepcion_account?.account_number && (
+                            <span>
+                              Cta: {lookups.percepcion_account.account_number}
+                              {lookups.percepcion_account.bank_name ? ` (${lookups.percepcion_account.bank_name})` : ''}
+                            </span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </details>
+
+                <div className="sales-tributary-preview" role="status" aria-live="polite">
+                  <span>
+                    Op. SUNAT: {selectedSunatOperationType ? `${selectedSunatOperationType.code} - ${selectedSunatOperationType.name}` : '-'}
+                  </span>
+                  <span>
+                    Régimen: {form.hasDetraccion ? 'Detracción' : form.hasRetencion ? 'Retención' : form.hasPercepcion ? 'Percepción' : 'Ninguno'}
+                  </span>
+                  {form.hasDetraccion && (
+                    <span>
+                      Detracción: {selectedDetractionService?.rate_percent?.toFixed(2) ?? '0.00'}% | {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}
+                      {lookups?.detraccion_account?.account_number ? ` | Cta ${lookups.detraccion_account.account_number}` : ''}
+                    </span>
                   )}
-
                   {form.hasRetencion && (
-                    <>
-                      {retencionTypes.length > 0 && (
-                        <label className="sales-tributary-field">
-                          <span>Tipo de retención</span>
-                          <select
-                            value={form.retencionTypeCode ?? ''}
-                            onChange={(e) => setForm((prev) => ({ ...prev, retencionTypeCode: e.target.value }))}
-                          >
-                            <option value="">Seleccionar tipo</option>
-                            {retencionTypes.map((row) => (
-                              <option key={row.code} value={row.code}>
-                                {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-
-                      <div className="sales-tributary-inline-note sales-tributary-field-wide">
-                        {retencionAmount > 0 && (
-                          <strong>
-                            {selectedRetencionType ? `${selectedRetencionType.name} ` : 'Retención '}| {retencionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}
-                          </strong>
-                        )}
-                        {lookups?.retencion_account?.account_number && (
-                          <span>
-                            Cta: {lookups.retencion_account.account_number}
-                            {lookups.retencion_account.bank_name ? ` (${lookups.retencion_account.bank_name})` : ''}
-                          </span>
-                        )}
-                      </div>
-                    </>
+                    <span>
+                      Retención: {retencionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}
+                      {lookups?.retencion_account?.account_number ? ` | Cta ${lookups.retencion_account.account_number}` : ''}
+                    </span>
                   )}
-
                   {form.hasPercepcion && (
-                    <>
-                      {percepcionTypes.length > 0 && (
-                        <label className="sales-tributary-field">
-                          <span>Tipo de percepción</span>
-                          <select
-                            value={form.percepcionTypeCode ?? ''}
-                            onChange={(e) => setForm((prev) => ({ ...prev, percepcionTypeCode: e.target.value }))}
-                          >
-                            <option value="">Seleccionar tipo</option>
-                            {percepcionTypes.map((row) => (
-                              <option key={row.code} value={row.code}>
-                                {row.code} - {row.name} ({row.rate_percent.toFixed(2)}%)
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                      )}
-
-                      <div className="sales-tributary-inline-note sales-tributary-field-wide">
-                        {percepcionAmount > 0 && (
-                          <strong>
-                            {selectedPercepcionType ? `${selectedPercepcionType.name} ` : 'Percepción '}| {percepcionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}
-                          </strong>
-                        )}
-                        {lookups?.percepcion_account?.account_number && (
-                          <span>
-                            Cta: {lookups.percepcion_account.account_number}
-                            {lookups.percepcion_account.bank_name ? ` (${lookups.percepcion_account.bank_name})` : ''}
-                          </span>
-                        )}
-                      </div>
-                    </>
+                    <span>
+                      Percepción: {percepcionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}
+                      {lookups?.percepcion_account?.account_number ? ` | Cta ${lookups.percepcion_account.account_number}` : ''}
+                    </span>
                   )}
                 </div>
-              </details>
-
-              <div className="sales-tributary-preview" role="status" aria-live="polite">
-                <span>
-                  Op. SUNAT: {selectedSunatOperationType ? `${selectedSunatOperationType.code} - ${selectedSunatOperationType.name}` : '-'}
-                </span>
-                <span>
-                  Régimen: {form.hasDetraccion ? 'Detracción' : form.hasRetencion ? 'Retención' : form.hasPercepcion ? 'Percepción' : 'Ninguno'}
-                </span>
-                {form.hasDetraccion && (
-                  <span>
-                    Detracción: {selectedDetractionService?.rate_percent?.toFixed(2) ?? '0.00'}% | {selectedCurrency?.symbol ?? ''} {detraccionAmount.toFixed(2)}
-                    {lookups?.detraccion_account?.account_number ? ` | Cta ${lookups.detraccion_account.account_number}` : ''}
-                  </span>
-                )}
-                {form.hasRetencion && (
-                  <span>
-                    Retención: {retencionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {retencionAmount.toFixed(2)}
-                    {lookups?.retencion_account?.account_number ? ` | Cta ${lookups.retencion_account.account_number}` : ''}
-                  </span>
-                )}
-                {form.hasPercepcion && (
-                  <span>
-                    Percepción: {percepcionPercentage.toFixed(2)}% | {selectedCurrency?.symbol ?? ''} {percepcionAmount.toFixed(2)}
-                    {lookups?.percepcion_account?.account_number ? ` | Cta ${lookups.percepcion_account.account_number}` : ''}
-                  </span>
-                )}
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </details>
 
         <div className="sales-concepts-shell">
           <section className="sales-concepts-main">
             <header className="sales-section-head">
-              <div className="sales-section-head-main">
-                <h4>Conceptos del comprobante</h4>
-                <div className="tax-mode-toggle" role="group" aria-label="Modo de precio IGV">
-                  <label className="tax-mode-toggle-label">
-                    <input
-                      type="checkbox"
-                      checked={priceTaxMode === 'INCLUSIVE'}
-                      onChange={(e) => setPriceTaxMode(e.target.checked ? 'INCLUSIVE' : 'EXCLUSIVE')}
-                    />
-                    Incluye IGV
-                  </label>
-                </div>
-              </div>
+              <h4>Conceptos del comprobante</h4>
               <p>{isNoteDocument ? 'Los items se cargan automaticamente desde el documento afectado.' : 'Agrega productos o items manuales y arma el detalle antes de emitir.'}</p>
             </header>
 
             <div className="sales-grid-main">
-              <div className={`sales-grid-row sales-grid-row-item ${isTributaryDocument ? 'tax-on' : 'tax-off'}`}>
+              <div className={`sales-grid-row sales-grid-row-item ${isTributaryDocument ? 'tax-on' : 'tax-off'} ${(salesItemDiscountEnabled || salesFreeItemsEnabled) ? 'has-line-tools' : ''}`}>
                 <label className="with-suggest sales-field-product">
                   <span className="sales-field-product-head">
                     <span>{form.isManualItem ? 'Descripcion manual' : 'Producto'}</span>
@@ -4550,8 +5250,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                               onClick={() => void chooseProduct(row)}
                               className={`suggest-item ${index === activeProductIndex ? 'active' : ''}`}
                             >
-                              <strong>{row.name}</strong>
-                              <span>{row.sku ?? 'SIN-SKU'}</span>
+                              {(() => {
+                                const stock = stockByProductId.get(row.id) ?? 0;
+                                return (
+                                  <>
+                                    <strong>{row.name}</strong>
+                                    <span>
+                                      {(row.sku ?? 'SIN-SKU')} · Stock:{' '}
+                                      <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
+                                    </span>
+                                  </>
+                                );
+                              })()}
                             </button>
                           ))}
                         </div>
@@ -4581,28 +5291,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 </label>
 
                 {manualLotSelectionEnabled && (
-                <label className="sales-field-lot">
-                  Lote
-                  <select
-                    value={form.lotId ?? ''}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        lotId: e.target.value ? Number(e.target.value) : null,
-                      }))
-                    }
-                    disabled={form.isManualItem}
-                  >
-                    {!form.isManualItem && lots.length === 0 && <option value="">Sin lotes</option>}
-                    {form.isManualItem && <option value="">No aplica</option>}
-                    {!form.isManualItem &&
-                      lots.map((row) => (
-                        <option key={row.id} value={row.id}>
-                          {row.lot_code} | Stock {row.stock}{row.expires_at ? ` | Vence: ${new Date(row.expires_at).toLocaleDateString('es-PE')}` : ''}
-                        </option>
-                      ))}
-                  </select>
-                </label>
+                  <label className="sales-field-lot">
+                    Lote
+                    <select
+                      value={form.lotId ?? ''}
+                      onChange={(e) =>
+                        setForm((prev) => ({
+                          ...prev,
+                          lotId: e.target.value ? Number(e.target.value) : null,
+                        }))
+                      }
+                      disabled={form.isManualItem}
+                    >
+                      {!form.isManualItem && lots.length === 0 && <option value="">Sin lotes</option>}
+                      {form.isManualItem && <option value="">No aplica</option>}
+                      {!form.isManualItem &&
+                        lots.map((row) => (
+                          <option key={row.id} value={row.id}>
+                            {row.lot_code} | Stock {row.stock}{row.expires_at ? ` | Vence: ${new Date(row.expires_at).toLocaleDateString('es-PE')}` : ''}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
                 )}
 
                 {lotTrackingEnabled && !manualLotSelectionEnabled && !form.isManualItem && selectedProduct?.lot_tracking && (
@@ -4656,6 +5366,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   />
                 </label>
 
+                {salesItemDiscountEnabled && (
+                  <label className="sales-field-inline-tool sales-field-inline-discount">
+                    Descuento
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={form.draftLineDiscount ?? 0}
+                      onChange={(e) => setForm((prev) => ({ ...prev, draftLineDiscount: Number(e.target.value) }))}
+                      disabled={Boolean(form.draftIsFreeOperation)}
+                    />
+                  </label>
+                )}
+
+                {salesFreeItemsEnabled && (
+                  <label className="sales-field-inline-toggle">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(form.draftIsFreeOperation)}
+                      onChange={(e) => setForm((prev) => ({
+                        ...prev,
+                        draftIsFreeOperation: e.target.checked,
+                        draftLineDiscount: e.target.checked ? 0 : prev.draftLineDiscount,
+                      }))}
+                    />
+                    Operación gratuita
+                  </label>
+                )}
+
                 <div className="sales-field-action">
                   <button
                     type="button"
@@ -4665,6 +5404,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     Agregar item
                   </button>
                 </div>
+
               </div>
 
                 {autoPriceHint && (
@@ -4676,72 +5416,118 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     Equivalencia base: {Number(form.qty || 0).toFixed(3)} x factor {Number(draftConversionFactor || 1).toFixed(6)} = {Number(draftQtyBase || 0).toFixed(6)} en unidad base.
                   </p>
                 )}
+
             </div>
 
             {cart.length > 0 && (
               <div className="table-wrap sales-cart-wrap">
                 <h4>Detalle de venta</h4>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>Descripcion</th>
-                      <th>Tipo IGV</th>
-                      <th>Cantidad</th>
-                      <th>Precio</th>
-                      <th>Subtotal</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cart.map((item, index) => (
-                      <tr key={`${item.productId}-${item.lotId}-${index}`}>
-                        <td>{index + 1}</td>
-                        <td>{item.description}</td>
-                        <td>{item.taxLabel}</td>
-                        <td>
-                          <input
-                            className="cell-input"
-                            type="number"
-                            step="0.001"
-                            min="0.001"
-                            value={item.qty}
-                            onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="cell-input"
-                            type="number"
-                            step="0.01"
-                            min="0.01"
-                            value={item.unitPrice}
-                            onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
-                          />
-                        </td>
-                        <td>
-                          {computeLineTotals(
-                            Number(item.qty),
-                            Number(item.unitPrice),
-                            Number(item.taxRate ?? 0),
-                            Boolean(item.priceIncludesTax)
-                          ).subtotal.toFixed(2)}
-                        </td>
-                        <td>
-                          <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
-                            Quitar
-                          </button>
-                        </td>
+                <div className="sales-cart-table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Descripcion</th>
+                        <th>Stock</th>
+                        <th>Tipo IGV</th>
+                        <th>Cantidad</th>
+                        <th>Precio</th>
+                        {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
+                          <th>{salesItemDiscountEnabled ? 'Descuento' : 'Gratis'}</th>
+                        )}
+                        <th>Subtotal</th>
+                        {(salesItemDiscountEnabled || salesFreeItemsEnabled) && <th>Total</th>}
+                        <th></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {cart.map((item, index) => (
+                        <tr key={`${item.productId}-${item.lotId}-${index}`}>
+                          <td>{index + 1}</td>
+                          <td>{item.description}</td>
+                          <td>
+                            {item.isManual || !item.productId
+                              ? '-'
+                              : (() => {
+                                  const stock = stockByProductId.get(item.productId) ?? 0;
+                                  return <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>;
+                                })()}
+                          </td>
+                          <td>{item.taxLabel}</td>
+                          <td>
+                            <input
+                              className="cell-input"
+                              type="number"
+                              step="0.001"
+                              min="0.001"
+                              value={item.qty}
+                              onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="cell-input"
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              value={item.unitPrice}
+                              onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
+                            />
+                          </td>
+                          {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
+                            <td>
+                              <div className="sales-table-line-meta">
+                                {salesItemDiscountEnabled && (
+                                  <input
+                                    className="cell-input"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={Number(item.discountTotal ?? 0)}
+                                    onChange={(e) => updateDraftItem(index, 'discountTotal', Number(e.target.value))}
+                                    disabled={Boolean(item.isFreeOperation)}
+                                  />
+                                )}
+                                {salesFreeItemsEnabled && (
+                                  <label className="sales-inline-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(item.isFreeOperation)}
+                                      onChange={(e) => {
+                                        updateDraftItem(index, 'isFreeOperation', e.target.checked);
+                                        if (e.target.checked) {
+                                          updateDraftItem(index, 'discountTotal', 0);
+                                        }
+                                      }}
+                                    />
+                                    Gratis
+                                  </label>
+                                )}
+                              </div>
+                            </td>
+                          )}
+                          <td>
+                            {computeSalesDraftAmounts(item).subtotal.toFixed(2)}
+                          </td>
+                          {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
+                            <td>{computeSalesDraftAmounts(item).finalTotal.toFixed(2)}</td>
+                          )}
+                          <td>
+                            <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
             {cart.length === 0 && (
               <div className="sales-main-empty" aria-live="polite">
-                Agrega productos para construir el comprobante. El resumen se actualiza automaticamente al lado derecho.
+                Agrega productos para construir el comprobante. El resumen se actualiza automaticamente en el panel derecho.
               </div>
             )}
           </section>
@@ -4756,6 +5542,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </header>
 
             <div className="sales-summary">
+              {salesGlobalDiscountEnabled && (
+                <label className="sales-summary-input sales-summary-input-discount">
+                  <span>Descuento global</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={form.globalDiscountAmount ?? 0}
+                    onChange={(e) => setForm((prev) => ({ ...prev, globalDiscountAmount: Number(e.target.value) }))}
+                    placeholder="0.00"
+                  />
+                </label>
+              )}
               <article>
                 <span>Subtotal</span>
                 <strong>
@@ -4768,6 +5567,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   {selectedCurrency?.symbol ?? ''} {previewSummaryTotals.tax.toFixed(2)}
                 </strong>
               </article>
+              {(salesGlobalDiscountEnabled || salesItemDiscountEnabled || salesFreeItemsEnabled) && (
+                <article>
+                  <span>Descuentos</span>
+                  <strong>
+                    {selectedCurrency?.symbol ?? ''} {previewSummaryTotals.discount.toFixed(2)}
+                  </strong>
+                </article>
+              )}
               <article>
                 <span>Total</span>
                 <strong>
@@ -4792,6 +5599,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   {showTaxBreakdown && (
                     <>
                       <article><span>Total Descuento</span><strong>{selectedCurrency?.symbol ?? ''} {tributaryPreview.discountTotal.toFixed(2)}</strong></article>
+                      {salesGlobalDiscountEnabled && (
+                        <article><span>Descuento global</span><strong>{selectedCurrency?.symbol ?? ''} {globalDiscountAmount.toFixed(2)}</strong></article>
+                      )}
                       <article><span>Total Ope. Inafecta</span><strong>{selectedCurrency?.symbol ?? ''} {tributaryPreview.inafectaTotal.toFixed(2)}</strong></article>
                       <article><span>Total Ope. Exonerada</span><strong>{selectedCurrency?.symbol ?? ''} {tributaryPreview.exoneradaTotal.toFixed(2)}</strong></article>
                     </>
@@ -4862,7 +5672,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         <div className="issued-preview">
           <h4>Vista previa de emision</h4>
           <p>
-            {docKindLabel(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
+            {docKindLabelResolved(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
             {issuedPreview.total.toFixed(2)} | Estado: {commercialStatusLabel(issuedPreview.status)}
           </p>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -4881,7 +5691,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       {salesWorkspaceMode === 'REPORT' && (
         <>
-
       {shouldPrioritizePendingOrders && (
         <div className="workspace-mode-switch" style={{ marginTop: '0.35rem', marginBottom: '0.65rem' }}>
           <button
@@ -4924,7 +5733,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <tbody>
               {documents.map((row) => (
                 <tr key={`top-${row.id}`}>
-                  <td>{docKindLabel(row.document_kind)} {row.series}-{row.number}</td>
+                  <td>{docKindLabelResolved(row.document_kind)} {row.series}-{row.number}</td>
                   <td>{row.customer_name}</td>
                   <td>{row.total}</td>
                   <td>
@@ -5006,7 +5815,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 {series.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
-                    <td>{docKindLabel(row.document_kind)}</td>
+                    <td>{docKindLabelResolved(row.document_kind)}</td>
                     <td>{row.series}</td>
                     <td>{row.current_number}</td>
                   </tr>
@@ -5155,7 +5964,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               >
                 <td>{row.id}</td>
                 <td>
-                  {docKindLabel(row.document_kind)} {row.series}-{row.number}
+                  {docKindLabelResolved(row.document_kind)} {row.series}-{row.number}
                 </td>
                 <td>{row.issue_at ? formatStoredDateTime(row.issue_at) : '-'}</td>
                 <td>{row.customer_name}</td>
@@ -5189,7 +5998,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           {toBooleanFlag(row.has_tributary_conversion) ? '✓ Tributario emitido' : '⏳ Tributario pendiente'}
                         </span>
                       </div>
-                    ) : ((row.document_kind === 'INVOICE' || row.document_kind === 'RECEIPT') && row.source_document_id) ? (
+                    ) : ((['INVOICE', 'RECEIPT'].includes(resolveRowDocumentKindBase(row)) && row.source_document_id) ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', alignItems: 'flex-start' }}>
                         <span style={{
                           display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
@@ -5204,7 +6013,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       </div>
                     ) : (
                       <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>—</span>
-                    )}
+                    ))}
                 </td>
                 <td>{commercialStatusLabel(row.status)}</td>
                 <td>{row.total}</td>
@@ -5230,8 +6039,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         🧾
                       </button>
                       {canConvertInCurrentMode && (
-                        <details className="sales-actions-dropdown">
-                          <summary title="Opciones de conversion">⇄</summary>
+                        <div className="sales-actions-dropdown">
+                          <button
+                            type="button"
+                            title="Opciones de conversion"
+                            className="btn-mini sales-action-btn sales-action-view"
+                            disabled={loading}
+                          >
+                            ⇄
+                          </button>
                           <div className="sales-actions-dropdown-menu">
                             <button
                               type="button"
@@ -5260,7 +6076,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                               </button>
                             )}
                           </div>
-                        </details>
+                        </div>
                       )}
                       {editControl.visible && (
                         <button
@@ -5316,7 +6132,20 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           📝
                         </button>
                       )}
-                      {!isTributaryDocumentKind(row.document_kind)
+                      {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode)
+                        && isPendingManualSunat(row)
+                        && !['VOID', 'CANCELED'].includes(String(row.status).toUpperCase()) && (
+                          <button
+                            type="button"
+                            className="btn-mini sales-action-btn sales-action-void"
+                            disabled={loading}
+                            onClick={() => void handleVoidDocument(row)}
+                            title="Anulación no tributaria (sin envío SUNAT)"
+                          >
+                            🗑️
+                          </button>
+                        )}
+                      {!isTributaryRow(row)
                         && canVoidDocumentsInCurrentMode
                         && !['VOID', 'CANCELED'].includes(String(row.status).toUpperCase()) && (
                           <button
@@ -5371,13 +6200,44 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       )}
                     </div>
                   )}
-                  {isTributaryDocumentKind(row.document_kind) ? (
-                    <details
+                  {isTributaryRow(row) ? (
+                    <div
                       className={`sales-sunat-dropdown ${canOpenSunatActionsMenu(row, taxBridgeEnabled, canVoidDocumentsInCurrentMode) ? '' : 'is-locked'}`}
                     >
-                      <summary className={`sales-sunat-badge ${sunatUi.className}`}>
-                        {sunatUi.label}
-                      </summary>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.28rem' }}>
+                        <button type="button" className={`sales-sunat-badge ${sunatUi.className}`}>
+                          {sunatUi.label}
+                        </button>
+                        {canViewTaxBridgeDebug && (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void handleToggleSunatBridgeDebug(row);
+                            }}
+                            title="Ver historial de intentos SUNAT (payload y respuesta por intento)"
+                            style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '9999px',
+                              border: sunatBridgeDebugState?.documentId === row.id ? '1px solid #0f766e' : '1px solid #cbd5e1',
+                              background: sunatBridgeDebugState?.documentId === row.id ? '#ecfeff' : '#f8fafc',
+                              color: '#0f172a',
+                              fontSize: '0.66rem',
+                              fontWeight: 700,
+                              lineHeight: 1,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              cursor: 'pointer',
+                              padding: 0,
+                            }}
+                          >
+                            i
+                          </button>
+                        )}
+                      </div>
                       <div className="sales-sunat-dropdown-menu">
                         {/* ── DOCS ACEPTADOS: Descargas + Notas ─────────────── */}
                         {String(row.sunat_status ?? '').toUpperCase() === 'ACCEPTED' && (
@@ -5403,7 +6263,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                 📦 CDR
                               </button>
                             </div>
-                            {['INVOICE', 'RECEIPT'].includes(String(row.document_kind).toUpperCase()) && (
+                            {['INVOICE', 'RECEIPT'].includes(resolveRowDocumentKindBase(row)) && (
                               <>
                                 <div className="sunat-menu-divider" />
                                 <p className="sunat-menu-section-label">Notas</p>
@@ -5440,7 +6300,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             🚀 {sunatSendingDocumentId === row.id ? 'Enviando...' : 'Enviar a SUNAT'}
                           </button>
                         )}
-                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode) && !isReceiptDocument(row) && (
+                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode)
+                          && !isReceiptDocument(row)
+                          && !isPendingManualSunat(row) && (
                           <button
                             type="button"
                             className="sunat-menu-btn sunat-menu-btn--danger"
@@ -5451,7 +6313,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             🗑️ Anular (sin envio SUNAT)
                           </button>
                         )}
-                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode) && isReceiptDocument(row) && !canAnulateAcceptedReceipt(row) && (
+                        {canVoidBeforeSunatSend(row, canVoidDocumentsInCurrentMode)
+                          && isReceiptDocument(row)
+                          && !canAnulateAcceptedReceipt(row)
+                          && !isPendingManualSunat(row) && (
                           <button
                             type="button"
                             className="sunat-menu-btn sunat-menu-btn--danger"
@@ -5510,7 +6375,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           </>
                         )}
                       </div>
-                    </details>
+                    </div>
                   ) : (
                     <span style={{ color: '#9ca3af', fontSize: '0.85rem' }}>—</span>
                   )}
@@ -5656,18 +6521,252 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         />
       )}
 
+      {sunatBridgeDebugState && (
+        <>
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 3349,
+              background: 'rgba(15, 23, 42, 0.52)',
+            }}
+            onClick={() => setSunatBridgeDebugState(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSunatBridgeDebugState(null);
+              }
+            }}
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 3350,
+              width: 'min(1080px, 96vw)',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              background: '#ffffff',
+              border: '1px solid #dbe4f0',
+              borderRadius: '14px',
+              boxShadow: '0 28px 70px rgba(15, 23, 42, 0.42)',
+            }}
+          >
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', background: 'linear-gradient(120deg, #0f172a 0%, #0f766e 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1rem' }}>Detalle tecnico SUNAT bridge</h3>
+                <p style={{ margin: '4px 0 0', opacity: 0.88, fontSize: '0.84rem' }}>{sunatBridgeDebugState.title}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSunatBridgeDebugState(null)}
+                style={{ border: '1px solid rgba(255,255,255,0.45)', background: 'rgba(15,23,42,0.2)', color: '#fff', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', fontWeight: 700 }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div style={{ padding: '14px 16px' }}>
+              {sunatBridgeDebugState.loading ? (
+                <p style={{ margin: 0, color: '#64748b' }}>Consultando trazabilidad tecnica del envio...</p>
+              ) : sunatBridgeDebugState.error ? (
+                <p style={{ margin: 0, color: '#dc2626' }}>{sunatBridgeDebugState.error}</p>
+              ) : sunatBridgeDebugState.attempts.length > 0 ? (
+                <>
+                  <div style={{ marginBottom: '0.8rem', color: '#334155', fontSize: '0.85rem' }}>
+                    Se encontraron {sunatBridgeDebugState.attempts.length} intento(s) para este comprobante.
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 0.95fr) 1.4fr', gap: '0.75rem' }}>
+                    <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                        Intentos del puente
+                      </header>
+                      <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+                        {sunatBridgeDebugState.attempts.map((attempt) => {
+                          const isSelected = sunatBridgeDebugState.selectedLogId === attempt.id;
+                          return (
+                            <button
+                              key={attempt.id}
+                              type="button"
+                              onClick={() => {
+                                const hasDetail = Object.prototype.hasOwnProperty.call(sunatBridgeDebugState.attemptDetails, attempt.id);
+                                if (!hasDetail) {
+                                  void loadSunatAuditAttemptDetail(sunatBridgeDebugState.documentId, attempt.id);
+                                  return;
+                                }
+
+                                setSunatBridgeDebugState((prev) => {
+                                  if (!prev) {
+                                    return prev;
+                                  }
+
+                                  return {
+                                    ...prev,
+                                    selectedLogId: attempt.id,
+                                  };
+                                });
+                              }}
+                              style={{
+                                width: '100%',
+                                textAlign: 'left',
+                                border: 'none',
+                                borderBottom: '1px solid #e2e8f0',
+                                background: isSelected ? '#ecfeff' : '#fff',
+                                padding: '10px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
+                                <strong style={{ color: '#0f172a', fontSize: '0.8rem' }}>Intento #{attempt.attempt_number}</strong>
+                                <span style={{ fontSize: '0.72rem', color: '#334155' }}>{sunatStatusLabel(attempt.status)}</span>
+                              </div>
+                              <div style={{ marginTop: '0.25rem', color: '#64748b', fontSize: '0.74rem' }}>
+                                {attempt.sent_at ? fmtDateTimeFullLima(attempt.sent_at) : 'Sin fecha'}
+                              </div>
+                              <div style={{ marginTop: '0.22rem', color: '#475569', fontSize: '0.72rem' }}>
+                                {attempt.http_code ? `HTTP ${attempt.http_code}` : 'Sin HTTP'}
+                                {attempt.response_time_ms !== null && attempt.response_time_ms !== undefined ? ` · ${Number(attempt.response_time_ms).toFixed(2)} ms` : ''}
+                                {attempt.is_retry ? ' · Reintento' : ''}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                        Detalle por intento
+                      </header>
+                      <div style={{ padding: '10px' }}>
+                        {sunatBridgeDebugState.selectedLogId === null ? (
+                          <p style={{ margin: 0, color: '#64748b' }}>Selecciona un intento para ver payload y respuesta.</p>
+                        ) : sunatBridgeDebugState.loadingDetailLogId === sunatBridgeDebugState.selectedLogId ? (
+                          <p style={{ margin: 0, color: '#64748b' }}>Cargando detalle del intento...</p>
+                        ) : !sunatBridgeDebugState.attemptDetails[sunatBridgeDebugState.selectedLogId] ? (
+                          <p style={{ margin: 0, color: '#b91c1c' }}>No se pudo cargar el detalle de este intento.</p>
+                        ) : (
+                          (() => {
+                            const detail = sunatBridgeDebugState.attemptDetails[sunatBridgeDebugState.selectedLogId!] as TaxBridgeAuditAttemptDetail;
+                            return (
+                              <>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.65rem', marginBottom: '0.9rem' }}>
+                                  <article><strong>Modo</strong><div>{detail.bridge.mode || '-'}</div></article>
+                                  <article><strong>Estado SUNAT</strong><div>{sunatStatusLabel(detail.sunat.status || '')}</div></article>
+                                  <article><strong>HTTP bridge</strong><div>{detail.response.status_code ? `HTTP ${detail.response.status_code}` : '-'}</div></article>
+                                  <article><strong>Ticket</strong><div>{detail.sunat.ticket || '-'}</div></article>
+                                  <article><strong>Código SUNAT</strong><div>{detail.sunat.code || '-'}</div></article>
+                                  <article><strong>SHA1 payload</strong><div>{detail.request.sha1 || '-'}</div></article>
+                                </div>
+
+                                <div style={{ marginBottom: '0.8rem', color: '#334155', fontSize: '0.85rem' }}>
+                                  <strong>Endpoint:</strong> {detail.bridge.method || 'POST'} {detail.bridge.endpoint || '-'}
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                  <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                    <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                                      Payload enviado
+                                    </header>
+                                    <pre style={{ margin: 0, padding: '10px', maxHeight: '36vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.75rem', lineHeight: 1.45 }}>
+                                      {formatDebugJson(detail.request.payload)}
+                                    </pre>
+                                  </section>
+
+                                  <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                    <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                                      Respuesta del bridge
+                                    </header>
+                                    <pre style={{ margin: 0, padding: '10px', maxHeight: '36vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.75rem', lineHeight: 1.45 }}>
+                                      {formatDebugJson(detail.response.body)}
+                                    </pre>
+                                  </section>
+                                </div>
+
+                                {(detail.error?.message || detail.sunat.message) && (
+                                  <p style={{ margin: '10px 0 0', color: '#b91c1c', fontWeight: 600 }}>
+                                    Detalle: {detail.error?.message || detail.sunat.message}
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                </>
+              ) : !sunatBridgeDebugState.debug ? (
+                <p style={{ margin: 0, color: '#64748b' }}>No existe histórico de intentos para este comprobante.</p>
+              ) : (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.65rem', marginBottom: '0.9rem' }}>
+                    <article><strong>Modo</strong><div>{sunatBridgeDebugState.debug.bridge_mode || '-'}</div></article>
+                    <article><strong>Estado SUNAT</strong><div>{sunatBridgeDebugState.debug.sunat_status_label || sunatBridgeDebugState.debug.sunat_status || '-'}</div></article>
+                    <article><strong>HTTP bridge</strong><div>{sunatBridgeDebugState.debug.bridge_http_code ? `HTTP ${sunatBridgeDebugState.debug.bridge_http_code}` : '-'}</div></article>
+                    <article><strong>Ticket</strong><div>{sunatBridgeDebugState.debug.sunat_ticket || '-'}</div></article>
+                    <article><strong>Error SUNAT</strong><div>{sunatBridgeDebugState.debug.sunat_error_code || '-'}</div></article>
+                    <article><strong>SHA1 payload</strong><div>{sunatBridgeDebugState.debug.payload_sha1 || '-'}</div></article>
+                  </div>
+
+                  <div style={{ marginBottom: '0.8rem', color: '#334155', fontSize: '0.85rem' }}>
+                    <strong>Endpoint:</strong> {sunatBridgeDebugState.debug.method || 'POST'} {sunatBridgeDebugState.debug.endpoint || '-'}
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                        Payload enviado
+                      </header>
+                      <pre style={{ margin: 0, padding: '10px', maxHeight: '44vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.75rem', lineHeight: 1.45 }}>
+                        {formatDebugJson(sunatBridgeDebugState.debug.payload)}
+                      </pre>
+                    </section>
+
+                    <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                        Respuesta del bridge
+                      </header>
+                      <pre style={{ margin: 0, padding: '10px', maxHeight: '44vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.75rem', lineHeight: 1.45 }}>
+                        {formatDebugJson(sunatBridgeDebugState.debug.bridge_response)}
+                      </pre>
+                    </section>
+                  </div>
+
+                  {sunatBridgeDebugState.debug.sunat_error_message && (
+                    <p style={{ margin: '10px 0 0', color: '#b91c1c', fontWeight: 600 }}>
+                      Detalle error SUNAT: {sunatBridgeDebugState.debug.sunat_error_message}
+                    </p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
       {convertPreviewModal && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(15, 23, 42, 0.62)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 3300,
-          padding: '20px',
-        }}>
-          <div style={{
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3299, pointerEvents: 'none' }} />
+      )}
+
+      {convertPreviewModal && (
+        <div
+          role="dialog"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setConvertPreviewModal(null);
+            }
+          }}
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 3300,
             width: 'min(860px, 96vw)',
             maxHeight: '86vh',
             overflow: 'auto',
@@ -5675,122 +6774,130 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             border: '1px solid #dbe4f0',
             borderRadius: '14px',
             boxShadow: '0 28px 70px rgba(15, 23, 42, 0.38)',
+            outline: 'none',
+            pointerEvents: 'auto',
           }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%)', color: '#fff' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', letterSpacing: '0.2px' }}>Confirmar conversion</h3>
-              <p style={{ margin: '4px 0 0', opacity: 0.88, fontSize: '0.85rem' }}>
-                {convertPreviewModal.source.document_kind} {convertPreviewModal.source.series}-{convertPreviewModal.source.number} {'->'} {
-                  convertPreviewModal.targetDocumentKind === 'INVOICE'
-                    ? 'Factura'
-                    : convertPreviewModal.targetDocumentKind === 'RECEIPT'
-                      ? 'Boleta'
-                      : 'Nota de pedido'
-                }
-              </p>
-            </div>
+          <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%)', color: '#fff' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', letterSpacing: '0.2px' }}>Confirmar conversion</h3>
+            <p style={{ margin: '4px 0 0', opacity: 0.88, fontSize: '0.85rem' }}>
+              {convertPreviewModal.source.document_kind} {convertPreviewModal.source.series}-{convertPreviewModal.source.number} {'->'} {
+                convertPreviewModal.targetDocumentKind === 'INVOICE'
+                  ? 'Factura'
+                  : convertPreviewModal.targetDocumentKind === 'RECEIPT'
+                    ? 'Boleta'
+                    : 'Nota de pedido'
+              }
+            </p>
+          </div>
 
-            <div style={{ padding: '16px' }}>
-              {convertPreviewModal.loading && <p style={{ margin: 0, color: '#64748b' }}>Cargando detalle del documento...</p>}
-              {!convertPreviewModal.loading && convertPreviewModal.error && (
-                <p style={{ margin: 0, color: '#dc2626' }}>{convertPreviewModal.error}</p>
-              )}
-              {!convertPreviewModal.loading && !convertPreviewModal.error && convertPreviewModal.details && (
-                <>
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <article><strong>Cliente</strong><div>{convertPreviewModal.details.customerName}</div></article>
-                    <article><strong>Total</strong><div>{convertPreviewModal.details.currencySymbol} {Number(convertPreviewModal.details.grandTotal ?? 0).toFixed(2)}</div></article>
-                    <article><strong>Estado origen</strong><div>{commercialStatusLabel(convertPreviewModal.details.status)}</div></article>
-                  </div>
-                  <div style={{
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '10px',
-                    overflow: 'hidden',
-                    height: '420px',
-                    background: '#fff',
-                  }}>
-                    <iframe
-                      title="Vista previa de conversion"
-                      srcDoc={convertPreviewModal.previewHtml}
-                      style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
-                    />
-                  </div>
-                </>
-              )}
+          <div style={{ padding: '16px' }}>
+            {convertPreviewModal.loading && <p style={{ margin: 0, color: '#64748b' }}>Cargando detalle del documento...</p>}
+            {!convertPreviewModal.loading && convertPreviewModal.error && (
+              <p style={{ margin: 0, color: '#dc2626' }}>{convertPreviewModal.error}</p>
+            )}
+            {!convertPreviewModal.loading && !convertPreviewModal.error && convertPreviewModal.details && (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                  <article><strong>Cliente</strong><div>{convertPreviewModal.details.customerName}</div></article>
+                  <article><strong>Total</strong><div>{convertPreviewModal.details.currencySymbol} {Number(convertPreviewModal.details.grandTotal ?? 0).toFixed(2)}</div></article>
+                  <article><strong>Estado origen</strong><div>{commercialStatusLabel(convertPreviewModal.details.status)}</div></article>
+                </div>
+                <div style={{
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '10px',
+                  overflow: 'hidden',
+                  height: '420px',
+                  background: '#fff',
+                }}>
+                  <iframe
+                    title="Vista previa de conversion"
+                    srcDoc={convertPreviewModal.previewHtml}
+                    style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+                  />
+                </div>
+              </>
+            )}
 
-              <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                <button type="button" onClick={() => setConvertPreviewModal(null)} style={{ padding: '10px 14px', backgroundColor: '#e2e8f0', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
-                  Cancelar
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void confirmConvertFromPreview()}
-                  disabled={convertPreviewModal.loading || !!convertPreviewModal.error || !convertPreviewModal.details}
-                  style={{ padding: '10px 14px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
-                >
-                  Confirmar conversion
-                </button>
-              </div>
+            <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+              <button type="button" onClick={() => setConvertPreviewModal(null)} style={{ padding: '10px 14px', backgroundColor: '#e2e8f0', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmConvertFromPreview()}
+                disabled={convertPreviewModal.loading || !!convertPreviewModal.error || !convertPreviewModal.details}
+                style={{ padding: '10px 14px', backgroundColor: '#2563eb', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+              >
+                Confirmar conversion
+              </button>
             </div>
           </div>
         </div>
       )}
 
       {postConvertPrintModal && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(15, 23, 42, 0.62)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 3300,
-          padding: '20px',
-        }}>
-          <div style={{
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.62)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3299, pointerEvents: 'none' }} />
+      )}
+
+      {postConvertPrintModal && (
+        <div
+          role="dialog"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              setPostConvertPrintModal(null);
+            }
+          }}
+          style={{
+            position: 'fixed',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            zIndex: 3300,
             width: 'min(460px, 96vw)',
             background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
             border: '1px solid #dbe4f0',
             borderRadius: '14px',
             boxShadow: '0 28px 70px rgba(15, 23, 42, 0.38)',
             overflow: 'hidden',
+            outline: 'none',
+            pointerEvents: 'auto',
           }}>
-            <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%)', color: '#fff' }}>
-              <h3 style={{ margin: 0, fontSize: '1rem', letterSpacing: '0.2px' }}>{postConvertPrintModal.title}</h3>
-              <p style={{ margin: '4px 0 0', opacity: 0.86, fontSize: '0.85rem' }}>{postConvertPrintModal.subtitle || 'Selecciona formato de impresion'}</p>
-            </div>
-            <div style={{ padding: '16px' }}>
-              {postConvertPrintModal.loading ? (
-                <p style={{ textAlign: 'center', color: '#64748b', margin: 0 }}>Cargando documento convertido...</p>
-              ) : postConvertPrintModal.details ? (
-                <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
-                  <button
-                    type="button"
-                    onClick={() => openPostConvertPrint('80mm')}
-                    style={{ padding: '12px 14px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
-                  >
-                    Imprimir Ticket 80mm
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openPostConvertPrint('A4')}
-                    style={{ padding: '12px 14px', backgroundColor: '#059669', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
-                  >
-                    Imprimir A4 / PDF
-                  </button>
-                </div>
-              ) : (
-                <p style={{ textAlign: 'center', color: '#dc2626', margin: 0 }}>{postConvertPrintModal.error || 'No se pudo cargar documento convertido'}</p>
-              )}
-
-              <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ padding: '14px 16px 10px', borderBottom: '1px solid #e5e7eb', background: 'linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%)', color: '#fff' }}>
+            <h3 style={{ margin: 0, fontSize: '1rem', letterSpacing: '0.2px' }}>{postConvertPrintModal.title}</h3>
+            <p style={{ margin: '4px 0 0', opacity: 0.86, fontSize: '0.85rem' }}>{postConvertPrintModal.subtitle || 'Selecciona formato de impresion'}</p>
+          </div>
+          <div style={{ padding: '16px' }}>
+            {postConvertPrintModal.loading ? (
+              <p style={{ textAlign: 'center', color: '#64748b', margin: 0 }}>Cargando documento convertido...</p>
+            ) : postConvertPrintModal.details ? (
+              <div style={{ display: 'flex', gap: '10px', flexDirection: 'column' }}>
                 <button
                   type="button"
-                  onClick={() => setPostConvertPrintModal(null)}
-                  style={{ padding: '10px 14px', backgroundColor: '#e2e8f0', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+                  onClick={() => openPostConvertPrint('80mm')}
+                  style={{ padding: '12px 14px', backgroundColor: '#2563eb', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
                 >
-                  Cerrar
+                  Imprimir Ticket 80mm
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPostConvertPrint('A4')}
+                  style={{ padding: '12px 14px', backgroundColor: '#059669', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
+                >
+                  Imprimir A4 / PDF
                 </button>
               </div>
+            ) : (
+              <p style={{ textAlign: 'center', color: '#dc2626', margin: 0 }}>{postConvertPrintModal.error || 'No se pudo cargar documento convertido'}</p>
+            )}
+
+            <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => setPostConvertPrintModal(null)}
+                style={{ padding: '10px 14px', backgroundColor: '#e2e8f0', color: '#0f172a', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+              >
+                Cerrar
+              </button>
             </div>
           </div>
         </div>

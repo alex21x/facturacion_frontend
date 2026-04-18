@@ -236,7 +236,30 @@ export async function fetchDocumentKinds(accessToken: string): Promise<DocumentK
   return response.data;
 }
 
-export async function updateDocumentKinds(accessToken: string, kinds: Array<{ code: string; is_enabled: boolean }>) {
+export async function createDocumentKind(
+  accessToken: string,
+  payload: { code: string; label: string; sort_order?: number; is_enabled?: boolean }
+) {
+  return apiClient.request('/api/masters/document-kinds', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateDocumentKind(
+  accessToken: string,
+  id: number,
+  payload: { code?: string; label?: string; sort_order?: number; is_enabled?: boolean }
+) {
+  return apiClient.request(`/api/masters/document-kinds/${id}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateDocumentKinds(accessToken: string, kinds: Array<{ original_code?: string; code: string; label?: string; is_enabled: boolean }>) {
   return apiClient.request('/api/masters/document-kinds', {
     method: 'PUT',
     headers: authHeaders(accessToken),

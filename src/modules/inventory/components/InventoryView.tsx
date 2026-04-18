@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
+import { fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   fetchInventoryLots,
   fetchInventoryProducts,
   fetchInventoryStock,
   fetchKardex,
+  fetchInventoryProductImportBatches,
+  fetchInventoryProductImportBatchDetail,
   fetchInventoryProDashboard,
   fetchInventoryProDailySnapshot,
   fetchInventoryProLotExpiry,
@@ -16,18 +19,22 @@ import type {
   InventoryProduct,
   InventoryStockRow,
   KardexRow,
+  KardexMeta,
   InventoryProDashboardResponse,
   InventoryProDailySnapshotResponse,
   InventoryProLotExpiryResponse,
   InventoryProReportRequestListItem,
   InventoryProReportRequestDetail,
+  InventoryProductImportBatch,
+  InventoryProductImportBatchDetail,
   ReportsApiReportCode,
 } from '../types';
 
-type InvTab = 'stock' | 'lotes' | 'ubicaciones' | 'kardex' | 'dashboard' | 'reportes';
+type InvTab = 'stock' | 'lotes' | 'ubicaciones' | 'kardex' | 'importaciones' | 'dashboard' | 'reportes';
 
 const REF_TYPE_LABELS: Record<string, string> = {
   STOCK_ENTRY: 'Ingreso',
+  PRODUCT_IMPORT: 'Importacion masiva',
   COMMERCIAL_DOCUMENT: 'Doc. Comercial',
   COMMERCIAL_DOCUMENT_VOID: 'Anulacion doc. comercial',
 };
@@ -35,6 +42,21 @@ const REF_TYPE_LABELS: Record<string, string> = {
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   IN: 'Entrada',
   OUT: 'Salida',
+};
+
+const STOCK_ENTRY_TYPE_LABELS: Record<string, string> = {
+  PURCHASE: 'Compra',
+  ADJUSTMENT: 'Ajuste',
+  PURCHASE_ORDER: 'Orden de compra',
+};
+
+const DOCUMENT_KIND_NOTE_LABELS: Record<string, string> = {
+  INVOICE: 'Factura',
+  RECEIPT: 'Boleta',
+  CREDIT_NOTE: 'Nota de credito',
+  DEBIT_NOTE: 'Nota de debito',
+  SALES_ORDER: 'Nota de pedido',
+  QUOTATION: 'Cotizacion',
 };
 
 const REPORT_TYPE_LABELS: Record<string, string> = {
@@ -67,23 +89,18 @@ const EXPIRY_BUCKET_LABELS: Record<string, string> = {
   NO_EXPIRY: 'Sin vencimiento',
 };
 
+const IMPORT_BATCH_STATUS_LABELS: Record<string, string> = {
+  PROCESSING: 'Procesando',
+  COMPLETED: 'Completado',
+  COMPLETED_WITH_ERRORS: 'Completado con errores',
+};
+
 function fmtDateTime(value: string | null | undefined): string {
-  if (!value) return '-';
-  // If no offset/Z, assume UTC to avoid local-browser timezone shift
-  const hasOffset = /Z$|[+-]\d{2}:\d{2}$/.test(value.trim());
-  const normalised = hasOffset ? value.trim() : value.trim() + 'Z';
-  const d = new Date(normalised);
-  if (isNaN(d.getTime())) return value;
-  return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Lima' })
-    + ' '
-    + d.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Lima' });
+  return fmtDateTimeLima(value);
 }
 
 function fmtDate(value: string | null | undefined): string {
-  if (!value) return '-';
-  const d = new Date(value.length === 10 ? value + 'T00:00:00' : value);
-  if (isNaN(d.getTime())) return value;
-  return d.toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Lima' });
+  return fmtDateLima(value);
 }
 
 function fileNameTimestampLima(): string {
@@ -128,6 +145,20 @@ const EXPORT_KEY_LABELS: Record<string, string> = {
   expiry_bucket: 'Bucket',
   days_to_expire: 'DiasParaVencer',
 };
+
+function humanizeInventoryNote(note: string | null | undefined): string {
+  const raw = (note ?? '').trim();
+  if (!raw) {
+    return '-';
+  }
+
+  let translated = raw;
+  Object.entries(DOCUMENT_KIND_NOTE_LABELS).forEach(([code, label]) => {
+    translated = translated.replace(new RegExp(`\\b${code}\\b`, 'g'), label);
+  });
+
+  return translated;
+}
 
 function formatExportCell(key: string, value: unknown): unknown {
   if (typeof value !== 'string') {
@@ -197,6 +228,9 @@ export function InventoryView({
   const [kardexDateFrom, setKardexDateFrom] = useState('');
   const [kardexDateTo, setKardexDateTo] = useState('');
   const [kardexLoading, setKardexLoading] = useState(false);
+  const [kardexPage, setKardexPage] = useState(1);
+  const [kardexPerPage] = useState(50);
+  const [kardexMeta, setKardexMeta] = useState<KardexMeta>({ current_page: 1, per_page: 50, total: 0, total_pages: 1 });
 
   // Inventory Pro dashboard/report state
   const [dashboardDays, setDashboardDays] = useState(30);
@@ -219,6 +253,11 @@ export function InventoryView({
   const [selectedReportRequest, setSelectedReportRequest] = useState<InventoryProReportRequestDetail | null>(null);
   const [reportDateFrom, setReportDateFrom] = useState('');
   const [reportDateTo, setReportDateTo] = useState('');
+  const [importBatches, setImportBatches] = useState<InventoryProductImportBatch[]>([]);
+  const [importBatchesLoading, setImportBatchesLoading] = useState(false);
+  const [selectedImportBatchId, setSelectedImportBatchId] = useState<number | null>(null);
+  const [selectedImportBatchDetail, setSelectedImportBatchDetail] = useState<InventoryProductImportBatchDetail | null>(null);
+  const [importBatchDetailLoading, setImportBatchDetailLoading] = useState(false);
 
   const normalizedLocation = (locationRaw: string | null | undefined): string => {
     const location = (locationRaw ?? '').trim();
@@ -381,26 +420,36 @@ export function InventoryView({
     setActiveTab('lotes');
   }
 
-  async function loadKardex() {
+  async function loadKardex(page = kardexPage) {
     setKardexLoading(true);
     setMessage('');
 
     try {
-      const rows = await fetchKardex(accessToken, {
+      const result = await fetchKardex(accessToken, {
         productId: kardexProductId,
         warehouseId,
         dateFrom: kardexDateFrom || undefined,
         dateTo: kardexDateTo || undefined,
-        limit: 200,
+        page,
+        perPage: kardexPerPage,
       });
 
-      setKardex(rows);
+      setKardex(result.data);
+      setKardexMeta(result.meta);
+      setKardexPage(result.meta.current_page);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Error al cargar kardex');
     } finally {
       setKardexLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (activeTab === 'kardex') {
+      void loadKardex(1);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, warehouseId]);
 
   async function loadDashboard() {
     setDashboardLoading(true);
@@ -472,6 +521,47 @@ export function InventoryView({
       setMessage(error instanceof Error ? error.message : 'Error al cargar detalle del reporte');
     } finally {
       setLoadingReportRequestDetail(false);
+    }
+  }
+
+  async function loadImportBatches() {
+    setImportBatchesLoading(true);
+    setMessage('');
+
+    try {
+      const rows = await fetchInventoryProductImportBatches(accessToken, 40);
+      setImportBatches(rows);
+
+      if (rows.length === 0) {
+        setSelectedImportBatchId(null);
+        setSelectedImportBatchDetail(null);
+        return;
+      }
+
+      const nextBatchId = selectedImportBatchId && rows.some((row) => row.id === selectedImportBatchId)
+        ? selectedImportBatchId
+        : rows[0].id;
+
+      await loadImportBatchDetail(nextBatchId);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Error al cargar trazabilidad de importaciones');
+    } finally {
+      setImportBatchesLoading(false);
+    }
+  }
+
+  async function loadImportBatchDetail(batchId: number) {
+    setImportBatchDetailLoading(true);
+    setMessage('');
+
+    try {
+      const detail = await fetchInventoryProductImportBatchDetail(accessToken, batchId, 800);
+      setSelectedImportBatchId(batchId);
+      setSelectedImportBatchDetail(detail);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Error al cargar el detalle del lote de importación');
+    } finally {
+      setImportBatchDetailLoading(false);
     }
   }
 
@@ -691,6 +781,15 @@ export function InventoryView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, accessToken, warehouseId]);
 
+  useEffect(() => {
+    if (activeTab !== 'importaciones') {
+      return;
+    }
+
+    void loadImportBatches();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, accessToken]);
+
   const dashboardProfileLabel = useMemo(() => {
     if (!dashboardData?.profile) {
       return 'Sin perfil';
@@ -738,6 +837,11 @@ export function InventoryView({
               return;
             }
 
+            if (activeTab === 'importaciones') {
+              void loadImportBatches();
+              return;
+            }
+
             if (activeTab === 'dashboard') {
               void loadDashboard();
               return;
@@ -753,6 +857,8 @@ export function InventoryView({
           disabled={
             activeTab === 'kardex'
               ? kardexLoading
+              : activeTab === 'importaciones'
+                ? (importBatchesLoading || importBatchDetailLoading)
               : activeTab === 'dashboard'
                 ? dashboardLoading
                 : activeTab === 'reportes'
@@ -762,6 +868,8 @@ export function InventoryView({
         >
           {activeTab === 'kardex'
             ? 'Refrescar Kardex'
+            : activeTab === 'importaciones'
+              ? 'Refrescar Importaciones'
             : activeTab === 'dashboard'
               ? 'Refrescar Dashboard'
               : activeTab === 'reportes'
@@ -788,6 +896,13 @@ export function InventoryView({
           onClick={() => { setActiveTab('kardex'); void loadKardex(); }}
         >
           Kardex
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'importaciones' ? 'active' : ''}
+          onClick={() => { setActiveTab('importaciones'); void loadImportBatches(); }}
+        >
+          Importaciones
         </button>
         <button
           type="button"
@@ -1052,13 +1167,13 @@ export function InventoryView({
                 />
               </label>
             </div>
-            <button type="button" onClick={() => void loadKardex()} disabled={kardexLoading}>
+            <button type="button" onClick={() => { setKardexPage(1); void loadKardex(1); }} disabled={kardexLoading}>
               {kardexLoading ? 'Cargando...' : 'Buscar'}
             </button>
           </div>
 
           <div className="table-wrap">
-            <h4>Movimientos de inventario ({kardex.length})</h4>
+            <h4>Movimientos de inventario ({kardexMeta.total})</h4>
             <table>
               <thead>
                 <tr>
@@ -1068,6 +1183,7 @@ export function InventoryView({
                   <th>Almacen</th>
                   <th>Tipo</th>
                   <th>Cantidad</th>
+                  <th>Stock final</th>
                   <th>Costo unit.</th>
                   <th>Total</th>
                   <th>Referencia</th>
@@ -1076,7 +1192,7 @@ export function InventoryView({
               </thead>
               <tbody>
                 {kardex.length === 0 && (
-                  <tr><td colSpan={10} style={{ textAlign: 'center' }}>Sin movimientos</td></tr>
+                  <tr><td colSpan={11} style={{ textAlign: 'center' }}>Sin movimientos</td></tr>
                 )}
                 {kardex.map((row) => (
                   <tr key={row.id}>
@@ -1087,16 +1203,143 @@ export function InventoryView({
                     <td style={{ color: row.movement_type === 'IN' ? 'var(--color-ok)' : 'var(--color-err)', fontWeight: 600 }}>
                       {MOVEMENT_TYPE_LABELS[row.movement_type] ?? row.movement_type}
                     </td>
-                    <td>{Number(row.quantity).toFixed(4)}</td>
+                    <td>{`${row.movement_type === 'OUT' ? '-' : '+'}${Number(row.quantity).toFixed(4)}`}</td>
+                    <td>{Number(row.stock_balance ?? 0).toFixed(4)}</td>
                     <td>{Number(row.unit_cost).toFixed(4)}</td>
                     <td>{Number(row.line_total).toFixed(2)}</td>
-                    <td>{REF_TYPE_LABELS[row.ref_type ?? ''] ?? row.ref_type ?? '-'}{row.ref_id ? ` #${row.ref_id}` : ''}</td>
-                    <td style={{ fontSize: '0.8rem' }}>{row.notes ?? '-'}</td>
+                    <td>
+                      {row.ref_type === 'STOCK_ENTRY' && row.stock_entry_type
+                        ? `${STOCK_ENTRY_TYPE_LABELS[row.stock_entry_type] ?? row.stock_entry_type}${row.ref_id ? ` #${row.ref_id}` : ''}`
+                        : `${REF_TYPE_LABELS[row.ref_type ?? ''] ?? row.ref_type ?? '-'}${row.ref_id ? ` #${row.ref_id}` : ''}`}
+                      {(row.stock_entry_reference_no ?? '').trim() !== '' ? ` | Ref: ${row.stock_entry_reference_no}` : ''}
+                    </td>
+                    <td style={{ fontSize: '0.8rem' }}>{humanizeInventoryNote(row.notes)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="module-header" style={{ marginTop: '0.8rem' }}>
+              <button
+                type="button"
+                onClick={() => { const p = Math.max(1, kardexPage - 1); setKardexPage(p); void loadKardex(p); }}
+                disabled={kardexPage <= 1 || kardexLoading}
+              >
+                Anterior
+              </button>
+              <p style={{ margin: 0 }}>
+                Página {kardexMeta.current_page} de {Math.max(1, kardexMeta.total_pages)} — {kardexMeta.total} registros
+              </p>
+              <button
+                type="button"
+                onClick={() => { const p = Math.min(kardexMeta.total_pages || 1, kardexPage + 1); setKardexPage(p); void loadKardex(p); }}
+                disabled={kardexPage >= (kardexMeta.total_pages || 1) || kardexLoading}
+              >
+                Siguiente
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── IMPORTACIONES MASIVAS ── */}
+      {activeTab === 'importaciones' && (
+        <>
+          <div className="form-card">
+            <h4>Trazabilidad de Carga Masiva de Productos</h4>
+            <p style={{ marginTop: '-0.2rem', color: '#6b7280', fontSize: '0.9rem' }}>
+              Aquí se registra cada lote importado desde Excel y el resultado por fila (creado, actualizado u omitido).
+            </p>
+          </div>
+
+          <div className="table-wrap">
+            <h4>Lotes recientes ({importBatches.length})</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Lote</th>
+                  <th>Archivo</th>
+                  <th>Usuario</th>
+                  <th>Estado</th>
+                  <th>Total</th>
+                  <th>Creados</th>
+                  <th>Actualizados</th>
+                  <th>Omitidos</th>
+                  <th>Errores</th>
+                  <th>Inicio</th>
+                </tr>
+              </thead>
+              <tbody>
+                {importBatchesLoading && (
+                  <tr><td colSpan={10} style={{ textAlign: 'center' }}>Cargando lotes...</td></tr>
+                )}
+                {!importBatchesLoading && importBatches.length === 0 && (
+                  <tr><td colSpan={10} style={{ textAlign: 'center' }}>Aún no hay trazabilidad de importaciones.</td></tr>
+                )}
+                {!importBatchesLoading && importBatches.map((row) => (
+                  <tr
+                    key={row.id}
+                    onClick={() => void loadImportBatchDetail(row.id)}
+                    style={{
+                      cursor: 'pointer',
+                      background: selectedImportBatchId === row.id ? '#f8fafc' : undefined,
+                    }}
+                  >
+                    <td>#{row.id}</td>
+                    <td>{row.filename ?? '-'}</td>
+                    <td>{row.imported_by_name?.trim() || row.imported_by_username || `Usuario #${row.imported_by}`}</td>
+                    <td>{IMPORT_BATCH_STATUS_LABELS[row.status] ?? row.status}</td>
+                    <td>{row.total_rows}</td>
+                    <td>{row.created_count}</td>
+                    <td>{row.updated_count}</td>
+                    <td>{row.skipped_count}</td>
+                    <td>{row.error_count}</td>
+                    <td>{fmtDateTime(row.started_at)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {selectedImportBatchDetail && (
+            <div className="table-wrap">
+              <h4>
+                Detalle lote #{selectedImportBatchDetail.batch.id}
+                {selectedImportBatchDetail.batch.filename ? ` - ${selectedImportBatchDetail.batch.filename}` : ''}
+              </h4>
+              {importBatchDetailLoading && <p>Cargando detalle...</p>}
+
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fila</th>
+                    <th>Acción</th>
+                    <th>Producto ID</th>
+                    <th>SKU</th>
+                    <th>Código barras</th>
+                    <th>Nombre</th>
+                    <th>Mensaje</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedImportBatchDetail.items.length === 0 && (
+                    <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin filas registradas en este lote.</td></tr>
+                  )}
+                  {selectedImportBatchDetail.items.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.row_number}</td>
+                      <td>{item.action_status}</td>
+                      <td>{item.product_id ?? '-'}</td>
+                      <td>{item.sku ?? '-'}</td>
+                      <td>{item.barcode ?? '-'}</td>
+                      <td>{item.name ?? '-'}</td>
+                      <td>{item.message ?? '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
 

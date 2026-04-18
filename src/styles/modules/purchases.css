@@ -1,0 +1,29 @@
+/* Purchases module styles: colocate purchases-specific layout and controls here. */
+
+.purchases-entry-row.has-line-tools .sales-field-product {
+  grid-column: span 4;
+}
+
+.purchases-entry-row.has-line-tools .sales-field-qty,
+.purchases-entry-row.has-line-tools .sales-field-price,
+.purchases-entry-row.has-line-tools .sales-field-inline-discount,
+.purchases-entry-row.has-line-tools .sales-field-inline-toggle,
+.purchases-entry-row.has-line-tools .sales-field-action {
+  grid-column: span 3;
+}
+
+.purchases-entry-row.has-line-tools .sales-field-lot {
+  grid-column: span 2;
+}
+
+.purchases-entry-row.has-line-tools .purchases-field-dates {
+  grid-column: span 4;
+}
+
+.purchases-entry-row.has-line-tools .sales-field-igv {
+  grid-column: span 3;
+}
+
+.purchases-entry-row .sales-field-action button {
+  max-width: 168px;
+}
