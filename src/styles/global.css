@@ -5041,7 +5041,8 @@ th {
   margin: 0;
 }
 
-.sales-form label {
+.sales-form label,
+.sales-form .sales-field-shell {
   display: grid;
   gap: 4px;
   color: var(--ink-soft);

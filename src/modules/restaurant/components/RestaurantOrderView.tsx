@@ -146,6 +146,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   const [featuredProductsLoaded, setFeaturedProductsLoaded] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const productDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const productAutocompleteRequestSeqRef = useRef(0);
   const productPreviewRef = useRef<HTMLDivElement | null>(null);
 
   // ── cart ──────────────────────────────────────────────────────────────────
@@ -355,6 +356,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
     if (q.length < 2) {
       setProductSuggestions([]);
+      productAutocompleteRequestSeqRef.current += 1;
       return;
     }
 
@@ -362,12 +364,18 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
       setLoadingProducts(true);
       void (async () => {
         try {
+          const requestSeq = productAutocompleteRequestSeqRef.current + 1;
+          productAutocompleteRequestSeqRef.current = requestSeq;
           const results = await fetchInventoryProducts(accessToken, {
             search: q,
             warehouseId: warehouseId ?? undefined,
             status: 1,
-            limit: 100,
+            limit: 24,
+            autocomplete: true,
           });
+          if (requestSeq !== productAutocompleteRequestSeqRef.current) {
+            return;
+          }
           setProductSuggestions(results);
         } catch {
           setProductSuggestions([]);
@@ -493,6 +501,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   }
 
   function addProductToCart(product: InventoryProduct) {
+    productAutocompleteRequestSeqRef.current += 1;
     setCart((prev) => {
       const existingIndex = prev.findIndex((item) => (
         item.product_id === product.id

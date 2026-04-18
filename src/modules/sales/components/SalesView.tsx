@@ -1398,6 +1398,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const focusedReportRowRef = useRef<HTMLTableRowElement | null>(null);
   const suppressNextPinnedResetRef = useRef(false);
   const suppressNextCustomerAutocompleteRef = useRef(false);
+  const suppressNextProductAutocompleteRef = useRef(false);
+  const productAutocompleteRequestSeqRef = useRef(0);
 
   useEffect(() => {
     if (!sunatToast) {
@@ -2166,15 +2168,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   useEffect(() => {
     const timer = setTimeout(async () => {
       try {
-        if (form.productQuery.trim().length < 2) {
-          setProductSuggestions([]);
+        if (suppressNextProductAutocompleteRef.current) {
+          suppressNextProductAutocompleteRef.current = false;
           return;
         }
+
+        if (form.productQuery.trim().length < 2) {
+          setProductSuggestions([]);
+          setActiveProductIndex(-1);
+          return;
+        }
+
+        const requestSeq = productAutocompleteRequestSeqRef.current + 1;
+        productAutocompleteRequestSeqRef.current = requestSeq;
 
         const rows = await fetchSalesInventoryProducts(accessToken, {
           search: form.productQuery.trim(),
           warehouseId,
+          limit: 12,
+          autocomplete: true,
         });
+        if (requestSeq !== productAutocompleteRequestSeqRef.current) {
+          return;
+        }
         const compactRows = rows.slice(0, 12);
         setProductSuggestions(compactRows);
         setActiveProductIndex(compactRows.length > 0 ? 0 : -1);
@@ -2483,6 +2499,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     const basePrice = Number(product.sale_price || 0);
     const fallbackUnitId = product.unit_id ?? defaultEnabledUnit?.id ?? null;
 
+    suppressNextProductAutocompleteRef.current = true;
+    productAutocompleteRequestSeqRef.current += 1;
     setSelectedProduct(product);
     setForm((prev) => ({
       ...prev,
@@ -5214,18 +5232,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
             <div className="sales-grid-main">
               <div className={`sales-grid-row sales-grid-row-item ${isTributaryDocument ? 'tax-on' : 'tax-off'} ${(salesItemDiscountEnabled || salesFreeItemsEnabled) ? 'has-line-tools' : ''}`}>
-                <label className="with-suggest sales-field-product">
-                  <span className="sales-field-product-head">
+                <div className="with-suggest sales-field-product sales-field-shell">
+                  <div className="sales-field-product-head">
                     <span>{form.isManualItem ? 'Descripcion manual' : 'Producto'}</span>
-                    <span className="sales-stock-toggle sales-stock-toggle-inline">
+                    <label className="sales-stock-toggle sales-stock-toggle-inline">
                       <input
                         type="checkbox"
                         checked={form.isManualItem}
                         onChange={(e) => toggleManualItem(e.target.checked)}
                       />
                       Agregar sin stock
-                    </span>
-                  </span>
+                    </label>
+                  </div>
                   {form.isManualItem ? (
                     <input
                       value={form.manualDescription}
@@ -5247,6 +5265,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             <button
                               type="button"
                               key={row.id}
+                              onMouseDown={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                              }}
                               onClick={() => void chooseProduct(row)}
                               className={`suggest-item ${index === activeProductIndex ? 'active' : ''}`}
                             >
@@ -5268,7 +5290,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       )}
                     </>
                   )}
-                </label>
+                </div>
 
                 <label className="sales-field-unit">
                   Unidad

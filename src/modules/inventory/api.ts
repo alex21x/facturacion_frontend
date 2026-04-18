@@ -22,7 +22,7 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchInventoryProducts(
   accessToken: string,
-  params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number }
+  params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number; autocomplete?: boolean }
 ): Promise<InventoryProduct[]> {
   const query = new URLSearchParams();
   query.set('limit', String(params?.limit ?? 50));
@@ -35,6 +35,9 @@ export async function fetchInventoryProducts(
   }
   if (params?.status === 0 || params?.status === 1) {
     query.set('status', String(params.status));
+  }
+  if (params?.autocomplete) {
+    query.set('autocomplete', 'true');
   }
 
   const response = await apiClient.request<{ data: InventoryProduct[] }>(`/api/inventory/products?${query.toString()}`, {
