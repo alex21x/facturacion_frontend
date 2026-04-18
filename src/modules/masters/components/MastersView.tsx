@@ -265,6 +265,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     name: '',
     address: '',
   });
+  const [warehouseEditingId, setWarehouseEditingId] = useState<number | null>(null);
 
   const [cashForm, setCashForm] = useState({
     branch_id: branchId,
@@ -951,13 +952,37 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   async function saveWarehouse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await createWarehouse(accessToken, warehouseForm);
-      setMessage('Almacen creado.');
+      if (warehouseEditingId) {
+        await updateWarehouse(accessToken, warehouseEditingId, warehouseForm);
+        setMessage('Almacen actualizado.');
+      } else {
+        await createWarehouse(accessToken, warehouseForm);
+        setMessage('Almacen creado.');
+      }
+      setWarehouseEditingId(null);
       setWarehouseForm({ branch_id: branchId, code: '', name: '', address: '' });
       await loadAll();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo crear almacen');
     }
+  }
+
+  function editWarehouse(row: WarehouseRow) {
+    setWarehouseEditingId(row.id);
+    setWarehouseForm({
+      branch_id: row.branch_id,
+      code: row.code,
+      name: row.name,
+      address: row.address ?? '',
+    });
+    setMessage(`Editando almacen ${row.code}.`);
+    setError('');
+    focusFirstField(warehouseFormRef);
+  }
+
+  function cancelWarehouseEdit() {
+    setWarehouseEditingId(null);
+    setWarehouseForm({ branch_id: branchId, code: '', name: '', address: '' });
   }
 
   async function saveCash(event: React.FormEvent<HTMLFormElement>) {
@@ -1513,7 +1538,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       {activeSection === 'warehouse' && (
         <div className="master-section-grid">
           <form ref={warehouseFormRef} className="grid-form master-card" onSubmit={saveWarehouse}>
-            <h4>Nuevo Almacen</h4>
+            <h4>{warehouseEditingId ? `Editar Almacen #${warehouseEditingId}` : 'Nuevo Almacen'}</h4>
             <label>
               Sucursal
               <select
@@ -1542,19 +1567,24 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
               Direccion
               <input value={warehouseForm.address} onChange={(e) => setWarehouseForm((prev) => ({ ...prev, address: e.target.value }))} />
             </label>
-            <button className="wide" type="submit">Crear almacen</button>
+            <button className="wide" type="submit">{warehouseEditingId ? 'Guardar cambios' : 'Crear almacen'}</button>
+            {warehouseEditingId && (
+              <button type="button" onClick={cancelWarehouseEdit}>
+                Cancelar edicion
+              </button>
+            )}
           </form>
 
           <div className="table-wrap master-card">
             <h4>Almacenes</h4>
             <table>
-              <thead><tr><th>Codigo</th><th>Nombre</th><th>Estado</th><th></th></tr></thead>
+              <thead><tr><th>Codigo</th><th>Nombre</th><th>Estado</th><th></th><th></th></tr></thead>
               <tbody>
                 {filteredWarehouses.map((row) => (
-                  <tr key={row.id}><td>{row.code}</td><td>{row.name}</td><td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td><td><button type="button" onClick={() => void toggleWarehouse(row)}>{row.status === 1 ? 'Desactivar' : 'Activar'}</button></td></tr>
+                  <tr key={row.id}><td>{row.code}</td><td>{row.name}</td><td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td><td><button type="button" onClick={() => editWarehouse(row)}>Editar</button></td><td><button type="button" onClick={() => void toggleWarehouse(row)}>{row.status === 1 ? 'Desactivar' : 'Activar'}</button></td></tr>
                 ))}
                 {filteredWarehouses.length === 0 && (
-                  <tr><td colSpan={4}>Sin resultados para la busqueda actual.</td></tr>
+                  <tr><td colSpan={5}>Sin resultados para la busqueda actual.</td></tr>
                 )}
               </tbody>
             </table>
