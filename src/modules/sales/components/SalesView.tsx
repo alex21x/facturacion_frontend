@@ -40,6 +40,7 @@ import {
   voidCommercialDocument,
 } from '../api';
 import { fetchRestaurantTables } from '../../restaurant/api';
+import { fetchCurrentSession } from '../../cash/api';
 import type { RestaurantTableRow } from '../../restaurant/types';
 import {
   buildCommercialDocument80mmHtml,
@@ -3347,6 +3348,44 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  async function ensureOpenCashSessionForSale(): Promise<boolean> {
+    if (!cashRegisterId) {
+      const detail = 'Debe seleccionar una caja antes de realizar una venta.';
+      setMessage(detail);
+      setSunatToast({
+        tone: 'warn',
+        title: 'Caja no seleccionada',
+        detail,
+      });
+      return false;
+    }
+
+    try {
+      const currentSession = await fetchCurrentSession(accessToken, cashRegisterId);
+      if (!currentSession || currentSession.status !== 'OPEN') {
+        const detail = 'Debe aperturar caja antes de realizar una venta.';
+        setMessage(detail);
+        setSunatToast({
+          tone: 'warn',
+          title: 'Caja no aperturada',
+          detail,
+        });
+        return false;
+      }
+
+      return true;
+    } catch {
+      const detail = 'No se pudo validar la sesión de caja. Intente nuevamente.';
+      setMessage(detail);
+      setSunatToast({
+        tone: 'bad',
+        title: 'Error de validación de caja',
+        detail,
+      });
+      return false;
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -3607,6 +3646,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         ? restaurantTables.find((row) => row.id === (form.restaurantTableId ?? 0))
         : null;
 
+      const requiresOpenCashSession = salesFlowMode !== 'SELLER_TO_CASHIER' && targetStatus === 'ISSUED';
+      if (requiresOpenCashSession) {
+        const cashSessionReady = await ensureOpenCashSessionForSale();
+        if (!cashSessionReady) {
+          setLoading(false);
+          return;
+        }
+      }
+
       const response = await createCommercialDocument(accessToken, {
         ...form,
         globalDiscountAmount,
@@ -3801,6 +3849,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   async function executeConvertDocument(source: CommercialDocumentListItem, targetDocumentKind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER') {
     if (!canConvertInCurrentMode) {
       setMessage('En este modo, solo caja puede convertir pedidos a boleta/factura.');
+      return;
+    }
+
+    const cashSessionReady = await ensureOpenCashSessionForSale();
+    if (!cashSessionReady) {
       return;
     }
 
@@ -4509,6 +4562,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           Refrescar
         </button>
       </div>
+
+      {sunatToast && (
+        <div className="sales-sunat-toast-anchor">
+          <div className={`sales-sunat-toast ${sunatToast.tone}`} role="status" aria-live="polite">
+            <strong>{sunatToast.title}</strong>
+            <span>{sunatToast.detail}</span>
+            <button type="button" onClick={() => setSunatToast(null)} aria-label="Cerrar notificacion">Cerrar</button>
+          </div>
+        </div>
+      )}
 
       <div className="sales-topbar">
       <div className="workspace-mode-switch">
@@ -5965,15 +6028,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </button>
           </div>
         </div>
-        {sunatToast && (
-          <div className="sales-sunat-toast-anchor">
-            <div className={`sales-sunat-toast ${sunatToast.tone}`} role="status" aria-live="polite">
-              <strong>{sunatToast.title}</strong>
-              <span>{sunatToast.detail}</span>
-              <button type="button" onClick={() => setSunatToast(null)} aria-label="Cerrar notificacion SUNAT">Cerrar</button>
-            </div>
-          </div>
-        )}
         <table>
           <thead>
             <tr>
