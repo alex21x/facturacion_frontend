@@ -7548,6 +7548,166 @@ th {
 .gre-list-header span {
   font-size: 0.74rem;
   color: #6a655d;
+
+  /* ============================================================
+     VENTAS — MOBILE (≤640px)
+     Optimiza el formulario de items y el panel de totales
+     para pantallas de teléfono.
+     ============================================================ */
+  @media (max-width: 640px) {
+
+    /* 1. Reordenar: panel de montos arriba, form de items abajo */
+    .sales-concepts-shell {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .sales-concepts-side {
+      order: -1;
+      position: static;
+    }
+
+    /* 2. Panel de montos más compacto: fila horizontal */
+    .sales-summary {
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px;
+    }
+
+    .sales-summary article {
+      padding: 6px 8px;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+
+    .sales-summary span {
+      font-size: 0.65rem;
+    }
+
+    .sales-summary strong {
+      font-size: 0.88rem;
+      margin-top: 2px;
+    }
+
+    /* Resumen tributario compacto */
+    .sales-tax-preview {
+      padding: 6px 8px;
+    }
+
+    .sales-tax-preview-grid article {
+      padding: 3px 0;
+    }
+
+    /* Botón emitir — grande y fácil de tocar */
+    .sales-concepts-side > button,
+    .sales-concepts-side form > button[type="submit"],
+    .sales-concepts-side .sales-emit-actions button {
+      width: 100%;
+      min-height: 48px;
+      font-size: 1rem;
+      font-weight: 700;
+      border-radius: 12px;
+      margin-top: 8px;
+    }
+
+    /* Ocultar atajos de teclado en móvil */
+    .shortcut-hint {
+      display: none;
+    }
+
+    /* Ocultar live caption */
+    .sales-live-caption {
+      display: none;
+    }
+
+    /* Header de sección más compacto */
+    .sales-section-head p {
+      display: none;
+    }
+
+    /* 3. Fila de items — 2 columnas en móvil */
+    .sales-grid-row-item {
+      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+
+    .sales-grid-row-item .sales-field-product {
+      grid-column: 1 / -1 !important;
+    }
+
+    .sales-grid-row-item .sales-field-unit,
+    .sales-grid-row-item .sales-field-lot {
+      grid-column: span 1 !important;
+    }
+
+    .sales-grid-row-item.tax-on .sales-field-qty,
+    .sales-grid-row-item.tax-off .sales-field-qty {
+      grid-column: span 1 !important;
+    }
+
+    .sales-grid-row-item.tax-on .sales-field-igv {
+      grid-column: 1 / -1 !important;
+    }
+
+    .sales-grid-row-item.tax-on .sales-field-price,
+    .sales-grid-row-item.tax-off .sales-field-price {
+      grid-column: span 1 !important;
+    }
+
+    .sales-grid-row-item.tax-on .sales-field-inline-discount,
+    .sales-grid-row-item.tax-off .sales-field-inline-discount {
+      grid-column: span 1 !important;
+    }
+
+    .sales-grid-row-item.tax-on .sales-field-inline-toggle,
+    .sales-grid-row-item.tax-off .sales-field-inline-toggle {
+      grid-column: 1 / -1 !important;
+    }
+
+    .sales-grid-row-item .sales-field-action,
+    .sales-grid-row-item.tax-on .sales-field-action,
+    .sales-grid-row-item.tax-off .sales-field-action {
+      grid-column: 1 / -1 !important;
+      justify-content: stretch;
+    }
+
+    /* Botón "Agregar item" full-width y prominente */
+    .sales-field-action button {
+      max-width: none;
+      min-height: 44px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      border-radius: 10px;
+    }
+
+    /* Precio hint más pequeño */
+    .sales-price-hint {
+      font-size: 0.72rem;
+    }
+
+    /* Botón stock toggle más legible */
+    .sales-stock-toggle-inline {
+      font-size: 0.8rem;
+    }
+
+    /* Tabla del carrito: permitir scroll horizontal */
+    .sales-cart-table-scroll {
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    /* Panel de montos sticky en la parte superior mientras el usuario scrollea el form */
+    .sales-concepts-side {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: #fdfcf9;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #e8e4d9;
+      margin-bottom: 8px;
+    }
+  }
   font-weight: 700;
 }
 

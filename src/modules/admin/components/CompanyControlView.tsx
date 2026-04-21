@@ -91,6 +91,8 @@ export function CompanyControlView({ accessToken }: Props) {
   const [commerceDraftByCompany, setCommerceDraftByCompany] = useState<Record<number, Record<string, boolean>>>({});
   const [inventoryDraftByCompany, setInventoryDraftByCompany] = useState<Record<number, InventorySettingsRecord>>({});
   const [selectedCommerceCompanyId, setSelectedCommerceCompanyId] = useState<number | null>(null);
+    const [commerceCompanyQuery, setCommerceCompanyQuery] = useState('');
+    const [commerceCompanyDropdownOpen, setCommerceCompanyDropdownOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState({
     tax_id: '',
     legal_name: '',
@@ -161,9 +163,14 @@ export function CompanyControlView({ accessToken }: Props) {
       }
       setCommerceDraftByCompany(nextCommerceDraft);
 
-      setSelectedCommerceCompanyId(prev =>
-        prev !== null ? prev : (commerceResult.companies[0]?.company_id ?? null)
-      );
+      setSelectedCommerceCompanyId(prev => {
+        if (prev !== null) return prev;
+        const first = commerceResult.companies[0];
+        if (first) {
+          setCommerceCompanyQuery(first.legal_name + (first.tax_id ? ` (${first.tax_id})` : ''));
+        }
+        return first?.company_id ?? null;
+      });
 
       const nextInventoryDraft: Record<number, InventorySettingsRecord> = {};
       for (const company of inventoryResult.companies) {
@@ -1174,22 +1181,61 @@ export function CompanyControlView({ accessToken }: Props) {
           </div>
         </div>
         <div className="adm-card-body">
-          {/* Company selector */}
+          {/* Company autocomplete selector */}
           <div className="adm-features-company-selector">
             <label>Empresa:</label>
-            <select
-              className="adm-select"
-              value={selectedCommerceCompanyId ?? ''}
-              onChange={e => setSelectedCommerceCompanyId(e.target.value ? Number(e.target.value) : null)}
-              disabled={loading || !commerceMatrix}
-            >
-              <option value="">Seleccionar empresa…</option>
-              {(commerceMatrix?.companies ?? []).map(c => (
-                <option key={c.company_id} value={c.company_id}>
-                  {c.legal_name}{c.trade_name ? ` — ${c.trade_name}` : ''}{c.tax_id ? ` (${c.tax_id})` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="adm-autocomplete-wrap" style={{ position: 'relative', flex: '1 1 280px', maxWidth: 480 }}>
+              <input
+                className="adm-input"
+                placeholder="Buscar empresa por nombre o RUC…"
+                value={commerceCompanyQuery}
+                disabled={loading || !commerceMatrix}
+                autoComplete="off"
+                onChange={e => {
+                  setCommerceCompanyQuery(e.target.value);
+                  setCommerceCompanyDropdownOpen(true);
+                  if (!e.target.value.trim()) {
+                    setSelectedCommerceCompanyId(null);
+                  }
+                }}
+                onFocus={() => setCommerceCompanyDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setCommerceCompanyDropdownOpen(false), 150)}
+              />
+              {commerceCompanyDropdownOpen && commerceMatrix && (() => {
+                const q = commerceCompanyQuery.trim().toLowerCase();
+                const filtered = q
+                  ? commerceMatrix.companies.filter(c =>
+                      c.legal_name.toLowerCase().includes(q) ||
+                      (c.trade_name ?? '').toLowerCase().includes(q) ||
+                      (c.tax_id ?? '').toLowerCase().includes(q)
+                    )
+                  : commerceMatrix.companies;
+                if (filtered.length === 0) return null;
+                return (
+                  <div className="adm-autocomplete-list">
+                    {filtered.slice(0, 20).map(c => (
+                      <button
+                        key={c.company_id}
+                        type="button"
+                        className={`adm-autocomplete-item${selectedCommerceCompanyId === c.company_id ? ' adm-autocomplete-item--active' : ''}`}
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => {
+                          setSelectedCommerceCompanyId(c.company_id);
+                          setCommerceCompanyQuery(
+                            c.legal_name + (c.tax_id ? ` (${c.tax_id})` : '')
+                          );
+                          setCommerceCompanyDropdownOpen(false);
+                        }}
+                      >
+                        <span className="adm-autocomplete-item__name">{c.legal_name}</span>
+                        {c.trade_name && <span className="adm-autocomplete-item__sub">{c.trade_name}</span>}
+                        {c.tax_id && <span className="adm-autocomplete-item__ruc">{c.tax_id}</span>}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
             {selectedCommerceCompanyId && (
               <button
                 className="adm-btn adm-btn-primary"
