@@ -47,6 +47,65 @@ const FEATURE_LABELS: Record<string, string> = {
   PURCHASES_PERCEPCION_ENABLED: 'Usar percepción en compras',
 };
 
+const REQUIRED_COMMERCE_FEATURE_CODES: string[] = [
+  'SALES_CUSTOMER_PRICE_PROFILE',
+  'SALES_SELLER_TO_CASHIER',
+  'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
+  'SALES_ANTICIPO_ENABLED',
+  'SALES_TAX_BRIDGE',
+  'SALES_TAX_BRIDGE_DEBUG_VIEW',
+  'SALES_GLOBAL_DISCOUNT_ENABLED',
+  'SALES_ITEM_DISCOUNT_ENABLED',
+  'SALES_FREE_ITEMS_ENABLED',
+  'SALES_DETRACCION_ENABLED',
+  'SALES_RETENCION_ENABLED',
+  'SALES_PERCEPCION_ENABLED',
+  'PURCHASES_GLOBAL_DISCOUNT_ENABLED',
+  'PURCHASES_ITEM_DISCOUNT_ENABLED',
+  'PURCHASES_FREE_ITEMS_ENABLED',
+  'PURCHASES_DETRACCION_ENABLED',
+  'PURCHASES_RETENCION_COMPRADOR_ENABLED',
+  'PURCHASES_RETENCION_PROVEEDOR_ENABLED',
+  'PURCHASES_PERCEPCION_ENABLED',
+];
+
+function buildCommerceFeatureCodes(matrix: CompanyCommerceAdminMatrixResponse | null): string[] {
+  const apiCodes = matrix?.feature_codes ?? [];
+  const companyCodes = new Set<string>();
+
+  for (const company of matrix?.companies ?? []) {
+    for (const code of Object.keys(company.features ?? {})) {
+      companyCodes.add(code);
+    }
+  }
+
+  const merged = new Set<string>([
+    ...REQUIRED_COMMERCE_FEATURE_CODES,
+    ...apiCodes,
+    ...Array.from(companyCodes),
+  ]);
+
+  const preferredOrder = new Map<string, number>();
+  REQUIRED_COMMERCE_FEATURE_CODES.forEach((code, index) => preferredOrder.set(code, index));
+
+  return Array.from(merged).sort((a, b) => {
+    const aIndex = preferredOrder.get(a);
+    const bIndex = preferredOrder.get(b);
+    if (aIndex !== undefined && bIndex !== undefined) return aIndex - bIndex;
+    if (aIndex !== undefined) return -1;
+    if (bIndex !== undefined) return 1;
+    return a.localeCompare(b);
+  });
+}
+
+function normalizeCompanyFeatures(codes: string[], companyFeatures: Record<string, boolean> | undefined): Record<string, boolean> {
+  const normalized: Record<string, boolean> = {};
+  for (const code of codes) {
+    normalized[code] = Boolean(companyFeatures?.[code]);
+  }
+  return normalized;
+}
+
 function featureLabel(code: string): string {
   if (FEATURE_LABELS[code]) return FEATURE_LABELS[code];
   return code.replace(/_+/g, ' ').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
@@ -91,8 +150,8 @@ export function CompanyControlView({ accessToken }: Props) {
   const [commerceDraftByCompany, setCommerceDraftByCompany] = useState<Record<number, Record<string, boolean>>>({});
   const [inventoryDraftByCompany, setInventoryDraftByCompany] = useState<Record<number, InventorySettingsRecord>>({});
   const [selectedCommerceCompanyId, setSelectedCommerceCompanyId] = useState<number | null>(null);
-    const [commerceCompanyQuery, setCommerceCompanyQuery] = useState('');
-    const [commerceCompanyDropdownOpen, setCommerceCompanyDropdownOpen] = useState(false);
+  const [commerceCompanyQuery, setCommerceCompanyQuery] = useState('');
+  const [commerceCompanyDropdownOpen, setCommerceCompanyDropdownOpen] = useState(false);
   const [createDraft, setCreateDraft] = useState({
     tax_id: '',
     legal_name: '',
@@ -157,9 +216,10 @@ export function CompanyControlView({ accessToken }: Props) {
       setCommerceMatrix(commerceResult);
       setInventoryMatrix(inventoryResult);
 
+      const allCommerceCodes = buildCommerceFeatureCodes(commerceResult);
       const nextCommerceDraft: Record<number, Record<string, boolean>> = {};
       for (const company of commerceResult.companies) {
-        nextCommerceDraft[company.company_id] = { ...company.features };
+        nextCommerceDraft[company.company_id] = normalizeCompanyFeatures(allCommerceCodes, company.features);
       }
       setCommerceDraftByCompany(nextCommerceDraft);
 
@@ -242,6 +302,11 @@ export function CompanyControlView({ accessToken }: Props) {
 
   useEffect(() => { void loadMatrix(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const allCommerceFeatureCodes = useMemo(
+    () => buildCommerceFeatureCodes(commerceMatrix),
+    [commerceMatrix]
+  );
+
   async function saveCommerceOne(companyId: number) {
     const draft = commerceDraftByCompany[companyId];
     if (!draft) return;
@@ -249,6 +314,12 @@ export function CompanyControlView({ accessToken }: Props) {
     try {
       const result = await updateCompanyCommerceAdminMatrix(accessToken, companyId, draft);
       setCommerceMatrix(result);
+      const codes = buildCommerceFeatureCodes(result);
+      const updatedCompany = result.companies.find(c => c.company_id === companyId);
+      setCommerceDraftByCompany(prev => ({
+        ...prev,
+        [companyId]: normalizeCompanyFeatures(codes, updatedCompany?.features),
+      }));
       setMessage('Reglas de ventas/compras actualizadas');
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Error al guardar');
@@ -1253,8 +1324,10 @@ export function CompanyControlView({ accessToken }: Props) {
           )}
 
           {selectedCommerceCompanyId && (() => {
-            const featureCodes = commerceMatrix?.feature_codes ?? [];
-            const draft = commerceDraftByCompany[selectedCommerceCompanyId] ?? {};
+            const featureCodes = allCommerceFeatureCodes;
+            const companyOriginal = commerceMatrix?.companies.find(c => c.company_id === selectedCommerceCompanyId)?.features;
+            const draft = commerceDraftByCompany[selectedCommerceCompanyId]
+              ?? normalizeCompanyFeatures(featureCodes, companyOriginal);
 
             const salesCodes    = featureCodes.filter(c => c.toUpperCase().startsWith('SALES_'));
             const purchasesCodes = featureCodes.filter(c => c.toUpperCase().startsWith('PURCHASES_'));
@@ -1329,8 +1402,11 @@ export function CompanyControlView({ accessToken }: Props) {
                     type="button"
                     disabled={loading}
                     onClick={() => {
-                      const original = commerceMatrix?.companies.find(c => c.company_id === selectedCommerceCompanyId)?.features ?? {};
-                      setCommerceDraftByCompany(prev => ({ ...prev, [selectedCommerceCompanyId]: { ...original } }));
+                      const original = commerceMatrix?.companies.find(c => c.company_id === selectedCommerceCompanyId)?.features;
+                      setCommerceDraftByCompany(prev => ({
+                        ...prev,
+                        [selectedCommerceCompanyId]: normalizeCompanyFeatures(featureCodes, original),
+                      }));
                     }}
                   >
                     Restablecer
