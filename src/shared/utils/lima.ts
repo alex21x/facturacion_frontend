@@ -94,7 +94,7 @@ export function yearsAgoStartLima(n: number): string {
 
 /**
  * Normalises a backend datetime string so the browser parses it as Lima time.
- * Strings without offset are assumed UTC (PostgreSQL default).
+ * Strings without offset are assumed Lima local time (-05:00).
  */
 function normaliseForDisplay(value: string): Date | null {
   const trimmed = value.trim();
@@ -107,8 +107,8 @@ function normaliseForDisplay(value: string): Date | null {
   if (/Z$|[+-]\d{2}:\d{2}$/.test(trimmed)) {
     return new Date(trimmed);
   }
-  // No offset → assume UTC
-  return new Date(trimmed + 'Z');
+  // No offset → assume Lima local time
+  return new Date(trimmed + '-05:00');
 }
 
 /** Formats a stored datetime as 'DD/MM/YYYY HH:MM AM/PM' in Lima time. */

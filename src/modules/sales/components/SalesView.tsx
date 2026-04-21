@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { docKindLabel } from '../../../shared/utils/docKind';
-import { fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
+import { fmtDateLima, fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
 import {
   computeLineTotals,
   computeSalesDraftAmounts,
@@ -18,6 +18,7 @@ import {
 import {
   convertCommercialDocument,
   createCommercialDocument,
+  fetchCommercialDocuments,
   exportCommercialDocumentsExcel,
   exportCommercialDocumentsJson,
   fetchCommercialDocumentDetails,
@@ -149,6 +150,7 @@ type CashierReportPanelMode = 'PENDING' | 'FULL';
 type PriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
 
 const SALES_REPORT_FILTERS_STORAGE_KEY = 'sales.report.filters.v1';
+const PRODUCT_AUTOCOMPLETE_MIN_CHARS = 1;
 
 const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
@@ -546,6 +548,16 @@ type SunatToastState = {
   title: string;
   detail: string;
 };
+
+function isCashOpeningRequiredError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (normalized === '') {
+    return false;
+  }
+
+  return normalized.includes('caja')
+    && (normalized.includes('apertur') || normalized.includes('abrir'));
+}
 
 type SunatBridgeDebugState = {
   documentId: number;
@@ -1144,6 +1156,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [loadingReferenceDocument, setLoadingReferenceDocument] = useState(false);
   const [form, setForm] = useState<CreateDocumentForm>(initialForm);
   const [loading, setLoading] = useState(false);
+  const [loadingBootstrap, setLoadingBootstrap] = useState(false);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [message, setMessage] = useState<string>('');
   const [sunatToast, setSunatToast] = useState<SunatToastState | null>(null);
   const [sunatSendingDocumentId, setSunatSendingDocumentId] = useState<number | null>(null);
@@ -1400,6 +1414,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const suppressNextCustomerAutocompleteRef = useRef(false);
   const suppressNextProductAutocompleteRef = useRef(false);
   const productAutocompleteRequestSeqRef = useRef(0);
+  const lastBootstrapScopeRef = useRef('');
+  const documentsRequestSeqRef = useRef(0);
+  const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
+  const stockLoadedScopeRef = useRef('');
 
   useEffect(() => {
     if (!sunatToast) {
@@ -2002,91 +2020,105 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [globalDiscountAmount, previewItems]);
 
   async function loadData() {
-    setLoading(true);
     setMessage('');
 
     try {
+      const resolvedCashRegisterId = shouldApplyCashRegisterFilter() ? cashRegisterId : null;
+      const bootstrapScopeKey = `${branchId ?? 'null'}|${warehouseId ?? 'null'}|${resolvedCashRegisterId ?? 'null'}`;
+      const shouldReloadLookups = !lookups || lastBootstrapScopeRef.current !== bootstrapScopeKey;
+
       const isCashierPendingQueue =
         shouldPrioritizePendingOrders
         && cashierReportPanelMode === 'PENDING'
         && documentViewFilter === 'PENDING_CONVERSION';
 
-      const bootstrap = await fetchSalesBootstrap(accessToken, {
-        branchId,
-        warehouseId,
-        cashRegisterId: shouldApplyCashRegisterFilter() ? cashRegisterId : null,
-        includeDocuments: salesWorkspaceMode === 'REPORT',
-        ...(salesWorkspaceMode === 'REPORT'
-          ? {
-              ...buildDocumentFilterParams(
-                isCashierPendingQueue ? 'PENDING_CONVERSION' : documentViewFilter,
-                (lookups?.document_kinds ?? [])
-              ),
-              status: documentFiltersApplied.status || undefined,
-              customer: documentFiltersApplied.customer || undefined,
-              issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
-              issueDateTo: documentFiltersApplied.issueDateTo || undefined,
-              series: documentFiltersApplied.series || undefined,
-              number: documentFiltersApplied.number || undefined,
-              page: documentsPage,
-              perPage: documentsMeta.per_page,
-            }
-          : {}),
-      });
+      let lookupRows: SalesLookups | null = lookups;
 
-      const lookupRows = bootstrap.lookups;
+      if (shouldReloadLookups) {
+        setLoadingBootstrap(true);
+        const bootstrap = await fetchSalesBootstrap(accessToken, {
+          branchId,
+          warehouseId,
+          cashRegisterId: resolvedCashRegisterId,
+          includeDocuments: false,
+        });
 
-      let docs = bootstrap.documents;
-      if (salesWorkspaceMode === 'REPORT' && docs == null) {
-        docs = {
-          data: [],
-          meta: {
+        lookupRows = bootstrap.lookups;
+        lastBootstrapScopeRef.current = bootstrapScopeKey;
+
+        setLookups(lookupRows);
+        const commerceFeatures = lookupRows.commerce_features ?? [];
+        const nextSalesFlowMode = resolveSalesFlowMode(commerceFeatures);
+        setSalesFlowMode(nextSalesFlowMode);
+        setCustomerProfilePricingEnabled(
+          Boolean(commerceFeatures.find((row) => row.feature_code === 'SALES_CUSTOMER_PRICE_PROFILE')?.is_enabled)
+        );
+
+        const defaultCurrency = lookupRows.currencies.find((row) => row.is_default) ?? lookupRows.currencies[0];
+        const defaultPaymentMethodId = resolveDefaultPaymentMethodId(lookupRows.payment_methods, initialForm.paymentMethodId || 1);
+        const defaultTaxCategory = lookupRows.tax_categories.find((row) => Number(row.rate_percent) > 0)
+          ?? lookupRows.tax_categories[0]
+          ?? null;
+
+        setForm((prev) => ({
+          ...prev,
+          currencyId: prev.currencyId || defaultCurrency?.id || 1,
+          paymentMethodId: prev.paymentMethodId || defaultPaymentMethodId,
+          unitId: prev.unitId || lookupRows?.units?.[0]?.id || null,
+          taxCategoryId: prev.taxCategoryId || defaultTaxCategory?.id || null,
+          documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
+        }));
+        setLoadingBootstrap(false);
+      }
+
+      if (salesWorkspaceMode === 'REPORT') {
+        setLoadingDocuments(true);
+        const documentKinds = lookupRows?.document_kinds ?? [];
+        const requestSeq = documentsRequestSeqRef.current + 1;
+        documentsRequestSeqRef.current = requestSeq;
+
+        const docs = await fetchCommercialDocuments(accessToken, {
+          branchId,
+          warehouseId,
+          cashRegisterId: resolvedCashRegisterId,
+          ...buildDocumentFilterParams(
+            isCashierPendingQueue ? 'PENDING_CONVERSION' : documentViewFilter,
+            documentKinds
+          ),
+          status: documentFiltersApplied.status || undefined,
+          customer: documentFiltersApplied.customer || undefined,
+          issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
+          issueDateTo: documentFiltersApplied.issueDateTo || undefined,
+          series: documentFiltersApplied.series || undefined,
+          number: documentFiltersApplied.number || undefined,
+          page: documentsPage,
+          perPage: documentsMeta.per_page,
+        });
+
+        if (requestSeq === documentsRequestSeqRef.current) {
+          setDocuments(docs.data ?? []);
+          setDocumentsMeta(docs.meta ?? {
             page: documentsPage,
             per_page: documentsMeta.per_page,
             total: 0,
             last_page: 1,
-          },
-        };
+          });
+        }
+        setLoadingDocuments(false);
       }
-
-      setLookups(lookupRows);
-      const commerceFeatures = lookupRows.commerce_features ?? [];
-      const nextSalesFlowMode = resolveSalesFlowMode(commerceFeatures);
-      setSalesFlowMode(nextSalesFlowMode);
-      setCustomerProfilePricingEnabled(
-        Boolean(commerceFeatures.find((row) => row.feature_code === 'SALES_CUSTOMER_PRICE_PROFILE')?.is_enabled)
-      );
-      if (docs) {
-        setDocuments(docs.data);
-        setDocumentsMeta(docs.meta);
-      }
-
-      const defaultCurrency = lookupRows.currencies.find((row) => row.is_default) ?? lookupRows.currencies[0];
-      const defaultPaymentMethodId = resolveDefaultPaymentMethodId(lookupRows.payment_methods, initialForm.paymentMethodId || 1);
-      const defaultTaxCategory = lookupRows.tax_categories.find((row) => Number(row.rate_percent) > 0)
-        ?? lookupRows.tax_categories[0]
-        ?? null;
-
-      setForm((prev) => ({
-        ...prev,
-        currencyId: prev.currencyId || defaultCurrency?.id || 1,
-        paymentMethodId: prev.paymentMethodId || defaultPaymentMethodId,
-        unitId: prev.unitId || lookupRows.units?.[0]?.id || null,
-        taxCategoryId: prev.taxCategoryId || defaultTaxCategory?.id || null,
-        documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
-      }));
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo cargar Sales';
       setMessage(text);
     } finally {
-      setLoading(false);
+      setLoadingBootstrap(false);
+      setLoadingDocuments(false);
     }
   }
 
   useEffect(() => {
     void loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, branchId, warehouseId, cashRegisterId, documentsPage, documentViewFilter, documentFiltersApplied, salesWorkspaceMode, effectiveDocumentKind, salesFlowMode]);
+  }, [accessToken, branchId, warehouseId, cashRegisterId, documentsPage, documentViewFilter, documentFiltersApplied, salesWorkspaceMode]);
 
   useEffect(() => {
     if (salesFlowMode !== 'SELLER_TO_CASHIER') {
@@ -2173,7 +2205,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           return;
         }
 
-        if (form.productQuery.trim().length < 2) {
+        if (form.productQuery.trim().length < PRODUCT_AUTOCOMPLETE_MIN_CHARS) {
           setProductSuggestions([]);
           setActiveProductIndex(-1);
           return;
@@ -2185,13 +2217,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         const rows = await fetchSalesInventoryProducts(accessToken, {
           search: form.productQuery.trim(),
           warehouseId,
-          limit: 12,
+          limit: 20,
           autocomplete: true,
         });
         if (requestSeq !== productAutocompleteRequestSeqRef.current) {
           return;
         }
-        const compactRows = rows.slice(0, 12);
+        const compactRows = rows.slice(0, 20);
         setProductSuggestions(compactRows);
         setActiveProductIndex(compactRows.length > 0 ? 0 : -1);
       } catch {
@@ -2206,15 +2238,34 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   useEffect(() => {
     let cancelled = false;
 
+    const stockScopeKey = `${warehouseId ?? 'null'}`;
+    const shouldLoadStockRows =
+      salesWorkspaceMode === 'SELL'
+      && (form.productQuery.trim().length >= PRODUCT_AUTOCOMPLETE_MIN_CHARS || cart.length > 0);
+
+    if (!shouldLoadStockRows) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (stockLoadedScopeRef.current === stockScopeKey && stockRows.length > 0) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void (async () => {
       try {
         const rows = await fetchSalesInventoryStock(accessToken, { warehouseId });
         if (!cancelled) {
           setStockRows(rows);
+          stockLoadedScopeRef.current = stockScopeKey;
         }
       } catch {
         if (!cancelled) {
           setStockRows([]);
+          stockLoadedScopeRef.current = '';
         }
       }
     })();
@@ -2222,7 +2273,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return () => {
       cancelled = true;
     };
-  }, [accessToken, warehouseId]);
+  }, [accessToken, warehouseId, salesWorkspaceMode, form.productQuery, cart.length, stockRows.length]);
 
   useEffect(() => {
     if (!isNoteDocument || !form.customerId) {
@@ -2344,6 +2395,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   useEffect(() => {
     let cancelled = false;
     const requestedDocumentKind = effectiveDocumentKind;
+    const seriesScopeKey = `${branchId ?? 'null'}|${warehouseId ?? 'null'}|${requestedDocumentKind}`;
+
+    const cachedRows = seriesCacheRef.current.get(seriesScopeKey);
+    if (cachedRows) {
+      setSeries(cachedRows);
+      setForm((prev) => ({
+        ...prev,
+        series: cachedRows.find((row) => row.series === prev.series)?.series ?? cachedRows[0]?.series ?? '',
+      }));
+
+      if (cachedRows.length === 0) {
+        setMessage(`No hay series activas para ${requestedDocumentKind} en la sucursal/almacen seleccionados. Configura la serie en Maestros > Series.`);
+      } else {
+        setMessage('');
+      }
+      return () => {
+        cancelled = true;
+      };
+    }
 
     void (async () => {
       try {
@@ -2358,6 +2428,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         }
 
         const filteredRows = rows.filter((row) => row.document_kind === requestedDocumentKind);
+  seriesCacheRef.current.set(seriesScopeKey, filteredRows);
         setSeries(filteredRows);
 
         setForm((prev) => ({
@@ -2928,6 +2999,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setCart((prev) => prev.filter((_, i) => i !== index));
   }
 
+  const companyProfileForPrint = useMemo(() => {
+    if (!lookups?.company_profile) {
+      return null;
+    }
+
+    return {
+      taxId: lookups.company_profile.tax_id ?? null,
+      legalName: lookups.company_profile.legal_name ?? null,
+      tradeName: lookups.company_profile.trade_name ?? null,
+      address: lookups.company_profile.address ?? null,
+      phone: lookups.company_profile.phone ?? null,
+      logoUrl: lookups.company_profile.logo_url ?? null,
+    };
+  }, [lookups]);
+
+  function withCompanyForPrint(document: PrintableSalesDocument): PrintableSalesDocument {
+    if (!companyProfileForPrint) {
+      return document;
+    }
+
+    return {
+      ...document,
+      company: {
+        ...companyProfileForPrint,
+        ...(document.company ?? {}),
+      },
+    };
+  }
+
   function updateDraftItem(
     index: number,
     field: 'qty' | 'unitPrice' | 'discountTotal' | 'isFreeOperation',
@@ -2985,12 +3085,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
+    const printable = withCompanyForPrint(issuedPreview.printable);
+
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
       subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
       html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(issuedPreview.printable, { embedded: true })
-        : buildCommercialDocumentA4Html(issuedPreview.printable, { embedded: true }),
+        ? buildCommercialDocument80mmHtml(printable, { embedded: true })
+        : buildCommercialDocumentA4Html(printable, { embedded: true }),
       variant: format === '80mm' ? 'compact' : 'wide',
     });
   }
@@ -3149,12 +3251,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
     try {
       const data = await fetchCommercialDocumentDetails(accessToken, documentId);
+      const printable = withCompanyForPrint(data as PrintableSalesDocument);
       setPreviewDialog({
         title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
         subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
         html: format === '80mm'
-          ? buildCommercialDocument80mmHtml(data, { embedded: true })
-          : buildCommercialDocumentA4Html(data, { embedded: true }),
+          ? buildCommercialDocument80mmHtml(printable, { embedded: true })
+          : buildCommercialDocumentA4Html(printable, { embedded: true }),
         variant: format === '80mm' ? 'compact' : 'wide',
       });
     } catch (error) {
@@ -3600,6 +3703,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             document_kind: string;
             series: string;
             number: number;
+            issue_at?: string;
             total: number;
             status: string;
           }
@@ -3617,7 +3721,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           documentKind: form.documentKind,
           series: issued.series,
           number: Number(issued.number),
-          issueDate: form.issueDate,
+          issueDate: String(issued.issue_at ?? form.issueDate),
           dueDate: form.dueDate || null,
           status: issued.status,
           currencyCode: selectedCurrency?.code ?? '-',
@@ -3692,10 +3796,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             ).total,
           })),
         };
+        const printableWithCompany = withCompanyForPrint(printable);
 
         setIssuedPreview({
           ...issued,
-          printable,
+          printable: printableWithCompany,
         });
 
         setPreviewDialog({
@@ -3703,8 +3808,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           subtitle: `${issued.series}-${Number(issued.number).toString().padStart(6, '0')}`,
           html:
             salesFlowMode === 'SELLER_TO_CASHIER'
-              ? buildCommercialDocument80mmHtml(printable, { embedded: true })
-              : buildCommercialDocumentA4Html(printable, { embedded: true }),
+              ? buildCommercialDocument80mmHtml(printableWithCompany, { embedded: true })
+              : buildCommercialDocumentA4Html(printableWithCompany, { embedded: true }),
           variant: salesFlowMode === 'SELLER_TO_CASHIER' ? 'compact' : 'wide',
         });
       }
@@ -3764,7 +3869,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       await loadData();
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo crear documento';
-      setMessage(text);
+
+      if (isCashOpeningRequiredError(text)) {
+        setMessage('');
+        setSunatToast({
+          tone: 'bad',
+          title: 'Caja cerrada',
+          detail: 'Debes aperturar caja antes de realizar la venta.',
+        });
+      } else {
+        setMessage(text);
+      }
     } finally {
       setLoading(false);
     }
@@ -3816,10 +3931,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
         try {
           const details = await fetchCommercialDocumentDetails(accessToken, convertedId);
+          const printableDetails = withCompanyForPrint(details as PrintableSalesDocument);
           setPostConvertPrintModal({
             title: 'Documento convertido',
-            subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
-            details,
+            subtitle: `${printableDetails.series}-${String(printableDetails.number).padStart(6, '0')}`,
+            details: printableDetails,
             loading: false,
             error: '',
           });
@@ -3879,11 +3995,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
+      const printableDetails = withCompanyForPrint(details as PrintableSalesDocument);
+
       setConvertPreviewModal({
         source,
         targetDocumentKind,
-        details,
-        previewHtml: buildCommercialDocumentA4Html(details, { embedded: true }),
+        details: printableDetails,
+        previewHtml: buildCommercialDocumentA4Html(printableDetails, { embedded: true }),
         loading: false,
         error: '',
       });
@@ -4399,7 +4517,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
-    const details = postConvertPrintModal.details;
+    const details = withCompanyForPrint(postConvertPrintModal.details);
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento A4',
       subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
@@ -4477,7 +4595,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     <section className="module-panel">
       <div className="module-header">
         <h3>Ventas</h3>
-        <button type="button" onClick={() => void loadData()} disabled={loading}>
+        <button type="button" onClick={() => void loadData()} disabled={loading || loadingBootstrap || loadingDocuments}>
           Refrescar
         </button>
       </div>
@@ -4582,6 +4700,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       )}
 
       {message && <p className="notice">{message}</p>}
+      {sunatToast && (
+        <div className="sales-sunat-toast-anchor">
+          <div className={`sales-sunat-toast ${sunatToast.tone}`} role="status" aria-live="polite">
+            <strong>{sunatToast.title}</strong>
+            <span>{sunatToast.detail}</span>
+            <button type="button" onClick={() => setSunatToast(null)} aria-label="Cerrar notificacion">Cerrar</button>
+          </div>
+        </div>
+      )}
       {salesWorkspaceMode === 'SELL' && canUseSellWorkspace && (
         <>
       <form className="sales-form" onSubmit={handleSubmit}>
@@ -5277,9 +5404,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                 return (
                                   <>
                                     <strong>{row.name}</strong>
-                                    <span>
-                                      {(row.sku ?? 'SIN-SKU')} · Stock:{' '}
-                                      <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
+                                    <span className="suggest-sku">{row.sku ?? 'SIN-SKU'}</span>
+                                    <span className="suggest-stock">
+                                      Stock: <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
                                     </span>
                                   </>
                                 );
@@ -5330,7 +5457,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       {!form.isManualItem &&
                         lots.map((row) => (
                           <option key={row.id} value={row.id}>
-                            {row.lot_code} | Stock {row.stock}{row.expires_at ? ` | Vence: ${new Date(row.expires_at).toLocaleDateString('es-PE')}` : ''}
+                            {row.lot_code} | Stock {row.stock}{row.expires_at ? ` | Vence: ${fmtDateLima(row.expires_at)}` : ''}
                           </option>
                         ))}
                     </select>
@@ -5760,22 +5887,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <td>{row.total}</td>
                   <td>
                     <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      <button type="button" className="btn-mini" disabled={loading} onClick={() => void showDocumentPreview(row.id, 'A4')}>Ver A4</button>
-                      <button type="button" className="btn-mini" disabled={loading} onClick={() => void showDocumentPreview(row.id, '80mm')}>Ver Ticket</button>
+                      <button type="button" className="btn-mini" disabled={loadingDocuments} onClick={() => void showDocumentPreview(row.id, 'A4')}>Ver A4</button>
+                      <button type="button" className="btn-mini" disabled={loadingDocuments} onClick={() => void showDocumentPreview(row.id, '80mm')}>Ver Ticket</button>
                       {canConvertInCurrentMode && (
                         <>
-                          <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'INVOICE')}>Factura</button>
-                          <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'RECEIPT')}>Boleta</button>
+                          <button type="button" className="btn-mini" disabled={loadingDocuments} onClick={() => void openConvertPreview(row, 'INVOICE')}>Factura</button>
+                          <button type="button" className="btn-mini" disabled={loadingDocuments} onClick={() => void openConvertPreview(row, 'RECEIPT')}>Boleta</button>
                           {row.document_kind === 'QUOTATION' && (
-                            <button type="button" className="btn-mini" disabled={loading} onClick={() => void openConvertPreview(row, 'SALES_ORDER')}>Nota de pedido</button>
+                            <button type="button" className="btn-mini" disabled={loadingDocuments} onClick={() => void openConvertPreview(row, 'SALES_ORDER')}>Nota de pedido</button>
                           )}
                         </>
                       )}
                       {canEditDraftInCurrentMode && String(row.status).toUpperCase() === 'DRAFT' && (
-                        <button type="button" className="btn-mini" disabled={loading} onClick={() => void startEditDraft(row)}>Editar</button>
+                        <button type="button" className="btn-mini" disabled={loadingDocuments} onClick={() => void startEditDraft(row)}>Editar</button>
                       )}
                       {canVoidDocumentsInCurrentMode && !['VOID', 'CANCELED'].includes(String(row.status).toUpperCase()) && (
-                        <button type="button" className="btn-mini danger" disabled={loading} onClick={() => void handleVoidDocument(row)}>Anular</button>
+                        <button type="button" className="btn-mini danger" disabled={loadingDocuments} onClick={() => void handleVoidDocument(row)}>Anular</button>
                       )}
                     </div>
                   </td>
@@ -5793,14 +5920,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <div style={{ display: 'flex', gap: '0.5rem' }}>
               <button
                 type="button"
-                disabled={loading || documentsMeta.page <= 1}
+                disabled={loadingDocuments || documentsMeta.page <= 1}
                 onClick={() => setDocumentsPage((prev) => Math.max(1, prev - 1))}
               >
                 Anterior
               </button>
               <button
                 type="button"
-                disabled={loading || documentsMeta.page >= documentsMeta.last_page}
+                disabled={loadingDocuments || documentsMeta.page >= documentsMeta.last_page}
                 onClick={() => setDocumentsPage((prev) => Math.min(documentsMeta.last_page, prev + 1))}
               >
                 Siguiente
@@ -5853,12 +5980,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
         {/* Document kind chip-tabs */}
         <div className="doc-kind-tabs">
-          <button type="button" className={`doc-kind-tab${documentViewFilter === 'ALL' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('ALL'); setDocumentsPage(1); }} disabled={loading}>Todos</button>
-          <button type="button" className={`doc-kind-tab${documentViewFilter === 'TRIBUTARY' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('TRIBUTARY'); setDocumentsPage(1); }} disabled={loading}>Tributarios</button>
-          <button type="button" className={`doc-kind-tab${documentViewFilter === 'QUOTATION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('QUOTATION'); setDocumentsPage(1); }} disabled={loading}>Pedidos comerciales</button>
-          <button type="button" className={`doc-kind-tab${documentViewFilter === 'SALES_ORDER' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('SALES_ORDER'); setDocumentsPage(1); }} disabled={loading}>Notas de pedido</button>
-          <button type="button" className={`doc-kind-tab${documentViewFilter === 'PENDING_CONVERSION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('PENDING_CONVERSION'); setDocumentsPage(1); }} disabled={loading}>Pendientes por convertir</button>
-          <button type="button" className={`doc-kind-tab${documentViewFilter === 'CONVERTED' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('CONVERTED'); setDocumentsPage(1); }} disabled={loading}>Ya convertidos</button>
+          <button type="button" className={`doc-kind-tab${documentViewFilter === 'ALL' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('ALL'); setDocumentsPage(1); }} disabled={loadingDocuments}>Todos</button>
+          <button type="button" className={`doc-kind-tab${documentViewFilter === 'TRIBUTARY' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('TRIBUTARY'); setDocumentsPage(1); }} disabled={loadingDocuments}>Tributarios</button>
+          <button type="button" className={`doc-kind-tab${documentViewFilter === 'QUOTATION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('QUOTATION'); setDocumentsPage(1); }} disabled={loadingDocuments}>Pedidos comerciales</button>
+          <button type="button" className={`doc-kind-tab${documentViewFilter === 'SALES_ORDER' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('SALES_ORDER'); setDocumentsPage(1); }} disabled={loadingDocuments}>Notas de pedido</button>
+          <button type="button" className={`doc-kind-tab${documentViewFilter === 'PENDING_CONVERSION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('PENDING_CONVERSION'); setDocumentsPage(1); }} disabled={loadingDocuments}>Pendientes por convertir</button>
+          <button type="button" className={`doc-kind-tab${documentViewFilter === 'CONVERTED' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('CONVERTED'); setDocumentsPage(1); }} disabled={loadingDocuments}>Ya convertidos</button>
         </div>
 
         {/* Advanced search filters */}
@@ -5923,30 +6050,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </label>
           </div>
           <div className="report-filter-actions">
-            <button type="button" className="btn-apply" onClick={applyAdvancedDocumentFilters} disabled={loading}>
+            <button type="button" className="btn-apply" onClick={applyAdvancedDocumentFilters} disabled={loadingDocuments}>
               ✓ Aplicar
             </button>
-            <button type="button" className="btn-clear" onClick={clearAdvancedDocumentFilters} disabled={loading}>
+            <button type="button" className="btn-clear" onClick={clearAdvancedDocumentFilters} disabled={loadingDocuments}>
               ✕ Limpiar
             </button>
             <span className="report-filter-spacer" />
-            <button type="button" className="btn-export" onClick={() => void handleExportDocumentsExcel()} disabled={loading || exportingDocuments}>
+            <button type="button" className="btn-export" onClick={() => void handleExportDocumentsExcel()} disabled={loadingDocuments || exportingDocuments}>
               {exportingDocuments ? 'Exportando…' : '⬇ CSV'}
             </button>
-            <button type="button" className="btn-export" onClick={() => void handleExportDocumentsXlsx()} disabled={loading || exportingDocuments}>
+            <button type="button" className="btn-export" onClick={() => void handleExportDocumentsXlsx()} disabled={loadingDocuments || exportingDocuments}>
               {exportingDocuments ? 'Exportando…' : '⬇ XLSX'}
             </button>
           </div>
         </div>
-        {sunatToast && (
-          <div className="sales-sunat-toast-anchor">
-            <div className={`sales-sunat-toast ${sunatToast.tone}`} role="status" aria-live="polite">
-              <strong>{sunatToast.title}</strong>
-              <span>{sunatToast.detail}</span>
-              <button type="button" onClick={() => setSunatToast(null)} aria-label="Cerrar notificacion SUNAT">Cerrar</button>
-            </div>
-          </div>
-        )}
         <table>
           <thead>
             <tr>

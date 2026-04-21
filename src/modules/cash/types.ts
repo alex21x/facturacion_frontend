@@ -87,10 +87,16 @@ export type CloseSessionResponse = {
 };
 
 export type DocumentItem = {
+  product_id?: number | null;
   description: string;
   quantity: number;
   unit_code: string;
   unit_price: number;
+  unit_cost?: number;
+  cost_total?: number;
+  margin_total?: number;
+  margin_percent?: number;
+  margin_source?: 'REAL' | 'ESTIMATED';
   line_total: number;
 };
 

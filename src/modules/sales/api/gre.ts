@@ -165,8 +165,21 @@ export async function fetchGreGuideDetail(accessToken: string, id: number): Prom
   });
 }
 
-export async function fetchGreLookups(accessToken: string): Promise<GreLookups> {
-  return apiClient.request<GreLookups>('/api/sales/gre/lookups', {
+export async function fetchGreLookups(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+  }
+): Promise<GreLookups> {
+  const query = new URLSearchParams();
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+
+  const suffix = query.toString();
+  const path = suffix ? `/api/sales/gre/lookups?${suffix}` : '/api/sales/gre/lookups';
+
+  return apiClient.request<GreLookups>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
@@ -284,4 +297,102 @@ export async function fetchGrePrintHtml(
   });
   if (!res.ok) throw new Error(`Error al obtener vista previa (HTTP ${res.status})`);
   return res.text();
+}
+
+export type TaxBridgeAuditAttempt = {
+  id: number;
+  document: string;
+  document_kind: string;
+  tributary_type: string;
+  status: string;
+  http_code: number | null;
+  response_time_ms: number | null;
+  attempt_number: number;
+  is_retry: boolean;
+  error_kind: string | null;
+  message: string | null;
+  sent_at: string | null;
+  initiated_by: string | null;
+};
+
+export type TaxBridgeAuditAttemptDetail = {
+  id: number;
+  document: {
+    id: number | null;
+    kind: string | null;
+    series: string | null;
+    number: string | null;
+    full_number: string | null;
+  };
+  tributary_type: string;
+  attempt: {
+    number: number;
+    is_retry: boolean;
+    is_manual: boolean;
+  };
+  bridge: {
+    mode: string | null;
+    endpoint: string | null;
+    method: string | null;
+    content_type: string | null;
+  };
+  request: {
+    size_bytes: number | null;
+    sha1: string | null;
+    payload: unknown;
+  };
+  response: {
+    status_code: number | null;
+    size_bytes: number | null;
+    time_ms: number | null;
+    body: unknown;
+  };
+  sunat: {
+    status: string | null;
+    code: string | null;
+    message: string | null;
+    ticket: string | null;
+    cdr_code: string | null;
+  };
+  error: {
+    kind: string;
+    message: string | null;
+  } | null;
+  audit: {
+    initiated_by_user_id: number | null;
+    initiated_by_username: string | null;
+    sent_at: string | null;
+    received_at: string | null;
+  };
+};
+
+export async function fetchGreTaxBridgeAuditHistory(
+  accessToken: string,
+  guideId: number,
+  limit = 30
+): Promise<{
+  guide_id: number;
+  count: number;
+  logs: TaxBridgeAuditAttempt[];
+}> {
+  const query = new URLSearchParams();
+  query.set('limit', String(limit));
+
+  return apiClient.request(
+    `/api/sales/gre-guides/${guideId}/tax-bridge-audit?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+}
+
+export async function fetchGreTaxBridgeAuditAttemptDetail(
+  accessToken: string,
+  logId: number
+): Promise<TaxBridgeAuditAttemptDetail> {
+  return apiClient.request(`/api/tax-bridge/audit/${logId}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
 }

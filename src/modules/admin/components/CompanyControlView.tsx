@@ -1,10 +1,14 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import {
   createAdminCompany,
+  fetchCompanyCommerceAdminMatrix,
+  fetchCompanyInventorySettingsAdminMatrix,
   fetchCompanyOperationalLimitMatrix,
   fetchCompanyRateLimitMatrix,
   fetchCompanyVerticalAdminMatrix,
   resetAdminCompanyPassword,
+  updateCompanyCommerceAdminMatrix,
+  updateCompanyInventorySettingsAdminMatrix,
   updateCompanyOperationalLimitMatrix,
   updateCompanyOperationalLimitMatrixBulk,
   updateCompanyRateLimitMatrix,
@@ -13,6 +17,9 @@ import {
   updateCompanyVerticalAdminMatrixBulk,
 } from '../../appcfg/api';
 import type {
+  CompanyCommerceAdminMatrixResponse,
+  CompanyInventorySettingsAdminMatrixResponse,
+  InventorySettingsRecord,
   CompanyOperationalLimitMatrixResponse,
   CompanyRateLimitMatrixResponse,
   CompanyVerticalAdminMatrixResponse,
@@ -52,6 +59,10 @@ export function CompanyControlView({ accessToken }: Props) {
   const [bulkOpWarehouses, setBulkOpWarehouses] = useState(1);
   const [bulkOpCash, setBulkOpCash] = useState(1);
   const [bulkOpCashPerWarehouse, setBulkOpCashPerWarehouse] = useState(1);
+  const [commerceMatrix, setCommerceMatrix] = useState<CompanyCommerceAdminMatrixResponse | null>(null);
+  const [inventoryMatrix, setInventoryMatrix] = useState<CompanyInventorySettingsAdminMatrixResponse | null>(null);
+  const [commerceDraftByCompany, setCommerceDraftByCompany] = useState<Record<number, Record<string, boolean>>>({});
+  const [inventoryDraftByCompany, setInventoryDraftByCompany] = useState<Record<number, InventorySettingsRecord>>({});
   const [createDraft, setCreateDraft] = useState({
     tax_id: '',
     legal_name: '',
@@ -102,15 +113,31 @@ export function CompanyControlView({ accessToken }: Props) {
     setMessage('');
     setIsError(false);
     try {
-      const [verticalResult, rateResult, operationalResult] = await Promise.all([
+      const [verticalResult, rateResult, operationalResult, commerceResult, inventoryResult] = await Promise.all([
         fetchCompanyVerticalAdminMatrix(accessToken),
         fetchCompanyRateLimitMatrix(accessToken),
         fetchCompanyOperationalLimitMatrix(accessToken),
+        fetchCompanyCommerceAdminMatrix(accessToken),
+        fetchCompanyInventorySettingsAdminMatrix(accessToken),
       ]);
 
       setMatrix(verticalResult);
       setRateMatrix(rateResult);
       setOperationalMatrix(operationalResult);
+      setCommerceMatrix(commerceResult);
+      setInventoryMatrix(inventoryResult);
+
+      const nextCommerceDraft: Record<number, Record<string, boolean>> = {};
+      for (const company of commerceResult.companies) {
+        nextCommerceDraft[company.company_id] = { ...company.features };
+      }
+      setCommerceDraftByCompany(nextCommerceDraft);
+
+      const nextInventoryDraft: Record<number, InventorySettingsRecord> = {};
+      for (const company of inventoryResult.companies) {
+        nextInventoryDraft[company.company_id] = { ...company.inventory_settings };
+      }
+      setInventoryDraftByCompany(nextInventoryDraft);
 
       const nextMap: Record<number, string> = {};
       for (const company of verticalResult.companies) {
@@ -167,12 +194,42 @@ export function CompanyControlView({ accessToken }: Props) {
       setMatrix(null);
       setRateMatrix(null);
       setOperationalMatrix(null);
+      setCommerceMatrix(null);
+      setInventoryMatrix(null);
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => { void loadMatrix(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveCommerceOne(companyId: number) {
+    const draft = commerceDraftByCompany[companyId];
+    if (!draft) return;
+    setLoading(true); setMessage(''); setIsError(false);
+    try {
+      const result = await updateCompanyCommerceAdminMatrix(accessToken, companyId, draft);
+      setCommerceMatrix(result);
+      setMessage('Reglas de ventas/compras actualizadas');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error al guardar');
+      setIsError(true);
+    } finally { setLoading(false); }
+  }
+
+  async function saveInventoryOne(companyId: number) {
+    const draft = inventoryDraftByCompany[companyId];
+    if (!draft) return;
+    setLoading(true); setMessage(''); setIsError(false);
+    try {
+      const result = await updateCompanyInventorySettingsAdminMatrix(accessToken, companyId, draft);
+      setInventoryMatrix(result);
+      setMessage('Configuración de inventario actualizada');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error al guardar');
+      setIsError(true);
+    } finally { setLoading(false); }
+  }
 
   const filteredCompanies = useMemo(() => {
     return (matrix?.companies ?? []).filter(company => {
@@ -490,8 +547,8 @@ export function CompanyControlView({ accessToken }: Props) {
   return (
     <>
       <div className="adm-page-header">
-        <h2>Control de Empresas por Rubro</h2>
-        <p>Activación y configuración de rubros para cada empresa registrada en el sistema.</p>
+        <h2>Control de Empresas</h2>
+        <p>Administración centralizada de rubros, límites, reglas comerciales e inventario por empresa.</p>
       </div>
 
       {/* Stats */}
@@ -1073,6 +1130,152 @@ export function CompanyControlView({ accessToken }: Props) {
               </tbody>
             </table>
           </div>
+        </div>
+      </div>
+
+      {/* Commerce features matrix */}
+      <div className="adm-section">
+        <div className="adm-section-header">
+          <h3>Reglas comerciales por empresa (ventas / compras)</h3>
+        </div>
+        <div className="adm-table-wrap">
+          <table className="adm-table">
+            <thead>
+              <tr>
+                <th>Empresa</th>
+                {(commerceMatrix?.feature_codes ?? []).map(code => (
+                  <th key={code} title={code}>{code.replace(/^(SALES|PURCHASES)_/, '').replace(/_ENABLED$/, '').replace(/_/g, ' ')}</th>
+                ))}
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(commerceMatrix?.companies ?? []).map(company => {
+                const draft = commerceDraftByCompany[company.company_id] ?? company.features;
+                return (
+                  <tr key={company.company_id}>
+                    <td>
+                      <strong>{company.legal_name}</strong>
+                      <br />
+                      <small>{company.tax_id}</small>
+                    </td>
+                    {(commerceMatrix?.feature_codes ?? []).map(code => (
+                      <td key={code} style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={draft[code] ?? false}
+                          onChange={e => setCommerceDraftByCompany(prev => ({
+                            ...prev,
+                            [company.company_id]: {
+                              ...(prev[company.company_id] ?? company.features),
+                              [code]: e.target.checked,
+                            },
+                          }))}
+                          disabled={loading}
+                        />
+                      </td>
+                    ))}
+                    <td>
+                      <button
+                        className="adm-btn adm-btn-primary"
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void saveCommerceOne(company.company_id)}
+                      >
+                        Guardar
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Inventory settings matrix */}
+      <div className="adm-section">
+        <div className="adm-section-header">
+          <h3>Configuración de inventario por empresa</h3>
+        </div>
+        <div className="adm-table-wrap">
+          <table className="adm-table">
+            <thead>
+              <tr>
+                <th>Empresa</th>
+                <th>Modo complejidad</th>
+                <th>Modo inventario</th>
+                <th>Estrategia lotes</th>
+                <th>Inv. Pro</th>
+                <th>Tracking lotes</th>
+                <th>Tracking venc.</th>
+                <th>Rep. avanzado</th>
+                <th>Dashboard gráf.</th>
+                <th>Ubic. control</th>
+                <th>Stock neg.</th>
+                <th>Exigir lote</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(inventoryMatrix?.companies ?? []).map(company => {
+                const s = inventoryDraftByCompany[company.company_id] ?? company.inventory_settings;
+                const update = (patch: Partial<InventorySettingsRecord>) =>
+                  setInventoryDraftByCompany(prev => ({
+                    ...prev,
+                    [company.company_id]: { ...(prev[company.company_id] ?? company.inventory_settings), ...patch },
+                  }));
+                return (
+                  <tr key={company.company_id}>
+                    <td>
+                      <strong>{company.legal_name}</strong>
+                      <br />
+                      <small>{company.tax_id}</small>
+                    </td>
+                    <td>
+                      <select className="adm-select" value={s.complexity_mode} onChange={e => update({ complexity_mode: e.target.value as InventorySettingsRecord['complexity_mode'] })} disabled={loading}>
+                        <option value="BASIC">Básico</option>
+                        <option value="ADVANCED">Avanzado</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select className="adm-select" value={s.inventory_mode} onChange={e => update({ inventory_mode: e.target.value as InventorySettingsRecord['inventory_mode'] })} disabled={loading}>
+                        <option value="KARDEX_SIMPLE">Kardex simple</option>
+                        <option value="LOT_TRACKING">Por lotes</option>
+                      </select>
+                    </td>
+                    <td>
+                      <select className="adm-select" value={s.lot_outflow_strategy} onChange={e => update({ lot_outflow_strategy: e.target.value as InventorySettingsRecord['lot_outflow_strategy'] })} disabled={loading}>
+                        <option value="MANUAL">Manual</option>
+                        <option value="FIFO">FIFO</option>
+                        <option value="FEFO">FEFO</option>
+                      </select>
+                    </td>
+                    {(['enable_inventory_pro','enable_lot_tracking','enable_expiry_tracking','enable_advanced_reporting','enable_graphical_dashboard','enable_location_control','allow_negative_stock','enforce_lot_for_tracked'] as (keyof InventorySettingsRecord)[]).map(field => (
+                      <td key={field} style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={s[field] as boolean}
+                          onChange={e => update({ [field]: e.target.checked })}
+                          disabled={loading}
+                        />
+                      </td>
+                    ))}
+                    <td>
+                      <button
+                        className="adm-btn adm-btn-primary"
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void saveInventoryOne(company.company_id)}
+                      >
+                        Guardar
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </>

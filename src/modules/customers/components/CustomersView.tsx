@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
+import '../customers.css';
 
 type CustomerRow = {
   id: number;
@@ -261,8 +262,8 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   }
 
   return (
-    <section className="module-panel">
-      <div className="module-header">
+    <section className="module-panel customers-module">
+      <div className="module-header customers-module-header">
         <h3>Clientes</h3>
         <button type="button" onClick={() => void loadCustomers()} disabled={loading}>
           Refrescar
@@ -421,7 +422,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         </article>
       </div>
 
-      <div className="table-wrap">
+      <div className="table-wrap customers-table-wrap">
         <h4>Catalogo de clientes</h4>
         <table>
           <thead>
@@ -455,9 +456,9 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                 </td>
                 <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
                 <td>
-                  <button type="button" onClick={() => startEdit(row)}>Editar</button>{' '}
-                  <button type="button" onClick={() => void toggleCustomer(row)}>
-                    {Number(row.status) === 1 ? 'Desactivar' : 'Activar'}
+                  <button type="button" className="customers-row-action customers-row-action-edit" onClick={() => startEdit(row)}>✏ Editar</button>{' '}
+                  <button type="button" className={Number(row.status) === 1 ? 'customers-row-action customers-row-action-toggle is-danger' : 'customers-row-action customers-row-action-toggle is-ok'} onClick={() => void toggleCustomer(row)}>
+                    {Number(row.status) === 1 ? '⏸ Desactivar' : '✓ Activar'}
                   </button>
                 </td>
               </tr>

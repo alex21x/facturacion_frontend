@@ -3,6 +3,8 @@ import { fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api
 import type { InventoryProduct, InventoryStockRow } from '../../inventory/types';
 import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
+import { fetchCompanyProfile } from '../../company/api';
+import type { CompanyProfile } from '../../company/types';
 import {
   asInputDate,
   buildPurchaseDetailHtml,
@@ -119,6 +121,7 @@ export function PurchasesView({
   const supplierInputRef = useRef<HTMLInputElement | null>(null);
   const draftDatesPopoverRef = useRef<HTMLDivElement | null>(null);
   const focusedReportRowRef = useRef<HTMLTableRowElement | null>(null);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
   const [products, setProducts] = useState<InventoryProduct[]>([]);
   const [stockRows, setStockRows] = useState<InventoryStockRow[]>([]);
   const [reportRows, setReportRows] = useState<StockEntryRow[]>([]);
@@ -231,7 +234,7 @@ export function PurchasesView({
         const name = (product.name ?? '').toLowerCase();
         return sku.includes(query) || name.includes(query);
       })
-      .slice(0, 10);
+      .slice(0, 20);
   }, [draftItem.product_query, isProductSuggestOpen, selectableProducts]);
 
   useEffect(() => {
@@ -657,6 +660,27 @@ export function PurchasesView({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, warehouseId, workspaceMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const profile = await fetchCompanyProfile(accessToken);
+        if (!cancelled) {
+          setCompanyProfile(profile);
+        }
+      } catch {
+        if (!cancelled) {
+          setCompanyProfile(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   useEffect(() => {
     if (workspaceMode !== 'REPORT') {
@@ -1873,9 +1897,9 @@ export function PurchasesView({
                             return (
                               <>
                                 <strong>{product.name}</strong>
-                                <span>
-                                  {(product.sku ?? 'SIN-SKU')} · Stock:{' '}
-                                  <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
+                                <span className="suggest-sku">{product.sku ?? 'SIN-SKU'}</span>
+                                <span className="suggest-stock">
+                                  Stock: <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
                                 </span>
                               </>
                             );
@@ -2434,7 +2458,7 @@ export function PurchasesView({
         <HtmlPreviewDialog
           title="Detalle de compra"
           subtitle={`Ingreso #${detailPreviewEntry.id} | ${formatDateTime(detailPreviewEntry.issue_at)}`}
-          html={buildPurchaseDetailHtml(detailPreviewEntry)}
+          html={buildPurchaseDetailHtml(detailPreviewEntry, { company: companyProfile })}
           variant="wide"
           onClose={() => setDetailPreviewEntry(null)}
         />

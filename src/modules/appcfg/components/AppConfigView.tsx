@@ -30,6 +30,8 @@ type AppConfigViewProps = {
   branchId: number | null;
   warehouseId: number | null;
   cashRegisterId: number | null;
+  currentUserRoleCode: string | null;
+  activeVerticalCode: string | null;
 };
 
 const UI_LABELS = {
@@ -272,7 +274,7 @@ function normalizeRoleCodesInput(rawValue: unknown): string[] {
   return [];
 }
 
-export function AppConfigView({ accessToken, branchId, warehouseId, cashRegisterId }: AppConfigViewProps) {
+export function AppConfigView({ accessToken, branchId, warehouseId, cashRegisterId, currentUserRoleCode, activeVerticalCode }: AppConfigViewProps) {
   const [modules, setModules] = useState<ModuleRow[]>([]);
   const [features, setFeatures] = useState<FeatureToggleRow[]>([]);
   const [limits, setLimits] = useState<OperationalLimitsResponse | null>(null);
@@ -303,6 +305,35 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const [verticalSettings, setVerticalSettings] = useState<CompanyVerticalSettingsResponse | null>(null);
   const [selectedVerticalCode, setSelectedVerticalCode] = useState('');
   const [activeTab, setActiveTab] = useState<'identidad' | 'plataforma' | 'modulos' | 'comercial'>('identidad');
+
+  const isAdminUser = useMemo(() => {
+    const roleCode = (currentUserRoleCode ?? '').trim().toUpperCase();
+    return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
+  }, [currentUserRoleCode]);
+
+  const isRetailVertical = useMemo(() => {
+    return String(activeVerticalCode ?? '').trim().toUpperCase() === 'RETAIL';
+  }, [activeVerticalCode]);
+
+  const adminManagedFeatureCodes = useMemo(
+    () =>
+      new Set([
+        'SALES_GLOBAL_DISCOUNT_ENABLED',
+        'SALES_ITEM_DISCOUNT_ENABLED',
+        'SALES_FREE_ITEMS_ENABLED',
+        'SALES_DETRACCION_ENABLED',
+        'SALES_RETENCION_ENABLED',
+        'SALES_PERCEPCION_ENABLED',
+        'PURCHASES_GLOBAL_DISCOUNT_ENABLED',
+        'PURCHASES_ITEM_DISCOUNT_ENABLED',
+        'PURCHASES_FREE_ITEMS_ENABLED',
+        'PURCHASES_DETRACCION_ENABLED',
+        'PURCHASES_RETENCION_COMPRADOR_ENABLED',
+        'PURCHASES_RETENCION_PROVEEDOR_ENABLED',
+        'PURCHASES_PERCEPCION_ENABLED',
+      ]),
+    []
+  );
 
   async function loadAppCfg() {
     setLoading(true);
@@ -437,7 +468,13 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     setMessage('');
 
     try {
-      const payload = commerceFeatures.map((row) => {
+      const payload = commerceFeatures
+        .filter((row) => {
+          const cat = featureCategoryByCode(row.feature_code);
+          // Never write back sales/purchases toggles from the tenant app — admin-only
+          return cat !== 'ventas' && cat !== 'compras';
+        })
+        .map((row) => {
         const feature_code = row.feature_code;
         const is_enabled = commerceFeaturesForm[feature_code] ?? false;
 
@@ -580,13 +617,35 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const groupedEditableFeatures = useMemo(() => {
     const grouped = new Map<FeatureCategory, CommerceSettingsFeature[]>();
     for (const row of editableFeatures) {
+      if (isRetailVertical && featureCategoryByCode(row.feature_code) === 'restaurante') {
+        continue;
+      }
       const category = featureCategoryByCode(row.feature_code);
       const current = grouped.get(category) ?? [];
       current.push(row);
       grouped.set(category, current);
     }
     return grouped;
-  }, [editableFeatures]);
+  }, [editableFeatures, isRetailVertical]);
+
+  const groupedReadonlyFeaturesFiltered = useMemo(() => {
+    const grouped = new Map<FeatureCategory, FeatureToggleRow[]>();
+    for (const row of readonlyFeatures) {
+      const category = featureCategoryByCode(row.feature_code);
+      if (isRetailVertical && category === 'restaurante') {
+        continue;
+      }
+      const current = grouped.get(category) ?? [];
+      current.push(row);
+      grouped.set(category, current);
+    }
+    return grouped;
+  }, [readonlyFeatures, isRetailVertical]);
+
+  const visibleFeatureCategoryMeta = useMemo(
+    () => FEATURE_CATEGORY_META.filter((meta) => !(isRetailVertical && meta.key === 'restaurante')),
+    [isRetailVertical]
+  );
 
   return (
     <section className="module-panel">
@@ -890,8 +949,8 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
             <div className="cfg-card">
               <h4 className="cfg-card-title">{UI_LABELS.featuresHeader}</h4>
               <div className="cfg-feature-groups">
-                {FEATURE_CATEGORY_META.map((meta) => {
-                  const readonlyItems = groupedReadonlyFeatures.get(meta.key) ?? [];
+                {visibleFeatureCategoryMeta.map((meta) => {
+                  const readonlyItems = groupedReadonlyFeaturesFiltered.get(meta.key) ?? [];
                   const editableItems = groupedEditableFeatures.get(meta.key) ?? [];
                   if (readonlyItems.length === 0 && editableItems.length === 0) {
                     return null;
@@ -931,41 +990,53 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                           </div>
                         ))}
 
-                        {editableItems.map((row) => (
-                          <div
-                            key={row.feature_code}
-                            className={`cfg-feature-card cfg-feature-card--editable${commerceFeaturesForm[row.feature_code] ? ' cfg-feature-card--on' : ''}`}
-                            title={row.feature_code}
-                          >
-                            <div className="cfg-feature-card__header">
-                              <span className="cfg-feature-card__name">{featureRowLabel(row)}</span>
-                              <label className="cfg-switch cfg-feature-card__switch">
-                                <input
-                                  type="checkbox"
-                                  checked={commerceFeaturesForm[row.feature_code] ?? false}
-                                  onChange={(e) =>
-                                    setCommerceFeaturesForm((prev) => ({ ...prev, [row.feature_code]: e.target.checked }))
-                                  }
-                                />
-                                <span className="cfg-switch__slider" />
-                              </label>
+                        {editableItems.map((row) => {
+                          const featureCat = featureCategoryByCode(row.feature_code);
+                          const isManagedByAdminPortal = featureCat === 'ventas' || featureCat === 'compras';
+                          const enabled = commerceFeaturesForm[row.feature_code] ?? false;
+
+                          return (
+                            <div
+                              key={row.feature_code}
+                              className={`cfg-feature-card cfg-feature-card--editable${enabled ? ' cfg-feature-card--on' : ''}`}
+                              title={row.feature_code}
+                            >
+                              <div className="cfg-feature-card__header">
+                                <span className="cfg-feature-card__name">{featureRowLabel(row)}</span>
+                                <label className="cfg-switch cfg-feature-card__switch">
+                                  <input
+                                    type="checkbox"
+                                    checked={enabled}
+                                    disabled={isManagedByAdminPortal}
+                                    onChange={(e) =>
+                                      setCommerceFeaturesForm((prev) => ({ ...prev, [row.feature_code]: e.target.checked }))
+                                    }
+                                  />
+                                  <span className="cfg-switch__slider" />
+                                </label>
+                              </div>
+                              <div className="cfg-feature-card__meta">
+                                <span className={verticalSourceBadgeClass(row.vertical_source)}>
+                                  {verticalSourceLabel(row.vertical_source)}
+                                </span>
+                                <span className={`cfg-feature-card__status${enabled ? ' on' : ''}`}>
+                                  {enabled ? 'Activo' : 'Inactivo'}
+                                </span>
+                                {isManagedByAdminPortal && <span className="cfg-feature-card__level">Gestionado en Admin por empresa</span>}
+                              </div>
                             </div>
-                            <div className="cfg-feature-card__meta">
-                              <span className={verticalSourceBadgeClass(row.vertical_source)}>
-                                {verticalSourceLabel(row.vertical_source)}
-                              </span>
-                              <span className={`cfg-feature-card__status${commerceFeaturesForm[row.feature_code] ? ' on' : ''}`}>
-                                {commerceFeaturesForm[row.feature_code] ? 'Activo' : 'Inactivo'}
-                              </span>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </section>
                   );
                 })}
               </div>
             </div>
+
+            <p className="notice" style={{ marginTop: '10px' }}>
+              Las reglas de ventas/compras sensibles se administran por empresa desde el portal Admin.
+            </p>
 
             {commerceFeatures.length > 0 && (
               <button type="submit" disabled={loading} style={{ marginTop: '10px' }}>

@@ -301,6 +301,14 @@ export type SalesLookups = {
     config?: unknown;
     vertical_source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null;
   }>;
+  company_profile?: {
+    tax_id: string | null;
+    legal_name: string;
+    trade_name: string | null;
+    address: string | null;
+    phone: string | null;
+    logo_url: string | null;
+  } | null;
 };
 
 export type SalesDraftItem = {

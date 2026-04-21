@@ -1,5 +1,6 @@
 import { fmtDateTimeFullLima, todayLima } from '../../../shared/utils/lima';
 import type { PurchasesLookups, StockEntryRow, StockEntryType } from '../types';
+import type { CompanyProfile } from '../../company/types';
 
 export type PurchaseEntryDraft = {
   key: string;
@@ -73,7 +74,20 @@ export function stockToneClass(stock: number): 'stock-chip--danger' | 'stock-chi
   return 'stock-chip--ok';
 }
 
-export function buildPurchaseDetailHtml(entry: StockEntryRow): string {
+export function buildPurchaseDetailHtml(
+  entry: StockEntryRow,
+  options?: { company?: Pick<CompanyProfile, 'tax_id' | 'legal_name' | 'trade_name' | 'address' | 'phone' | 'logo_url'> | null }
+): string {
+  const company = options?.company ?? null;
+  const companyName = String(company?.trade_name || company?.legal_name || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
+  const companyTaxId = String(company?.tax_id || '').trim();
+  const companyAddress = String(company?.address || '').trim();
+  const companyPhone = String(company?.phone || '').trim();
+  const logoUrl = String(company?.logo_url || '').trim();
+  const logoHtml = logoUrl
+    ? `<img src="${logoUrl}" alt="Logo" class="company-logo" />`
+    : `<div class="company-logo company-logo--placeholder">LOGO</div>`;
+
   const details = entry.items ?? [];
   const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
   const itemDiscountTotal = details.reduce((acc, item) => acc + Number(item.discount_total ?? 0), 0);
@@ -123,19 +137,16 @@ export function buildPurchaseDetailHtml(entry: StockEntryRow): string {
     tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
     tributaryRows.push(`<tr><td>Detraccion</td><td>${String(metadata.detraccion_service_code ?? '-')}: ${String(metadata.detraccion_service_name ?? '-')}</td></tr>`);
     tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.detraccion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.detraccion_amount ?? 0).toFixed(2)}</td></tr>`);
-    tributaryRows.push(`<tr><td>Cuenta</td><td>${String(metadata.detraccion_account_number ?? '-')} ${String(metadata.detraccion_bank_name ?? '')}</td></tr>`);
   }
   if (hasRetencion) {
     tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
     tributaryRows.push(`<tr><td>Retencion</td><td>${String(metadata.retencion_type_code ?? '-')}: ${String(metadata.retencion_type_name ?? '-')}</td></tr>`);
     tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.retencion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.retencion_amount ?? 0).toFixed(2)}</td></tr>`);
-    tributaryRows.push(`<tr><td>Cuenta</td><td>${String(metadata.retencion_account_number ?? '-')} ${String(metadata.retencion_bank_name ?? '')}</td></tr>`);
   }
   if (hasPercepcion) {
     tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
     tributaryRows.push(`<tr><td>Percepcion</td><td>${String(metadata.percepcion_type_code ?? '-')}: ${String(metadata.percepcion_type_name ?? '-')}</td></tr>`);
     tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.percepcion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.percepcion_amount ?? 0).toFixed(2)}</td></tr>`);
-    tributaryRows.push(`<tr><td>Cuenta</td><td>${String(metadata.percepcion_account_number ?? '-')} ${String(metadata.percepcion_bank_name ?? '')}</td></tr>`);
   }
 
   const tributaryHtml = tributaryRows.length > 0
@@ -201,6 +212,11 @@ export function buildPurchaseDetailHtml(entry: StockEntryRow): string {
     <style>
       body { font-family: Arial, sans-serif; margin: 16px; color: #0f172a; }
       h2 { margin: 0 0 6px; }
+      .header { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; margin-bottom: 10px; }
+      .company-logo { width: 92px; height: 92px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; display: block; }
+      .company-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
+      .company-name { margin: 0; font-size: 20px; line-height: 1.1; }
+      .company-kv { margin: 2px 0; font-size: 12px; color: #475569; }
       .meta { margin: 0 0 12px; color: #475569; font-size: 13px; }
       table { width: 100%; border-collapse: collapse; font-size: 13px; }
       th, td { border: 1px solid #cbd5e1; padding: 7px; vertical-align: top; }
@@ -212,6 +228,15 @@ export function buildPurchaseDetailHtml(entry: StockEntryRow): string {
     </style>
   </head>
   <body>
+    <section class="header">
+      ${logoHtml}
+      <article>
+        <h3 class="company-name">${companyName}</h3>
+        ${companyTaxId ? `<p class="company-kv">RUC: ${companyTaxId}</p>` : ''}
+        ${companyAddress ? `<p class="company-kv">${companyAddress}</p>` : ''}
+        ${companyPhone ? `<p class="company-kv">Tel: ${companyPhone}</p>` : ''}
+      </article>
+    </section>
     <h2>Detalle de compra #${entry.id}</h2>
     <p class="meta">
       Tipo: ${entryTypeLabel(entry.entry_type)} |

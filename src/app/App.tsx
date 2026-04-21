@@ -1,20 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { daysAgoLima, monthsAgoStartLima, todayLima, yearsAgoStartLima, limaDateParts } from '../shared/utils/lima';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
-import { fetchCompanyVerticalSettings, fetchOperationalContext } from '../modules/appcfg/api';
-import { AppConfigView } from '../modules/appcfg/components/AppConfigView';
-import { CashView } from '../modules/cash/components/CashView';
-import { CompanyConfigView } from '../modules/company/components/CompanyConfigView';
-import { CustomersView } from '../modules/customers/components/CustomersView';
+import { fetchHomeMetricsSummary, fetchOperationalContext } from '../modules/appcfg/api';
 import type { CompanyVerticalSettingsResponse, OperationalContextResponse } from '../modules/appcfg/types';
-import { RestaurantInventoryView } from '../modules/inventory/components/RestaurantInventoryView';
-import { RetailInventoryView } from '../modules/inventory/components/RetailInventoryView';
-import { MastersView } from '../modules/masters/components/MastersView';
-import { RestaurantMenuProductsView } from '../modules/products/components/RestaurantMenuProductsView';
-import { RestaurantSuppliesProductsView } from '../modules/products/components/RestaurantSuppliesProductsView';
-import { RetailProductsView } from '../modules/products/components/RetailProductsView';
 import quickAppcfgImg from '../assets/quickhome/icons/appcfg.png';
 import quickCashImg from '../assets/quickhome/icons/cash.png';
 import quickComandasImg from '../assets/quickhome/icons/comandas.png';
@@ -34,20 +23,6 @@ import quickRestaurantSuppliesImg from '../assets/quickhome/icons/restaurant-sup
 import quickSalesImg from '../assets/quickhome/icons/sales.png';
 import quickSunatExceptionsImg from '../assets/quickhome/icons/sunat-exceptions.png';
 import quickTablesImg from '../assets/quickhome/icons/tables.png';
-import { RestaurantPurchasesView } from '../modules/purchases/components/RestaurantPurchasesView';
-import { RetailPurchasesView } from '../modules/purchases/components/RetailPurchasesView';
-import { fetchPurchasesReport } from '../modules/purchases/api';
-import type { StockEntryRow } from '../modules/purchases/types';
-import { ReportsCenterView } from '../modules/reports/components/ReportsCenterView';
-import { ComandasView } from '../modules/restaurant/components/ComandasView';
-import { RestaurantOrderView } from '../modules/restaurant/components/RestaurantOrderView';
-import { TablesView } from '../modules/restaurant/components/TablesView';
-import { fetchCommercialDocuments, fetchSalesBootstrap } from '../modules/sales/api';
-import type { CommercialDocumentListItem } from '../modules/sales/types';
-import { SalesView } from '../modules/sales/components/SalesView';
-import { DailySummaryView } from '../modules/sales/components/DailySummaryView';
-import { GreGuidesView } from '../modules/sales/components/GreGuidesView';
-import { SunatExceptionsView } from '../modules/sales/components/SunatExceptionsView';
 import {
   clearAuthSession,
   loadAuthSession,
@@ -143,6 +118,11 @@ const BUSINESS_PULSE_EMPTY: BusinessPulseDataset = {
   MONTH: [],
   YEAR: [],
 };
+const BUSINESS_PULSE_CACHE_KEY = 'facturacion.businessPulseCache.v1';
+const BUSINESS_PULSE_CACHE_TTL_MS = 2 * 60 * 1000;
+const SALES_FLAGS_CACHE_KEY = 'facturacion.salesFlagsCache.v1';
+const SALES_FLAGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
 
 const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
   'restaurant-orders': quickRestaurantOrdersImg,
@@ -166,6 +146,29 @@ const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
 };
 
 const QUICK_ACCESS_GENERIC_IMAGE = quickGenericImg;
+
+const loadCashView = () => import('../modules/cash/components/CashView');
+const RestaurantOrderView = lazy(() => import('../modules/restaurant/components/RestaurantOrderView').then((m) => ({ default: m.RestaurantOrderView })));
+const ComandasView = lazy(() => import('../modules/restaurant/components/ComandasView').then((m) => ({ default: m.ComandasView })));
+const TablesView = lazy(() => import('../modules/restaurant/components/TablesView').then((m) => ({ default: m.TablesView })));
+const loadSalesView = () => import('../modules/sales/components/SalesView');
+const CashView = lazy(() => loadCashView().then((m) => ({ default: m.CashView })));
+const SalesView = lazy(() => loadSalesView().then((m) => ({ default: m.SalesView })));
+const DailySummaryView = lazy(() => import('../modules/sales/components/DailySummaryView').then((m) => ({ default: m.DailySummaryView })));
+const GreGuidesView = lazy(() => import('../modules/sales/components/GreGuidesView').then((m) => ({ default: m.GreGuidesView })));
+const SunatExceptionsView = lazy(() => import('../modules/sales/components/SunatExceptionsView').then((m) => ({ default: m.SunatExceptionsView })));
+const RestaurantInventoryView = lazy(() => import('../modules/inventory/components/RestaurantInventoryView').then((m) => ({ default: m.RestaurantInventoryView })));
+const RetailInventoryView = lazy(() => import('../modules/inventory/components/RetailInventoryView').then((m) => ({ default: m.RetailInventoryView })));
+const RestaurantPurchasesView = lazy(() => import('../modules/purchases/components/RestaurantPurchasesView').then((m) => ({ default: m.RestaurantPurchasesView })));
+const RetailPurchasesView = lazy(() => import('../modules/purchases/components/RetailPurchasesView').then((m) => ({ default: m.RetailPurchasesView })));
+const ReportsCenterView = lazy(() => import('../modules/reports/components/ReportsCenterView').then((m) => ({ default: m.ReportsCenterView })));
+const RetailProductsView = lazy(() => import('../modules/products/components/RetailProductsView').then((m) => ({ default: m.RetailProductsView })));
+const RestaurantMenuProductsView = lazy(() => import('../modules/products/components/RestaurantMenuProductsView').then((m) => ({ default: m.RestaurantMenuProductsView })));
+const RestaurantSuppliesProductsView = lazy(() => import('../modules/products/components/RestaurantSuppliesProductsView').then((m) => ({ default: m.RestaurantSuppliesProductsView })));
+const CustomersView = lazy(() => import('../modules/customers/components/CustomersView').then((m) => ({ default: m.CustomersView })));
+const MastersView = lazy(() => import('../modules/masters/components/MastersView').then((m) => ({ default: m.MastersView })));
+const AppConfigView = lazy(() => import('../modules/appcfg/components/AppConfigView').then((m) => ({ default: m.AppConfigView })));
+const CompanyConfigView = lazy(() => import('../modules/company/components/CompanyConfigView').then((m) => ({ default: m.CompanyConfigView })));
 
 const MENU_ITEMS: Array<{
   id: ModuleTab;
@@ -559,81 +562,39 @@ function resolveTenantAccessSlugFromPath(): string | null {
   }
 }
 
-// Date arithmetic — all Lima-aware via shared utility
-
-function parseAmount(value: unknown): number {
-  const num = typeof value === 'number' ? value : Number(value ?? 0);
-  return Number.isFinite(num) ? num : 0;
-}
-
-function keyByRange(dateValue: string, range: BusinessPulseRange): string {
-  const parts = limaDateParts(dateValue);
-  if (!parts) return '';
-
-  if (range === 'DAY') {
-    return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
-  }
-
-  if (range === 'MONTH') {
-    return `${parts.year}-${String(parts.month).padStart(2, '0')}`;
-  }
-
-  return `${parts.year}`;
-}
-
-function labelByRange(key: string, range: BusinessPulseRange): string {
-  if (range === 'YEAR') {
-    return key;
-  }
-
-  if (range === 'MONTH') {
-    const [year, month] = key.split('-').map((v) => Number(v));
-    const d = new Date(year, (month || 1) - 1, 1);
-    return d.toLocaleDateString('es-PE', { month: 'short', timeZone: 'America/Lima' }).replace('.', '');
-  }
-
-  const [year, month, day] = key.split('-').map((v) => Number(v));
-  const d = new Date(year, (month || 1) - 1, day || 1);
-  return d.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', timeZone: 'America/Lima' }).replace('.', '');
-}
-
-function aggregateBusinessPulse(
-  salesRows: CommercialDocumentListItem[],
-  purchaseRows: StockEntryRow[],
-  range: BusinessPulseRange,
-): BusinessPulsePoint[] {
-  const map = new Map<string, BusinessPulsePoint>();
-
-  salesRows.forEach((row) => {
-    const key = keyByRange(row.issue_at, range);
-    if (!key) return;
-
-    const current = map.get(key) ?? { label: key, sales: 0, purchases: 0 };
-    current.sales += parseAmount(row.total);
-    map.set(key, current);
-  });
-
-  purchaseRows.forEach((row) => {
-    const key = keyByRange(row.issue_at, range);
-    if (!key) return;
-
-    const current = map.get(key) ?? { label: key, sales: 0, purchases: 0 };
-    current.purchases += parseAmount(row.total_amount);
-    map.set(key, current);
-  });
-
-  return [...map.entries()]
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([key, value]) => ({
-      ...value,
-      label: labelByRange(key, range),
-      sales: Number(value.sales.toFixed(2)),
-      purchases: Number(value.purchases.toFixed(2)),
-    }));
-}
-
 function resolveQuickAccessImage(tabId: ModuleTab): string {
   return QUICK_ACCESS_IMAGES[tabId] ?? QUICK_ACCESS_GENERIC_IMAGE;
+}
+
+function resolveInitialActiveTab(): ModuleTab {
+  if (typeof window === 'undefined') {
+    return 'sales';
+  }
+
+  const saved = (window.localStorage.getItem(LAST_ACTIVE_TAB_STORAGE_KEY) ?? '').trim() as ModuleTab;
+  const allowed: ModuleTab[] = [
+    'home',
+    'cash',
+    'restaurant-orders',
+    'comandas',
+    'tables',
+    'sales',
+    'daily-summary',
+    'gre-guides',
+    'sunat-exceptions',
+    'inventory',
+    'purchases',
+    'reports',
+    'restaurant-menu',
+    'restaurant-supplies',
+    'products',
+    'customers',
+    'masters',
+    'appcfg',
+    'company',
+  ];
+
+  return allowed.includes(saved) ? saved : 'sales';
 }
 
 export function App() {
@@ -642,7 +603,7 @@ export function App() {
   const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession(authScope));
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ModuleTab>('home');
+  const [activeTab, setActiveTab] = useState<ModuleTab>(() => resolveInitialActiveTab());
   const [menuSearch, setMenuSearch] = useState('');
   const [context, setContext] = useState<OperationalContextResponse | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
@@ -666,6 +627,9 @@ export function App() {
     return saved === 'normal' ? 'normal' : 'compact';
   });
   const contentPanelRef = useRef<HTMLElement | null>(null);
+  const moduleExecutionRef = useRef<HTMLDivElement | null>(null);
+  const shouldScrollToModuleRef = useRef(false);
+  const hasHydratedOperationalContextRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -676,10 +640,72 @@ export function App() {
   }, [uiDensity]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(LAST_ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!shouldScrollToModuleRef.current) {
+      return;
+    }
+
+    if (!window.matchMedia('(max-width: 980px)').matches) {
+      shouldScrollToModuleRef.current = false;
+      return;
+    }
+
+    shouldScrollToModuleRef.current = false;
+
+    window.requestAnimationFrame(() => {
+      moduleExecutionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, [activeTab]);
+
+  useEffect(() => {
     return onAuthSessionChanged((nextSession) => {
       setSession(nextSession);
     }, authScope);
   }, [authScope]);
+
+  useEffect(() => {
+    if (!session?.accessToken) {
+      return;
+    }
+
+    const normalizedRoleCode = (session.user.role_code ?? '').toUpperCase();
+    const normalizedRoleProfile = (session.user.role_profile ?? '').toUpperCase();
+    const isAdmin = normalizedRoleCode.includes('ADMIN');
+    const isCashier = normalizedRoleProfile === 'CASHIER'
+      || normalizedRoleCode.includes('CAJA')
+      || normalizedRoleCode.includes('CAJER')
+      || normalizedRoleCode.includes('CASHIER');
+    const isSeller = normalizedRoleProfile === 'SELLER'
+      || normalizedRoleCode.includes('VENDED')
+      || normalizedRoleCode.includes('SELLER');
+
+    const preloadTimer = window.setTimeout(() => {
+      // Preload only operational core modules, without touching other module chunks.
+      const preloaders: Array<Promise<unknown>> = [loadSalesView()];
+      if (isAdmin || isCashier || !isSeller) {
+        preloaders.push(loadCashView());
+      }
+      void Promise.allSettled(preloaders);
+    }, 700);
+
+    return () => {
+      window.clearTimeout(preloadTimer);
+    };
+  }, [session?.accessToken, session?.user?.role_code, session?.user?.role_profile]);
 
   const fullName = useMemo(() => {
     if (!session?.user) {
@@ -876,83 +902,95 @@ export function App() {
       return;
     }
 
+    // Avoid heavy startup calls when the user is not on dashboard home.
+    if (activeTab !== 'home') {
+      setBusinessPulseLoading(false);
+      return;
+    }
+
     let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const cacheScope = `${session.user.company_id}:${selectedBranchId ?? 'ALL'}:${selectedWarehouseId ?? 'ALL'}`;
+    let cachedData: BusinessPulseDataset | null = null;
+
+    try {
+      if (typeof window !== 'undefined') {
+        const rawCache = window.localStorage.getItem(BUSINESS_PULSE_CACHE_KEY);
+        if (rawCache) {
+          const parsed = JSON.parse(rawCache) as {
+            scope?: string;
+            generatedAt?: number;
+            data?: BusinessPulseDataset;
+          };
+
+          const generatedAt = Number(parsed.generatedAt ?? 0);
+          const isFresh = Number.isFinite(generatedAt) && (Date.now() - generatedAt) <= BUSINESS_PULSE_CACHE_TTL_MS;
+          if (parsed.scope === cacheScope && parsed.data && isFresh) {
+            cachedData = {
+              DAY: parsed.data.DAY ?? [],
+              MONTH: parsed.data.MONTH ?? [],
+              YEAR: parsed.data.YEAR ?? [],
+            };
+            setBusinessPulseData(cachedData);
+
+            if ((cachedData[businessPulseRange] ?? []).length > 0) {
+              setBusinessPulseError(null);
+              setBusinessPulseLoading(false);
+              return;
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore cache parse issues and continue with network fetch.
+    }
 
     const loadBusinessPulse = async () => {
       setBusinessPulseLoading(true);
       setBusinessPulseError(null);
 
-      const dailyFrom = daysAgoLima(6);
-      const dailyTo = todayLima();
-      const monthlyFrom = monthsAgoStartLima(5);
-      const yearlyFrom = yearsAgoStartLima(2);
-
-      const fetchSalesRows = async (from: string, to: string): Promise<CommercialDocumentListItem[]> => {
-        const perPage = 100;
-        const maxPages = 4;
-        const rows: CommercialDocumentListItem[] = [];
-
-        for (let page = 1; page <= maxPages; page += 1) {
-          const response = await fetchCommercialDocuments(session.accessToken, {
-            branchId: selectedBranchId,
-            warehouseId: selectedWarehouseId,
-            issueDateFrom: from,
-            issueDateTo: to,
-            page,
-            perPage,
-          });
-
-          rows.push(...(response.data ?? []));
-          if (page >= (response.meta?.last_page ?? 1)) {
-            break;
-          }
-        }
-
-        return rows;
-      };
-
-      const fetchPurchaseRows = async (from: string, to: string): Promise<StockEntryRow[]> => {
-        const perPage = 100;
-        const maxPages = 4;
-        const rows: StockEntryRow[] = [];
-
-        for (let page = 1; page <= maxPages; page += 1) {
-          const response = await fetchPurchasesReport(session.accessToken, {
-            warehouseId: selectedWarehouseId,
-            dateFrom: from,
-            dateTo: to,
-            page,
-            perPage,
-          });
-
-          rows.push(...(response.data ?? []));
-          if (page >= (response.pagination?.total_pages ?? 1)) {
-            break;
-          }
-        }
-
-        return rows;
-      };
+      const rangeToLoad = businessPulseRange;
 
       try {
-        const [dailySales, dailyPurchases, monthlySales, monthlyPurchases, yearlySales, yearlyPurchases] = await Promise.all([
-          fetchSalesRows(dailyFrom, dailyTo),
-          fetchPurchaseRows(dailyFrom, dailyTo),
-          fetchSalesRows(monthlyFrom, dailyTo),
-          fetchPurchaseRows(monthlyFrom, dailyTo),
-          fetchSalesRows(yearlyFrom, dailyTo),
-          fetchPurchaseRows(yearlyFrom, dailyTo),
-        ]);
+        const response = await fetchHomeMetricsSummary(session.accessToken, {
+          range: rangeToLoad,
+          branchId: selectedBranchId,
+          warehouseId: selectedWarehouseId,
+        });
 
         if (cancelled) {
           return;
         }
 
-        setBusinessPulseData({
-          DAY: aggregateBusinessPulse(dailySales, dailyPurchases, 'DAY'),
-          MONTH: aggregateBusinessPulse(monthlySales, monthlyPurchases, 'MONTH'),
-          YEAR: aggregateBusinessPulse(yearlySales, yearlyPurchases, 'YEAR'),
-        });
+        const aggregatedRange = (response.points ?? []).map((row) => ({
+          label: String(row.label ?? ''),
+          sales: Number(row.sales ?? 0),
+          purchases: Number(row.purchases ?? 0),
+        }));
+
+        const nextData: BusinessPulseDataset = {
+          DAY: rangeToLoad === 'DAY' ? aggregatedRange : (cachedData?.DAY ?? []),
+          MONTH: rangeToLoad === 'MONTH' ? aggregatedRange : (cachedData?.MONTH ?? []),
+          YEAR: rangeToLoad === 'YEAR' ? aggregatedRange : (cachedData?.YEAR ?? []),
+        };
+
+        setBusinessPulseData(nextData);
+
+        try {
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(
+              BUSINESS_PULSE_CACHE_KEY,
+              JSON.stringify({
+                scope: cacheScope,
+                generatedAt: Date.now(),
+                data: nextData,
+              }),
+            );
+          }
+        } catch {
+          // Ignore localStorage write issues.
+        }
       } catch (error) {
         if (!cancelled) {
           setBusinessPulseError(error instanceof Error ? error.message : 'No se pudo cargar el pulso del negocio.');
@@ -964,29 +1002,24 @@ export function App() {
       }
     };
 
-    void loadBusinessPulse();
+    // Small delay to keep the UI responsive right after hard refresh.
+    timerId = setTimeout(() => {
+      if (!cancelled) {
+        void loadBusinessPulse();
+      }
+    }, 350);
 
     return () => {
       cancelled = true;
+      if (timerId) {
+        clearTimeout(timerId);
+      }
     };
-  }, [session?.accessToken, selectedBranchId, selectedWarehouseId]);
+  }, [session?.accessToken, session?.user?.company_id, selectedBranchId, selectedWarehouseId, activeTab, businessPulseRange]);
 
   function handleMenuTabSelect(nextTab: ModuleTab): void {
+    shouldScrollToModuleRef.current = true;
     setActiveTab(nextTab);
-
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    // On mobile/tablet, jump directly to module content after tapping a menu item.
-    if (window.matchMedia('(max-width: 980px)').matches) {
-      window.requestAnimationFrame(() => {
-        contentPanelRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        });
-      });
-    }
   }
 
   async function handleLogin(payload: LoginPayload): Promise<void> {
@@ -1072,6 +1105,8 @@ export function App() {
       setSelectedBranchId(nextBranchId);
       setSelectedWarehouseId(nextWarehouseId);
       setSelectedCashRegisterId(nextCashRegisterId);
+      setActiveVertical(nextContext.active_vertical ?? null);
+      hasHydratedOperationalContextRef.current = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar contexto operativo';
       setErrorMessage(message);
@@ -1083,12 +1118,24 @@ export function App() {
       return;
     }
 
+    hasHydratedOperationalContextRef.current = false;
+
     void loadOperationalContext(session.accessToken);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.accessToken]);
 
   useEffect(() => {
-    if (!session) {
+    if (!session || !context || !hasHydratedOperationalContextRef.current) {
+      return;
+    }
+
+    const currentContextBranchId =
+      context.selected.branch_id
+      ?? context.branches[0]?.id
+      ?? null;
+
+    // Skip redundant first reload after initial hydration.
+    if (selectedBranchId === currentContextBranchId) {
       return;
     }
 
@@ -1103,70 +1150,41 @@ export function App() {
 
   useEffect(() => {
     if (!session) {
-      setActiveVertical(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const settings = await fetchCompanyVerticalSettings(session.accessToken);
-        if (!cancelled) {
-          setActiveVertical(settings.active_vertical);
-        }
-      } catch {
-        if (!cancelled) {
-          setActiveVertical(null);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session]);
-
-  useEffect(() => {
-    if (!session) {
       setSalesFlowMode('DIRECT_CASHIER');
+      setTaxTraceabilityEnabled(false);
       return;
     }
 
-    let cancelled = false;
+    const cacheScope = `${session.user.company_id}:${selectedBranchId ?? 'ALL'}`;
 
-    void (async () => {
-      try {
-        const bootstrap = await fetchSalesBootstrap(session.accessToken, {
-          branchId: selectedBranchId,
-          includeDocuments: false,
-        });
-        const lookups = bootstrap.lookups;
+    try {
+      if (typeof window !== 'undefined') {
+        const raw = window.localStorage.getItem(SALES_FLAGS_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as {
+            scope?: string;
+            generatedAt?: number;
+            salesFlowMode?: SalesFlowMode;
+            taxTraceabilityEnabled?: boolean;
+          };
 
-        if (cancelled) {
-          return;
-        }
-
-        const isSeparatedMode = Boolean(
-          (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_SELLER_TO_CASHIER')?.is_enabled
-        );
-        const isTaxTraceabilityEnabled = Boolean(
-          (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_TAX_BRIDGE_DEBUG_VIEW')?.is_enabled
-        );
-
-        setSalesFlowMode(isSeparatedMode ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER');
-        setTaxTraceabilityEnabled(isTaxTraceabilityEnabled);
-      } catch {
-        if (!cancelled) {
-          setSalesFlowMode('DIRECT_CASHIER');
-          setTaxTraceabilityEnabled(false);
+          const generatedAt = Number(parsed.generatedAt ?? 0);
+          const isFresh = Number.isFinite(generatedAt) && (Date.now() - generatedAt) <= SALES_FLAGS_CACHE_TTL_MS;
+          if (parsed.scope === cacheScope && isFresh) {
+            setSalesFlowMode(parsed.salesFlowMode === 'SELLER_TO_CASHIER' ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER');
+            setTaxTraceabilityEnabled(Boolean(parsed.taxTraceabilityEnabled));
+            return undefined;
+          }
         }
       }
-    })();
+    } catch {
+      // Ignore cache parsing issues.
+    }
 
-    return () => {
-      cancelled = true;
-    };
+    // Cache miss: keep fast defaults and let module-level views resolve flags when needed.
+    setSalesFlowMode('DIRECT_CASHIER');
+    setTaxTraceabilityEnabled(false);
+    return undefined;
   }, [session, selectedBranchId]);
 
   useEffect(() => {
@@ -1595,143 +1613,151 @@ export function App() {
               </header>
               )}
 
-              {activeTab === 'home' && null}
-              {activeTab === 'cash' && (
-                <CashView
-                  accessToken={session.accessToken}
-                  cashRegisterId={selectedCashRegisterId}
-                />
-              )}
-              {activeTab === 'restaurant-orders' && (
-                <RestaurantOrderView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                />
-              )}
-              {activeTab === 'comandas' && (
-                <ComandasView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  cashRegisterId={selectedCashRegisterId}
-                />
-              )}
-              {activeTab === 'tables' && (
-                <TablesView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'sales' && (
-                <SalesView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  cashRegisterId={selectedCashRegisterId}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                  currentUserRoleCode={session.user.role_code ?? null}
-                  currentUserRoleProfile={session.user.role_profile ?? null}
-                />
-              )}
-              {activeTab === 'daily-summary' && (
-                <DailySummaryView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  traceabilityEnabled={taxTraceabilityEnabled}
-                />
-              )}
-              {activeTab === 'gre-guides' && (
-                <GreGuidesView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'sunat-exceptions' && (
-                <SunatExceptionsView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'inventory' && (
-                (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
-                  <RestaurantInventoryView
+              <div ref={moduleExecutionRef} aria-hidden="true" />
+
+              <Suspense fallback={<p className="notice" style={{ margin: 0 }}>Cargando modulo...</p>}>
+                {activeTab === 'home' && null}
+                {activeTab === 'cash' && (
+                  <CashView
                     accessToken={session.accessToken}
+                    cashRegisterId={selectedCashRegisterId}
+                  />
+                )}
+                {activeTab === 'restaurant-orders' && (
+                  <RestaurantOrderView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
                     warehouseId={selectedWarehouseId}
+                  />
+                )}
+                {activeTab === 'comandas' && (
+                  <ComandasView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
+                  />
+                )}
+                {activeTab === 'tables' && (
+                  <TablesView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                  />
+                )}
+                {activeTab === 'sales' && (
+                  <SalesView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                    currentUserRoleCode={session.user.role_code ?? null}
+                    currentUserRoleProfile={session.user.role_profile ?? null}
+                  />
+                )}
+                {activeTab === 'daily-summary' && (
+                  <DailySummaryView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    traceabilityEnabled={taxTraceabilityEnabled}
+                  />
+                )}
+                {activeTab === 'gre-guides' && (
+                  <GreGuidesView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    traceabilityEnabled={taxTraceabilityEnabled}
+                  />
+                )}
+                {activeTab === 'sunat-exceptions' && (
+                  <SunatExceptionsView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                  />
+                )}
+                {activeTab === 'inventory' && (
+                  (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
+                    <RestaurantInventoryView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                    />
+                  ) : (
+                    <RetailInventoryView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                    />
+                  )
+                )}
+                {activeTab === 'purchases' && (
+                  (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
+                    <RestaurantPurchasesView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                      canEditPurchaseEntries={canEditPurchaseEntries}
+                    />
+                  ) : (
+                    <RetailPurchasesView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                      canEditPurchaseEntries={canEditPurchaseEntries}
+                    />
+                  )
+                )}
+                {activeTab === 'reports' && (
+                  <ReportsCenterView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                  />
+                )}
+                {activeTab === 'products' && (
+                  <RetailProductsView
+                    accessToken={session.accessToken}
                     activeVerticalCode={activeVertical?.code ?? null}
                   />
-                ) : (
-                  <RetailInventoryView
+                )}
+                {activeTab === 'restaurant-menu' && (
+                  <RestaurantMenuProductsView
                     accessToken={session.accessToken}
-                    warehouseId={selectedWarehouseId}
                     activeVerticalCode={activeVertical?.code ?? null}
                   />
-                )
-              )}
-              {activeTab === 'purchases' && (
-                (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
-                  <RestaurantPurchasesView
+                )}
+                {activeTab === 'restaurant-supplies' && (
+                  <RestaurantSuppliesProductsView
                     accessToken={session.accessToken}
-                    warehouseId={selectedWarehouseId}
                     activeVerticalCode={activeVertical?.code ?? null}
-                    canEditPurchaseEntries={canEditPurchaseEntries}
                   />
-                ) : (
-                  <RetailPurchasesView
+                )}
+                {activeTab === 'customers' && (
+                  <CustomersView accessToken={session.accessToken} />
+                )}
+                {activeTab === 'masters' && (
+                  <MastersView
                     accessToken={session.accessToken}
+                    branchId={selectedBranchId}
                     warehouseId={selectedWarehouseId}
+                    currentUserRoleCode={session.user.role_code ?? null}
                     activeVerticalCode={activeVertical?.code ?? null}
-                    canEditPurchaseEntries={canEditPurchaseEntries}
                   />
-                )
-              )}
-              {activeTab === 'reports' && (
-                <ReportsCenterView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                />
-              )}
-              {activeTab === 'products' && (
-                <RetailProductsView
-                  accessToken={session.accessToken}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                />
-              )}
-              {activeTab === 'restaurant-menu' && (
-                <RestaurantMenuProductsView
-                  accessToken={session.accessToken}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                />
-              )}
-              {activeTab === 'restaurant-supplies' && (
-                <RestaurantSuppliesProductsView
-                  accessToken={session.accessToken}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                />
-              )}
-              {activeTab === 'customers' && (
-                <CustomersView accessToken={session.accessToken} />
-              )}
-              {activeTab === 'masters' && (
-                <MastersView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  currentUserRoleCode={session.user.role_code ?? null}
-                />
-              )}
-              {activeTab === 'appcfg' && (
-                <AppConfigView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  cashRegisterId={selectedCashRegisterId}
-                />
-              )}
-              {activeTab === 'company' && (
-                <CompanyConfigView accessToken={session.accessToken} />
-              )}
+                )}
+                {activeTab === 'appcfg' && (
+                  <AppConfigView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
+                    currentUserRoleCode={session.user.role_code ?? null}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                  />
+                )}
+                {activeTab === 'company' && (
+                  <CompanyConfigView accessToken={session.accessToken} />
+                )}
+              </Suspense>
             </section>
           </section>
         )}

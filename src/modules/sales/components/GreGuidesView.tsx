@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
+import { fmtDateTimeFullLima } from '../../../shared/utils/lima';
 import {
   cancelGreGuide,
   createGreGuide,
   fetchGreGuideDetail,
+  fetchGreTaxBridgeAuditAttemptDetail,
+  fetchGreTaxBridgeAuditHistory,
   fetchGreGuides,
   fetchGreLookups,
   fetchGrePrintHtml,
@@ -17,11 +20,14 @@ import {
   type GreGuidePayload,
   type GreGuideStatus,
   type GreUbigeoOption,
+  type TaxBridgeAuditAttempt,
+  type TaxBridgeAuditAttemptDetail,
 } from '../api/gre';
 
 type Props = {
   accessToken: string;
   branchId: number | null;
+  traceabilityEnabled?: boolean;
 };
 
 type Mode = 'create' | 'edit';
@@ -283,7 +289,56 @@ function buildBridgeAlertDetail(res: {
   return parts.length > 0 ? parts.join(' | ') : 'Sin detalle adicional del puente.';
 }
 
-export function GreGuidesView({ accessToken, branchId }: Props) {
+type SunatBridgeDebugState = {
+  guideId: number;
+  title: string;
+  loading: boolean;
+  error: string;
+  attempts: TaxBridgeAuditAttempt[];
+  selectedLogId: number | null;
+  loadingDetailLogId: number | null;
+  attemptDetails: Record<number, TaxBridgeAuditAttemptDetail | null | undefined>;
+};
+
+function formatDebugJson(value: unknown): string {
+  if (value === null || value === undefined) {
+    return 'null';
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      return '""';
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      return JSON.stringify(parsed, null, 2);
+    } catch {
+      return value;
+    }
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function sunatStatusLabel(status: string | null | undefined): string {
+  const normalized = String(status ?? '').trim().toUpperCase();
+
+  if (normalized === 'ACCEPTED' || normalized === 'ACEPTADO') return 'Aceptado';
+  if (normalized === 'REJECTED' || normalized === 'RECHAZADO') return 'Rechazado';
+  if (normalized === 'PENDING_CONFIRMATION' || normalized === 'PENDIENTE' || normalized === 'PENDIENTE_TICKET') return 'Pendiente';
+  if (normalized === 'ERROR') return 'Error';
+  if (normalized === '') return '-';
+
+  return normalized;
+}
+
+export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = false }: Props) {
   const [activeTab, setActiveTab] = useState<'editor' | 'emitted'>('editor');
   const [kpisOpen, setKpisOpen] = useState(true);
   const [prefillOpen, setPrefillOpen] = useState(false);
@@ -302,11 +357,12 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
   const [mode, setMode] = useState<Mode>('create');
   const [payload, setPayload] = useState<GreGuidePayload>({ ...EMPTY_PAYLOAD });
   const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
   const [lookups, setLookups] = useState<GreLookups>(DEFAULT_LOOKUPS);
 
   const [sunatToast, setSunatToast] = useState<{ tone: 'ok' | 'warn' | 'bad'; title: string; detail: string } | null>(null);
-  const [bridgeDebugGuide, setBridgeDebugGuide] = useState<GreGuide | null>(null);
+  const [sunatBridgeDebugState, setSunatBridgeDebugState] = useState<SunatBridgeDebugState | null>(null);
   const [rowActionLoading, setRowActionLoading] = useState<number | null>(null);
   const [autoSend, setAutoSend] = useState(false);
   const [printPreview, setPrintPreview] = useState<{ title: string; subtitle: string; html: string; variant: 'compact' | 'wide' } | null>(null);
@@ -316,11 +372,6 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
   const [ubigeoSearchLlegada, setUbigeoSearchLlegada] = useState('');
   const [ubigeoResultsPartida, setUbigeoResultsPartida] = useState<GreUbigeoOption[]>([]);
   const [ubigeoResultsLlegada, setUbigeoResultsLlegada] = useState<GreUbigeoOption[]>([]);
-
-  const canEdit = useMemo(() => {
-    if (!detail) return true;
-    return ['DRAFT', 'ERROR', 'REJECTED'].includes(detail.status);
-  }, [detail]);
 
   const isPublicTransport = payload.transport_mode_code === '01';
   const isPrivateTransport = payload.transport_mode_code === '02';
@@ -338,18 +389,20 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
     [prefillReference]
   );
 
-  const emittedRows = useMemo(() => {
-    if (status) {
-      return rows;
-    }
-
-    const nonDraft = rows.filter((row) => row.status !== 'DRAFT');
-    return nonDraft.length > 0 ? nonDraft : rows;
-  }, [rows, status]);
+  const emittedRows = useMemo(() => rows, [rows]);
 
   const taxBridgeRuntime = useMemo(() => {
     return (lookups.runtime_features ?? []).find((row) => row.feature_code === 'SALES_TAX_BRIDGE') ?? null;
   }, [lookups.runtime_features]);
+
+  const taxBridgeDebugRuntime = useMemo(() => {
+    return (lookups.runtime_features ?? []).find((row) => row.feature_code === 'SALES_TAX_BRIDGE_DEBUG_VIEW') ?? null;
+  }, [lookups.runtime_features]);
+
+  const canViewTaxBridgeDebug = Boolean(
+    taxBridgeRuntime?.is_enabled
+    && (traceabilityEnabled || taxBridgeDebugRuntime?.is_enabled)
+  );
 
   const loadList = () => {
     setLoading(true);
@@ -385,7 +438,7 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
   };
 
   const loadLookups = () => {
-    fetchGreLookups(accessToken)
+    fetchGreLookups(accessToken, { branchId })
       .then((res) => {
         setLookups({
           guide_types: res.guide_types.length > 0 ? res.guide_types : DEFAULT_LOOKUPS.guide_types,
@@ -393,6 +446,7 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
           transport_modes: res.transport_modes.length > 0 ? res.transport_modes : DEFAULT_LOOKUPS.transport_modes,
           document_types: res.document_types.length > 0 ? res.document_types : DEFAULT_LOOKUPS.document_types,
           series: res.series.length > 0 ? res.series : DEFAULT_LOOKUPS.series,
+          runtime_features: res.runtime_features ?? [],
         });
         const firstSeries = res.series[0]?.series;
         setPayload((prev) => ({ ...prev, series: firstSeries ?? prev.series }));
@@ -402,10 +456,95 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
       });
   };
 
+  const fileNameTimestampLima = () => {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Lima',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).formatToParts(new Date());
+
+    const pick = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+    return `${pick('year')}-${pick('month')}-${pick('day')}_${pick('hour')}-${pick('minute')}-${pick('second')}`;
+  };
+
+  const handleExportExcel = async () => {
+    setExporting(true);
+    setError('');
+
+    try {
+      const XLSX = await import('xlsx');
+
+      const perPage = 100;
+      const first = await fetchGreGuides(accessToken, {
+        page: 1,
+        per_page: perPage,
+        status: status || undefined,
+        issue_date: issueDate || undefined,
+        search: search || undefined,
+      });
+
+      const totalPages = Math.max(1, Number(first.meta.last_page || 1));
+      let allRows: Array<GreGuide & { item_count?: number }> = [...(first.data ?? [])];
+
+      for (let p = 2; p <= totalPages; p += 1) {
+        const next = await fetchGreGuides(accessToken, {
+          page: p,
+          per_page: perPage,
+          status: status || undefined,
+          issue_date: issueDate || undefined,
+          search: search || undefined,
+        });
+        allRows = allRows.concat(next.data ?? []);
+      }
+
+      if (allRows.length === 0) {
+        setActionMessage('No hay guias para exportar en Excel.');
+        return;
+      }
+
+      const rows = allRows.map((row) => {
+        const emittedAt = row.created_at ?? row.updated_at ?? row.issue_date;
+
+        return {
+          Guia: row.identifier,
+          FechaEmision: fmtDateTimeFullLima(emittedAt),
+          FechaTraslado: row.transfer_date ?? '',
+          EstadoInterno: row.status,
+          EstadoSUNAT: row.sunat_status ?? 'SIN_ENVIO',
+          Ticket: row.sunat_ticket ?? '',
+          CDRCodigo: row.sunat_cdr_code ?? '',
+          CDRDescripcion: row.sunat_cdr_desc ?? '',
+          Destinatario: row.destinatario?.name ?? '',
+          DestinatarioDocumento: row.destinatario?.doc_number ?? '',
+          PuntoPartida: row.punto_partida ?? '',
+          PuntoLlegada: row.punto_llegada ?? '',
+          PesoKg: Number(row.weight_kg ?? 0),
+          Bultos: Number(row.packages_count ?? 0),
+          Items: Number(row.item_count ?? row.items?.length ?? 0),
+        };
+      });
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, 'GuiasEmitidas');
+      XLSX.writeFile(wb, `gre_guias_emitidas_${fileNameTimestampLima()}.xlsx`);
+      setActionMessage(`Excel generado (${rows.length} guias).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo exportar las guias en Excel.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   useEffect(() => {
     loadLookups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken]);
+  }, [accessToken, branchId]);
 
   useEffect(() => {
     loadList();
@@ -639,11 +778,18 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
         setActionMessage(res.message);
         const id = res.data.id;
         setSelectedId(id);
+        setDetail(res.data);
         setMode('edit');
         setPayload(toPayload(res.data));
-        loadList();
         if (autoSend) {
           doSendById(id);
+        } else {
+          setStatus('');
+          setIssueDate('');
+          setSearch('');
+          setPage(1);
+          setActiveTab('emitted');
+          loadEmittedDefaults();
         }
       })
       .catch((err: Error) => setError(err.message))
@@ -677,23 +823,6 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
         setSunatToast({ tone: 'bad', title: 'GRE: Error de envio', detail: err.message });
       })
       .finally(() => setSaving(false));
-  };
-
-  const sendGuide = () => {
-    if (!selectedId) return;
-
-    const body: GreGuidePayload = {
-      ...payload,
-      branch_id: branchId,
-      items: payload.items.filter((row) => row.description.trim() !== '' && row.qty > 0),
-    };
-    const validationMessage = validatePayload(body);
-    if (validationMessage) {
-      setError(validationMessage);
-      return;
-    }
-
-    doSendById(selectedId);
   };
 
   const handleRowSend = (row: GreGuide & { item_count?: number }) => {
@@ -732,10 +861,132 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
       .finally(() => setRowActionLoading(null));
   };
 
-  const openBridgeDebug = (row: GreGuide & { item_count?: number }) => {
-    fetchGreGuideDetail(accessToken, row.id)
-      .then(setBridgeDebugGuide)
-      .catch(() => setBridgeDebugGuide(row as GreGuide));
+  const handleRowCancel = (row: GreGuide & { item_count?: number }) => {
+    if (rowActionLoading || row.status === 'CANCELLED') return;
+    const reason = window.prompt(`Motivo de anulacion para ${row.identifier}`);
+    if (!reason || reason.trim() === '') return;
+
+    setRowActionLoading(row.id);
+    cancelGreGuide(accessToken, row.id, reason.trim())
+      .then((res) => {
+        setSunatToast({ tone: 'warn', title: `GRE ${row.identifier}: Anulada`, detail: res.message });
+        loadEmittedDefaults();
+      })
+      .catch((err: Error) => setSunatToast({ tone: 'bad', title: `GRE ${row.identifier}: Error`, detail: err.message }))
+      .finally(() => setRowActionLoading(null));
+  };
+
+  const handleRowLoadEditor = (row: GreGuide & { item_count?: number }) => {
+    setSelectedId(row.id);
+    setMode('edit');
+    setActiveTab('editor');
+  };
+
+  const handleToggleSunatBridgeDebug = async (row: GreGuide & { item_count?: number }) => {
+    if (!canViewTaxBridgeDebug) {
+      return;
+    }
+
+    if (sunatBridgeDebugState?.guideId === row.id) {
+      setSunatBridgeDebugState(null);
+      return;
+    }
+
+    setSunatBridgeDebugState({
+      guideId: row.id,
+      title: row.identifier,
+      loading: true,
+      error: '',
+      attempts: [],
+      selectedLogId: null,
+      loadingDetailLogId: null,
+      attemptDetails: {},
+    });
+
+    try {
+      const history = await fetchGreTaxBridgeAuditHistory(accessToken, row.id, 50);
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.guideId !== row.id) {
+          return prev;
+        }
+
+        const firstLogId = history.logs.length > 0 ? history.logs[0].id : null;
+        return {
+          ...prev,
+          loading: false,
+          error: '',
+          attempts: history.logs,
+          selectedLogId: firstLogId,
+        };
+      });
+
+      if (history.logs.length > 0) {
+        await loadSunatAuditAttemptDetail(row.id, history.logs[0].id);
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo obtener el historico de intentos SUNAT';
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.guideId !== row.id) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          loading: false,
+          error: text,
+        };
+      });
+    }
+  };
+
+  const loadSunatAuditAttemptDetail = async (guideId: number, logId: number) => {
+    setSunatBridgeDebugState((prev) => {
+      if (!prev || prev.guideId !== guideId) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        selectedLogId: logId,
+        loadingDetailLogId: logId,
+        error: '',
+      };
+    });
+
+    try {
+      const detail = await fetchGreTaxBridgeAuditAttemptDetail(accessToken, logId);
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.guideId !== guideId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          loadingDetailLogId: null,
+          attemptDetails: {
+            ...prev.attemptDetails,
+            [logId]: detail,
+          },
+        };
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo cargar el detalle tecnico';
+      setSunatBridgeDebugState((prev) => {
+        if (!prev || prev.guideId !== guideId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          loadingDetailLogId: null,
+          error: text,
+          attemptDetails: {
+            ...prev.attemptDetails,
+            [logId]: null,
+          },
+        };
+      });
+    }
   };
 
   const openPrintPreview = (id: number, format: 'ticket' | 'a4', label: string) => {
@@ -751,46 +1002,17 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
       .catch((err: Error) => setError(err.message));
   };
 
-  const checkTicketStatus = () => {
-    if (!selectedId) return;
-    setSaving(true);
-    setError('');
-    setActionMessage('');
-    queryGreTicketStatus(accessToken, selectedId)
-      .then((res) => {
-        console.info('GRE ticket status response (editor)', res);
-        const detailText = [res.sunat_ticket, res.sunat_cdr_code, res.sunat_cdr_desc].filter(Boolean).join(' | ');
-        setActionMessage(`${res.label}${detailText ? ` | ${detailText}` : ''}`);
-        loadList();
-        return fetchGreGuideDetail(accessToken, selectedId).then(setDetail);
-      })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setSaving(false));
-  };
-
-  const cancelGuide = () => {
-    if (!selectedId) return;
-    const reason = window.prompt('Motivo de anulacion');
-    if (!reason || reason.trim() === '') return;
-
-    setSaving(true);
-    setError('');
-    setActionMessage('');
-    cancelGreGuide(accessToken, selectedId, reason.trim())
-      .then((res) => {
-        setActionMessage(res.message);
-        setDetail(res.data);
-        loadList();
-      })
-      .catch((err: Error) => setError(err.message))
-      .finally(() => setSaving(false));
-  };
-
   return (
     <div className="ds-root gre-root">
       <div className="gre-tabs">
-        <button className={`gre-tab-btn ${activeTab === 'editor' ? 'is-active' : ''}`} type="button" onClick={() => setActiveTab('editor')}>
-          Nueva Guia
+        <button
+          className={`gre-tab-btn ${activeTab === 'editor' ? 'is-active' : ''}`}
+          type="button"
+          onClick={onCreateNew}
+        >
+          {activeTab === 'editor' && mode === 'edit' && detail
+            ? `Editando ${detail.identifier}`
+            : 'Nueva Guia'}
         </button>
         <button
           className={`gre-tab-btn ${activeTab === 'emitted' ? 'is-active' : ''}`}
@@ -818,8 +1040,10 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
               <button className="ds-btn-secondary" type="button" onClick={() => setKpisOpen((v) => !v)}>
                 {kpisOpen ? 'Ocultar resumen' : 'Mostrar resumen'}
               </button>
+              <button className="ds-btn-secondary" type="button" onClick={() => void handleExportExcel()} disabled={exporting || loading}>
+                {exporting ? 'Exportando...' : 'Exportar Excel'}
+              </button>
               <button className="ds-btn-secondary" type="button" onClick={loadList}>Recargar</button>
-              <button className="ds-btn-primary" type="button" onClick={onCreateNew}>+ Nueva guia</button>
             </div>
           </div>
 
@@ -862,7 +1086,7 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
             />
             <input className="ds-input" type="date" value={issueDate} onChange={(e) => { setIssueDate(e.target.value); setPage(1); }} />
             <select className="ds-input" value={status} onChange={(e) => { setStatus(e.target.value as GreGuideStatus | ''); setPage(1); }}>
-              <option value="">Emitidas (SENT + ACCEPTED)</option>
+              <option value="">Todas</option>
               <option value="SENT">Enviadas</option>
               <option value="ACCEPTED">Aceptadas</option>
               <option value="REJECTED">Rechazadas</option>
@@ -873,7 +1097,7 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
           </div>
 
           <div className="gre-filter-chips">
-            <button className={`gre-chip ${status === '' ? 'is-active' : ''}`} type="button" onClick={() => { setStatus(''); setPage(1); }}>Emitidas</button>
+            <button className={`gre-chip ${status === '' ? 'is-active' : ''}`} type="button" onClick={() => { setStatus(''); setPage(1); }}>Todas</button>
             <button className={`gre-chip ${status === 'SENT' ? 'is-active' : ''}`} type="button" onClick={() => { setStatus('SENT'); setPage(1); }}>Enviadas</button>
             <button className={`gre-chip ${status === 'ACCEPTED' ? 'is-active' : ''}`} type="button" onClick={() => { setStatus('ACCEPTED'); setPage(1); }}>Aceptadas</button>
             <button className={`gre-chip ${status === 'REJECTED' ? 'is-active' : ''}`} type="button" onClick={() => { setStatus('REJECTED'); setPage(1); }}>Rechazadas</button>
@@ -931,6 +1155,7 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
                   </tr>
                 )}
                 {!loading && emittedRows.map((row) => {
+                  const emittedAt = row.created_at ?? row.updated_at ?? row.issue_date;
                   const sunatStatus = (row.sunat_status ?? 'SIN_ENVIO').toUpperCase();
                   const sunatBadgeClass =
                     sunatStatus === 'ACEPTADO'          ? 'is-ok' :
@@ -944,11 +1169,18 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
                     sunatStatus === 'SIN_ENVIO'         ? 'Sin envio' : sunatStatus;
                   const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status);
                   const canTicket = row.status === 'SENT' || (!!row.sunat_ticket && !['ACCEPTED', 'CANCELLED'].includes(row.status));
-                  const isLocked = !canSend && !canTicket;
+                  const canEditRow = !['ACCEPTED', 'CANCELLED'].includes(row.status);
                   return (
-                    <tr key={`emitted-${row.id}`}>
+                    <tr
+                      key={`emitted-${row.id}`}
+                      className={selectedId === row.id ? 'is-selected' : ''}
+                      onClick={() => {
+                        setSelectedId(row.id);
+                        setMode('edit');
+                      }}
+                    >
                       <td>{row.identifier}</td>
-                      <td>{row.issue_date}</td>
+                      <td title={String(emittedAt ?? '')}>{fmtDateTimeFullLima(emittedAt)}</td>
                       <td>{row.destinatario?.name ?? '-'}</td>
                       <td>
                         <span className={`gre-status-badge gre-status-badge--${row.status.toLowerCase()}`}>
@@ -977,7 +1209,8 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
                             className="btn-mini gre-icon-btn"
                             type="button"
                             title="Editar guia"
-                            onClick={() => { setSelectedId(row.id); setMode('edit'); setActiveTab('editor'); }}
+                            disabled={!canEditRow}
+                            onClick={() => handleRowLoadEditor(row)}
                           >
                             ✏️
                           </button>
@@ -987,9 +1220,49 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
                         <code style={{ fontSize: '0.7rem', wordBreak: 'break-all' }}>{row.sunat_ticket ?? '-'}</code>
                       </td>
                       <td>
-                        <details className={`gre-sunat-dropdown ${isLocked ? 'is-locked' : ''}`}>
-                          <summary className={`sales-sunat-badge ${sunatBadgeClass}`}>{sunatLabel}</summary>
-                          <div className="sales-sunat-dropdown-menu">
+                        <div className="sales-sunat-dropdown" onClick={(e) => e.stopPropagation()}>
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.28rem' }}>
+                            <button
+                              type="button"
+                              className={`sales-sunat-badge ${sunatBadgeClass}`}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                              }}
+                            >
+                              {sunatLabel}
+                            </button>
+                            {canViewTaxBridgeDebug && (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  void handleToggleSunatBridgeDebug(row);
+                                }}
+                                title="Ver historial de intentos SUNAT"
+                                style={{
+                                  width: '20px',
+                                  height: '20px',
+                                  borderRadius: '9999px',
+                                  border: sunatBridgeDebugState?.guideId === row.id ? '1px solid #0f766e' : '1px solid #cbd5e1',
+                                  background: sunatBridgeDebugState?.guideId === row.id ? '#ecfeff' : '#f8fafc',
+                                  color: '#0f172a',
+                                  fontSize: '0.66rem',
+                                  fontWeight: 700,
+                                  lineHeight: 1,
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                }}
+                              >
+                                i
+                              </button>
+                            )}
+                          </div>
+                          <div className="sales-sunat-dropdown-menu" onClick={(e) => e.stopPropagation()}>
                             {(row.sunat_ticket || row.sunat_cdr_code) && (
                               <>
                                 <p className="sunat-menu-section-label">Referencia</p>
@@ -1008,45 +1281,48 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
                                 <div className="sunat-menu-divider" />
                               </>
                             )}
-                            {canSend && (
-                              <>
-                                <p className="sunat-menu-section-label">Envio</p>
-                                <button
-                                  type="button"
-                                  className="sunat-menu-btn"
-                                  disabled={rowActionLoading === row.id}
-                                  onClick={() => handleRowSend(row)}
-                                >
-                                  <span className="sunat-menu-btn__icon">🚀</span>
-                                  <span className="sunat-menu-btn__text">{rowActionLoading === row.id ? 'Enviando...' : 'Enviar a SUNAT'}</span>
-                                </button>
-                              </>
-                            )}
-                            {canTicket && (
-                              <>
-                                <p className="sunat-menu-section-label">Consulta</p>
-                                <button
-                                  type="button"
-                                  className="sunat-menu-btn"
-                                  disabled={rowActionLoading === row.id}
-                                  onClick={() => handleRowTicket(row)}
-                                >
-                                  <span className="sunat-menu-btn__icon">🔍</span>
-                                  <span className="sunat-menu-btn__text">{rowActionLoading === row.id ? 'Consultando...' : 'Consultar Ticket'}</span>
-                                </button>
-                              </>
-                            )}
-                            {(canSend || canTicket) && <div className="sunat-menu-divider" />}
+
                             <button
                               type="button"
                               className="sunat-menu-btn"
-                              onClick={() => openBridgeDebug(row)}
+                              disabled={rowActionLoading === row.id || !canSend}
+                              onClick={() => handleRowSend(row)}
                             >
-                              <span className="sunat-menu-btn__icon">🔎</span>
-                              <span className="sunat-menu-btn__text">Ver puente / raw</span>
+                              <span className="sunat-menu-btn__icon">🚀</span>
+                              <span className="sunat-menu-btn__text">{rowActionLoading === row.id && canSend ? 'Enviando...' : 'Enviar SUNAT'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              className="sunat-menu-btn"
+                              disabled={rowActionLoading === row.id || !canTicket}
+                              onClick={() => handleRowTicket(row)}
+                            >
+                              <span className="sunat-menu-btn__icon">🔍</span>
+                              <span className="sunat-menu-btn__text">{rowActionLoading === row.id && canTicket ? 'Consultando...' : 'Consultar ticket'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              className="sunat-menu-btn sunat-menu-btn--danger"
+                              disabled={rowActionLoading === row.id || row.status === 'CANCELLED'}
+                              onClick={() => handleRowCancel(row)}
+                            >
+                              <span className="sunat-menu-btn__icon">⛔</span>
+                              <span className="sunat-menu-btn__text">Anular guia</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              className="sunat-menu-btn"
+                              disabled={rowActionLoading === row.id || !canEditRow}
+                              onClick={() => handleRowLoadEditor(row)}
+                            >
+                              <span className="sunat-menu-btn__icon">✏️</span>
+                              <span className="sunat-menu-btn__text">Cargar en editor</span>
                             </button>
                           </div>
-                        </details>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -1362,85 +1638,201 @@ export function GreGuidesView({ accessToken, branchId }: Props) {
 
           <div className="gre-actions-bar">
             <button className="ds-btn-primary" type="button" disabled={saving} onClick={saveForm}>{saving ? 'Guardando...' : 'Guardar'}</button>
-            <button className="ds-btn-secondary" type="button" disabled={!selectedId || !canEdit || saving} onClick={onEditSelected}>Cargar en editor</button>
-            <button className="ds-btn-secondary" type="button" disabled={!selectedId || saving} onClick={sendGuide}>Enviar SUNAT</button>
-            <button className="ds-btn-secondary" type="button" disabled={!selectedId || saving} onClick={checkTicketStatus}>Consultar ticket</button>
-            <button className="ds-btn-secondary" type="button" disabled={!selectedId || saving} onClick={cancelGuide}>Anular</button>
-            {selectedId && (
-              <>
-                <button className="ds-btn-secondary" type="button" onClick={() => openPrintPreview(selectedId, 'ticket', detail?.identifier ?? String(selectedId))}>🖨️ Ticket</button>
-                <button className="ds-btn-secondary" type="button" onClick={() => openPrintPreview(selectedId, 'a4', detail?.identifier ?? String(selectedId))}>📄 A4</button>
-              </>
-            )}
             <label className="gre-autosend-check">
               <input type="checkbox" checked={autoSend} onChange={(e) => setAutoSend(e.target.checked)} />
               Auto-enviar al guardar
             </label>
           </div>
 
-          {detail && (
-            <div className="gre-status-box">
-              <strong>Seguimiento SUNAT</strong>
-              <p><b>Ticket:</b> {detail.sunat_ticket ?? '—'}</p>
-              <p><b>CDR:</b> {detail.sunat_cdr_code ?? '—'} {detail.sunat_cdr_desc ? `| ${detail.sunat_cdr_desc}` : ''}</p>
-            </div>
-          )}
+
         </section>
       )}
 
-      {bridgeDebugGuide && (
-        <div className="gre-bridge-debug">
-          <div className="gre-bridge-debug-head">
-            <strong>Detalles SUNAT — {bridgeDebugGuide.identifier}</strong>
-            <button type="button" className="gre-bridge-debug-close" onClick={() => setBridgeDebugGuide(null)} aria-label="Cerrar">✕ Cerrar</button>
-          </div>
-          <div className="gre-bridge-debug-body">
-            <div className="gre-bridge-debug-grid">
+      {sunatBridgeDebugState && (
+        <>
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 3349,
+              background: 'rgba(15, 23, 42, 0.52)',
+            }}
+            onClick={() => setSunatBridgeDebugState(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                setSunatBridgeDebugState(null);
+              }
+            }}
+            style={{
+              position: 'fixed',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 3350,
+              width: 'min(1080px, 96vw)',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              background: '#ffffff',
+              border: '1px solid #dbe4f0',
+              borderRadius: '14px',
+              boxShadow: '0 28px 70px rgba(15, 23, 42, 0.42)',
+            }}
+          >
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid #e2e8f0', background: 'linear-gradient(120deg, #0f172a 0%, #0f766e 100%)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div>
-                <p className="gre-bridge-debug-label">Estado interno</p>
-                <span className={`gre-status-badge gre-status-badge--${bridgeDebugGuide.status.toLowerCase()}`}>{STATUS_LABEL[bridgeDebugGuide.status]}</span>
+                <h3 style={{ margin: 0, fontSize: '1rem' }}>Detalle tecnico SUNAT bridge</h3>
+                <p style={{ margin: '4px 0 0', opacity: 0.88, fontSize: '0.84rem' }}>{sunatBridgeDebugState.title}</p>
               </div>
-              <div>
-                <p className="gre-bridge-debug-label">Estado SUNAT</p>
-                <span>{bridgeDebugGuide.sunat_status ?? 'SIN_ENVIO'}</span>
-              </div>
-              <div>
-                <p className="gre-bridge-debug-label">Método puente</p>
-                <code>{bridgeDebugGuide.bridge_method ?? '—'}</code>
-              </div>
-              <div>
-                <p className="gre-bridge-debug-label">HTTP</p>
-                <span>{bridgeDebugGuide.bridge_http_code ?? '—'}</span>
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <p className="gre-bridge-debug-label">Endpoint</p>
-                <code className="gre-bridge-debug-endpoint">{normalizeGreBridgeEndpoint(bridgeDebugGuide.bridge_endpoint)}</code>
-              </div>
-              {bridgeDebugGuide.sunat_ticket && (
-                <div>
-                  <p className="gre-bridge-debug-label">Ticket SUNAT</p>
-                  <code>{bridgeDebugGuide.sunat_ticket}</code>
-                </div>
-              )}
-              {bridgeDebugGuide.sunat_cdr_code && (
-                <div>
-                  <p className="gre-bridge-debug-label">CDR / Descripción</p>
-                  <span>{bridgeDebugGuide.sunat_cdr_code} {bridgeDebugGuide.sunat_cdr_desc ?? ''}</span>
-                </div>
+              <button
+                type="button"
+                onClick={() => setSunatBridgeDebugState(null)}
+                style={{ border: '1px solid rgba(255,255,255,0.45)', background: 'rgba(15,23,42,0.2)', color: '#fff', borderRadius: '8px', padding: '6px 10px', cursor: 'pointer', fontWeight: 700 }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div style={{ padding: '14px 16px' }}>
+              {sunatBridgeDebugState.loading ? (
+                <p style={{ margin: 0, color: '#64748b' }}>Consultando trazabilidad tecnica del envio...</p>
+              ) : sunatBridgeDebugState.error ? (
+                <p style={{ margin: 0, color: '#dc2626' }}>{sunatBridgeDebugState.error}</p>
+              ) : sunatBridgeDebugState.attempts.length > 0 ? (
+                <>
+                  <div style={{ marginBottom: '0.8rem', color: '#334155', fontSize: '0.85rem' }}>
+                    Se encontraron {sunatBridgeDebugState.attempts.length} intento(s) para este comprobante.
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: 'minmax(260px, 0.95fr) 1.4fr', gap: '0.75rem' }}>
+                    <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                        Intentos del puente
+                      </header>
+                      <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+                        {sunatBridgeDebugState.attempts.map((attempt) => {
+                          const isSelected = sunatBridgeDebugState.selectedLogId === attempt.id;
+                          return (
+                            <button
+                              key={attempt.id}
+                              type="button"
+                              onClick={() => {
+                                const hasDetail = Object.prototype.hasOwnProperty.call(sunatBridgeDebugState.attemptDetails, attempt.id);
+                                if (!hasDetail) {
+                                  void loadSunatAuditAttemptDetail(sunatBridgeDebugState.guideId, attempt.id);
+                                  return;
+                                }
+
+                                setSunatBridgeDebugState((prev) => {
+                                  if (!prev) {
+                                    return prev;
+                                  }
+
+                                  return {
+                                    ...prev,
+                                    selectedLogId: attempt.id,
+                                  };
+                                });
+                              }}
+                              style={{
+                                width: '100%',
+                                textAlign: 'left',
+                                border: 'none',
+                                borderBottom: '1px solid #e2e8f0',
+                                background: isSelected ? '#ecfeff' : '#fff',
+                                padding: '10px',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.4rem' }}>
+                                <strong style={{ color: '#0f172a', fontSize: '0.8rem' }}>Intento #{attempt.attempt_number}</strong>
+                                <span style={{ fontSize: '0.72rem', color: '#334155' }}>{sunatStatusLabel(attempt.status)}</span>
+                              </div>
+                              <div style={{ marginTop: '0.25rem', color: '#64748b', fontSize: '0.74rem' }}>
+                                {attempt.sent_at ? fmtDateTimeFullLima(attempt.sent_at) : 'Sin fecha'}
+                              </div>
+                              <div style={{ marginTop: '0.22rem', color: '#475569', fontSize: '0.72rem' }}>
+                                {attempt.http_code ? `HTTP ${attempt.http_code}` : 'Sin HTTP'}
+                                {attempt.response_time_ms !== null && attempt.response_time_ms !== undefined ? ` · ${Number(attempt.response_time_ms).toFixed(2)} ms` : ''}
+                                {attempt.is_retry ? ' · Reintento' : ''}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+
+                    <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                      <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                        Detalle por intento
+                      </header>
+                      <div style={{ padding: '10px' }}>
+                        {sunatBridgeDebugState.selectedLogId === null ? (
+                          <p style={{ margin: 0, color: '#64748b' }}>Selecciona un intento para ver payload y respuesta.</p>
+                        ) : sunatBridgeDebugState.loadingDetailLogId === sunatBridgeDebugState.selectedLogId ? (
+                          <p style={{ margin: 0, color: '#64748b' }}>Cargando detalle del intento...</p>
+                        ) : !sunatBridgeDebugState.attemptDetails[sunatBridgeDebugState.selectedLogId] ? (
+                          <p style={{ margin: 0, color: '#b91c1c' }}>No se pudo cargar el detalle de este intento.</p>
+                        ) : (
+                          (() => {
+                            const detail = sunatBridgeDebugState.attemptDetails[sunatBridgeDebugState.selectedLogId!] as TaxBridgeAuditAttemptDetail;
+                            return (
+                              <>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.65rem', marginBottom: '0.9rem' }}>
+                                  <article><strong>Modo</strong><div>{detail.bridge.mode || '-'}</div></article>
+                                  <article><strong>Estado SUNAT</strong><div>{sunatStatusLabel(detail.sunat.status || '')}</div></article>
+                                  <article><strong>HTTP bridge</strong><div>{detail.response.status_code ? `HTTP ${detail.response.status_code}` : '-'}</div></article>
+                                  <article><strong>Ticket</strong><div>{detail.sunat.ticket || '-'}</div></article>
+                                  <article><strong>Código SUNAT</strong><div>{detail.sunat.code || '-'}</div></article>
+                                  <article><strong>SHA1 payload</strong><div>{detail.request.sha1 || '-'}</div></article>
+                                </div>
+
+                                <div style={{ marginBottom: '0.8rem', color: '#334155', fontSize: '0.85rem' }}>
+                                  <strong>Endpoint:</strong> {detail.bridge.method || 'POST'} {detail.bridge.endpoint || '-'}
+                                </div>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                  <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                    <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                                      Payload enviado
+                                    </header>
+                                    <pre style={{ margin: 0, padding: '10px', maxHeight: '36vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.75rem', lineHeight: 1.45 }}>
+                                      {formatDebugJson(detail.request.payload)}
+                                    </pre>
+                                  </section>
+
+                                  <section style={{ border: '1px solid #dbe4f0', borderRadius: '10px', overflow: 'hidden' }}>
+                                    <header style={{ padding: '8px 10px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', fontWeight: 700, color: '#0f172a', fontSize: '0.83rem' }}>
+                                      Respuesta del bridge
+                                    </header>
+                                    <pre style={{ margin: 0, padding: '10px', maxHeight: '36vh', overflow: 'auto', background: '#0b1220', color: '#e2e8f0', fontSize: '0.75rem', lineHeight: 1.45 }}>
+                                      {formatDebugJson(detail.response.body)}
+                                    </pre>
+                                  </section>
+                                </div>
+
+                                {(detail.error?.message || detail.sunat.message) && (
+                                  <p style={{ margin: '10px 0 0', color: '#b91c1c', fontWeight: 600 }}>
+                                    Detalle: {detail.error?.message || detail.sunat.message}
+                                  </p>
+                                )}
+                              </>
+                            );
+                          })()
+                        )}
+                      </div>
+                    </section>
+                  </div>
+                </>
+              ) : (
+                <p style={{ margin: 0, color: '#64748b' }}>No existe histórico de intentos para este comprobante.</p>
               )}
             </div>
-            <details className="gre-bridge-debug-details">
-              <summary>{isGreStatusBridgeMethod(bridgeDebugGuide.bridge_method)
-                ? 'Payload GRE status-ticket (empresa, cabecera.ticket)'
-                : 'Payload GRE oficial (empresa, cabecera, detalle)'}</summary>
-              <pre className="gre-bridge-debug-pre">{JSON.stringify(buildBridgePayloadPreview(bridgeDebugGuide, lookups), null, 2)}</pre>
-            </details>
-            <details open={!!bridgeDebugGuide.raw_response} className="gre-bridge-debug-details">
-              <summary>Respuesta del puente (ticket actual + raw_response)</summary>
-              <pre className="gre-bridge-debug-pre">{JSON.stringify(buildBridgeResponseView(bridgeDebugGuide), null, 2)}</pre>
-            </details>
           </div>
-        </div>
+        </>
       )}
 
       {printPreview && (

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiClient } from '../../../shared/api/client';
+import { fmtDateTimeFullLima } from '../../../shared/utils/lima';
 import './TaxBridgeAuditView.css';
 
 interface AuditLog {
@@ -297,7 +298,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
                     {log.attempt_number}
                     {log.is_retry && <span className="badge-retry">Reintento</span>}
                   </td>
-                  <td className="date">{new Date(log.sent_at).toLocaleString('es-PE')}</td>
+                  <td className="date">{fmtDateTimeFullLima(log.sent_at)}</td>
                   <td className="user">{log.initiated_by || 'Sistema'}</td>
                   <td className="actions">
                     <button
@@ -416,11 +417,11 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
                   </div>
                   <div className="info-row">
                     <label>Enviado</label>
-                    <time>{new Date(selectedLog.audit.sent_at).toLocaleString('es-PE')}</time>
+                    <time>{fmtDateTimeFullLima(selectedLog.audit.sent_at)}</time>
                   </div>
                   <div className="info-row">
                     <label>Recibido</label>
-                    <time>{selectedLog.audit.received_at ? new Date(selectedLog.audit.received_at).toLocaleString('es-PE') : 'N/A'}</time>
+                    <time>{selectedLog.audit.received_at ? fmtDateTimeFullLima(selectedLog.audit.received_at) : 'N/A'}</time>
                   </div>
                   <div className="info-row">
                     <label>Intento</label>

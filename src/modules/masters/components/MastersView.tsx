@@ -49,12 +49,13 @@ type MastersViewProps = {
   branchId: number | null;
   warehouseId: number | null;
   currentUserRoleCode: string | null;
+  activeVerticalCode: string | null;
 };
 
 type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'price-tier' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
 type CommerceCategoryTab = 'all' | 'documentos' | 'restaurante' | 'inventario' | 'ventas' | 'compras' | 'otros';
 
-const COMMERCE_CATEGORY_TABS: Array<{ id: CommerceCategoryTab; label: string }> = [
+const COMMERCE_CATEGORY_TABS_ALL: Array<{ id: CommerceCategoryTab; label: string }> = [
   { id: 'all', label: 'Todas' },
   { id: 'ventas', label: 'Ventas' },
   { id: 'compras', label: 'Compras' },
@@ -222,7 +223,7 @@ function isMasterAdvancedCommerceFeature(featureCode: string): boolean {
   ].includes(String(featureCode ?? '').toUpperCase());
 }
 
-export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode }: MastersViewProps) {
+export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode, activeVerticalCode }: MastersViewProps) {
   const [options, setOptions] = useState<MasterOptionsResponse | null>(null);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [cashRegisters, setCashRegisters] = useState<CashRegisterRow[]>([]);
@@ -482,6 +483,16 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     const roleCode = (currentUserRoleCode ?? '').trim().toUpperCase();
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
+
+  const isRetailVertical = useMemo(
+    () => String(activeVerticalCode ?? '').trim().toUpperCase() === 'RETAIL',
+    [activeVerticalCode]
+  );
+
+  const COMMERCE_CATEGORY_TABS = useMemo(
+    () => COMMERCE_CATEGORY_TABS_ALL.filter((tab) => !(isRetailVertical && tab.id === 'restaurante')),
+    [isRetailVertical]
+  );
 
   const canManagePriceTiers = isAdminUser;
 
@@ -780,7 +791,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     }
 
     if (activeSection === 'settings') {
-      settingsFormRef.current?.requestSubmit();
+      // Inventory settings are read-only; managed from Admin portal per company
       return;
     }
 
@@ -1861,9 +1872,12 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       {activeSection === 'settings' && inventorySettings && (
         <form ref={settingsFormRef} className="grid-form master-card" onSubmit={saveInventorySettings}>
           <h4>Configuracion de Inventario</h4>
+          <p className="notice" style={{ marginTop: 0, marginBottom: '10px' }}>
+            Esta configuracion se administra desde el portal Admin por empresa. Solo lectura.
+          </p>
           <label>
             Perfil de complejidad
-            <select value={inventorySettings.complexity_mode} onChange={(e) => setInventorySettings((prev) => {
+            <select value={inventorySettings.complexity_mode} disabled onChange={(e) => setInventorySettings((prev) => {
               if (!prev) return prev;
               const nextMode = e.target.value as InventorySettings['complexity_mode'];
               if (nextMode === 'BASIC') {
@@ -1895,24 +1909,24 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
           </label>
           <label>
             Modo inventario
-            <select value={inventorySettings.inventory_mode} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, inventory_mode: e.target.value as InventorySettings['inventory_mode'] } : prev)}>
+            <select value={inventorySettings.inventory_mode} disabled onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, inventory_mode: e.target.value as InventorySettings['inventory_mode'] } : prev)}>
               <option value="KARDEX_SIMPLE">KARDEX_SIMPLE</option>
               <option value="LOT_TRACKING">LOT_TRACKING</option>
             </select>
           </label>
           <label>
             Estrategia salida lote
-            <select value={inventorySettings.lot_outflow_strategy} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, lot_outflow_strategy: e.target.value as InventorySettings['lot_outflow_strategy'] } : prev)}>
+            <select value={inventorySettings.lot_outflow_strategy} disabled onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, lot_outflow_strategy: e.target.value as InventorySettings['lot_outflow_strategy'] } : prev)}>
               <option value="MANUAL">MANUAL</option>
               <option value="FIFO">FIFO</option>
               <option value="FEFO">FEFO</option>
             </select>
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_inventory_pro} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_inventory_pro: e.target.checked } : prev)} /> Habilitar Inventory Pro
+            <input type="checkbox" disabled checked={inventorySettings.enable_inventory_pro} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_inventory_pro: e.target.checked } : prev)} /> Habilitar Inventory Pro
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_lot_tracking} onChange={(e) => setInventorySettings((prev) => prev ? {
+            <input type="checkbox" disabled checked={inventorySettings.enable_lot_tracking} onChange={(e) => setInventorySettings((prev) => prev ? {
               ...prev,
               enable_lot_tracking: e.target.checked,
               inventory_mode: e.target.checked ? prev.inventory_mode : 'KARDEX_SIMPLE',
@@ -1921,13 +1935,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             } : prev)} /> Habilitar control por lotes
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_expiry_tracking} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_expiry_tracking: e.target.checked, enable_lot_tracking: e.target.checked ? true : prev.enable_lot_tracking } : prev)} /> Habilitar control de vencimiento
+            <input type="checkbox" disabled checked={inventorySettings.enable_expiry_tracking} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_expiry_tracking: e.target.checked, enable_lot_tracking: e.target.checked ? true : prev.enable_lot_tracking } : prev)} /> Habilitar control de vencimiento
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_advanced_reporting} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_advanced_reporting: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar reportes avanzados
+            <input type="checkbox" disabled checked={inventorySettings.enable_advanced_reporting} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_advanced_reporting: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar reportes avanzados
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? {
+            <input type="checkbox" disabled checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? {
               ...prev,
               enable_graphical_dashboard: e.target.checked,
               enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro,
@@ -1935,15 +1949,14 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             } : prev)} /> Habilitar dashboard grafico
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_location_control} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_location_control: e.target.checked } : prev)} /> Habilitar control por ubicacion
+            <input type="checkbox" disabled checked={inventorySettings.enable_location_control} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_location_control: e.target.checked } : prev)} /> Habilitar control por ubicacion
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.allow_negative_stock} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, allow_negative_stock: e.target.checked } : prev)} /> Permitir stock negativo
+            <input type="checkbox" disabled checked={inventorySettings.allow_negative_stock} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, allow_negative_stock: e.target.checked } : prev)} /> Permitir stock negativo
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enforce_lot_for_tracked} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enforce_lot_for_tracked: e.target.checked } : prev)} /> Exigir lote para tracking
+            <input type="checkbox" disabled checked={inventorySettings.enforce_lot_for_tracked} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enforce_lot_for_tracked: e.target.checked } : prev)} /> Exigir lote para tracking
           </label>
-          <button className="wide" type="submit">Guardar configuracion</button>
         </form>
       )}
 

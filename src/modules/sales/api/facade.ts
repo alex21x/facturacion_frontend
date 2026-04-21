@@ -3,7 +3,7 @@ export type { InventoryLotRow, InventoryProduct, InventoryStockRow } from '../..
 
 export async function fetchSalesInventoryProducts(
   accessToken: string,
-  params?: { search?: string; warehouseId?: number | null; status?: number | null }
+  params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number; autocomplete?: boolean }
 ) {
   return fetchInventoryProducts(accessToken, params);
 }

@@ -1,0 +1,169 @@
+/* Customers Module Styles */
+
+.customers-module {
+  border-color: #d4d0c5;
+  background: linear-gradient(180deg, #fcfcf9, #f4f3ed);
+}
+
+.customers-module-header {
+  margin-bottom: 8px;
+}
+
+.customers-module .entity-filters,
+.customers-module .entity-editor,
+.customers-module .form-card {
+  border: 1px solid #e4d8bc;
+  border-radius: 12px;
+  background: #fffdfa;
+  padding: 10px;
+}
+
+.customers-module .entity-filters {
+  margin-top: 8px;
+}
+
+.customers-module .entity-filters input,
+.customers-module .entity-filters select,
+.customers-module .entity-editor input,
+.customers-module .entity-editor select {
+  border: 1px solid #d6c6a5;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #4f463a;
+}
+
+.customers-module .entity-filters input:focus,
+.customers-module .entity-filters select:focus,
+.customers-module .entity-editor input:focus,
+.customers-module .entity-editor select:focus {
+  outline: none;
+  border-color: #c9b48a;
+  box-shadow: 0 0 0 3px rgba(201, 180, 138, 0.16);
+}
+
+.customers-module .entity-actions button,
+.customers-module .table-wrap button,
+.customers-module .module-header button {
+  border-radius: 999px;
+  border: 1px solid #d2cdbc;
+  background: linear-gradient(180deg, #f8f6ef, #efece1);
+  color: #5d574d;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.52), 0 2px 4px rgba(74, 69, 60, 0.05);
+}
+
+.customers-module .entity-actions button:hover:not(:disabled),
+.customers-module .table-wrap button:hover:not(:disabled),
+.customers-module .module-header button:hover:not(:disabled) {
+  background: linear-gradient(180deg, #f2efe5, #e8e3d6);
+  border-color: #c4bead;
+}
+
+.customers-module .table-wrap {
+  border: 1px solid #e4d8bc;
+  border-radius: 12px;
+  padding: 8px;
+  background: #fffdfa;
+}
+
+.customers-module .table-wrap > h4 {
+  color: #5c4f3b;
+  font-size: 0.9rem;
+}
+
+.customers-module .table-wrap table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid #e8deca;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.customers-module .table-wrap thead th {
+  background: #f6f1e6;
+  color: #665740;
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #e2d5bf;
+}
+
+.customers-module .table-wrap tbody td {
+  border-bottom: 1px solid #efe6d5;
+  color: #51493c;
+  vertical-align: middle;
+}
+
+.customers-module .table-wrap tbody tr:nth-child(even) {
+  background: #fcfaf4;
+}
+
+.customers-module .table-wrap tbody tr:hover {
+  background: #eef3ef;
+}
+
+/* Row Actions */
+.customers-row-action,
+.customers-row-action-edit,
+.customers-row-action-toggle {
+  min-height: 36px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: 1px solid;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.customers-row-action svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2;
+}
+
+.customers-row-action:hover:not(:disabled),
+.customers-row-action-edit:hover:not(:disabled),
+.customers-row-action-toggle:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.customers-row-action-edit {
+  border-color: #a8d5c4;
+  background: linear-gradient(135deg, #e5f7f2, #d8ebe2);
+  color: #2d7a6f;
+}
+
+.customers-row-action-edit:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d0f1e5, #c0dfd2);
+  border-color: #8bc4b0;
+}
+
+.customers-row-action-toggle.is-danger {
+  border-color: #d4876f;
+  background: linear-gradient(135deg, #f5d5ce, #ead4ca);
+  color: #8b4a36;
+}
+
+.customers-row-action-toggle.is-danger:hover:not(:disabled) {
+  background: linear-gradient(135deg, #efc7b9, #e0c1a8);
+  border-color: #c96b52;
+}
+
+.customers-row-action-toggle.is-ok {
+  border-color: #a8d5b8;
+  background: linear-gradient(135deg, #e8f5ed, #dceee5);
+  color: #2d6b47;
+}
+
+.customers-row-action-toggle.is-ok:hover:not(:disabled) {
+  background: linear-gradient(135deg, #d8f0e0, #c8e4d0);
+  border-color: #88c196;
+}

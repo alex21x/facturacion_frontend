@@ -98,6 +98,24 @@ export type OperationalContextResponse = {
   };
 };
 
+export type HomeMetricsSummaryPoint = {
+  key: string;
+  label: string;
+  sales: number;
+  purchases: number;
+};
+
+export type HomeMetricsSummaryResponse = {
+  range: 'DAY' | 'MONTH' | 'YEAR';
+  from: string;
+  to: string;
+  points: HomeMetricsSummaryPoint[];
+  totals: {
+    sales: number;
+    purchases: number;
+  };
+};
+
 export type OperationalLimitsResponse = {
   company_id: number;
   platform_limits: PlatformLimits;
@@ -330,4 +348,49 @@ export type ResetAdminPasswordResponse = {
   email: string | null;
   new_password: string;
   message: string;
+};
+
+// ---- Admin commerce features matrix ----
+
+export type CompanyCommerceAdminMatrixCompany = {
+  company_id: number;
+  tax_id: string | null;
+  legal_name: string;
+  trade_name: string | null;
+  company_status: number;
+  features: Record<string, boolean>;
+};
+
+export type CompanyCommerceAdminMatrixResponse = {
+  feature_codes: string[];
+  companies: CompanyCommerceAdminMatrixCompany[];
+};
+
+// ---- Admin inventory settings matrix ----
+
+export type InventorySettingsRecord = {
+  complexity_mode: 'BASIC' | 'ADVANCED';
+  inventory_mode: 'KARDEX_SIMPLE' | 'LOT_TRACKING';
+  lot_outflow_strategy: 'MANUAL' | 'FIFO' | 'FEFO';
+  enable_inventory_pro: boolean;
+  enable_lot_tracking: boolean;
+  enable_expiry_tracking: boolean;
+  enable_advanced_reporting: boolean;
+  enable_graphical_dashboard: boolean;
+  enable_location_control: boolean;
+  allow_negative_stock: boolean;
+  enforce_lot_for_tracked: boolean;
+};
+
+export type CompanyInventorySettingsAdminMatrixCompany = {
+  company_id: number;
+  tax_id: string | null;
+  legal_name: string;
+  trade_name: string | null;
+  company_status: number;
+  inventory_settings: InventorySettingsRecord;
+};
+
+export type CompanyInventorySettingsAdminMatrixResponse = {
+  companies: CompanyInventorySettingsAdminMatrixCompany[];
 };

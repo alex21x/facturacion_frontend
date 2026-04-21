@@ -45,6 +45,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoCacheBuster, setLogoCacheBuster] = useState<number>(Date.now());
 
   // Certificado digital
   const [certFile, setCertFile] = useState<File | null>(null);
@@ -82,6 +83,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     try {
       const p = await fetchCompanyProfile(accessToken);
       setProfile(p);
+      setLogoCacheBuster(Date.now());
       populateForm(p);
     } catch (e) {
       setIsError(true);
@@ -190,6 +192,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
       setMessage(res.message);
       setLogoFile(null);
       setLogoPreview(null);
+      setLogoCacheBuster(Date.now());
       await loadProfile();
     } catch (e) {
       setIsError(true);
@@ -589,7 +592,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
               {profile?.logo_url && (
                 <div className="companycfg-image-block">
                   <p className="companycfg-muted">Logo actual:</p>
-                  <img src={profile.logo_url} alt="Logo empresa" className="companycfg-logo-preview" />
+                  <img src={`${profile.logo_url}${profile.logo_url.includes('?') ? '&' : '?'}v=${logoCacheBuster}`} alt="Logo empresa" className="companycfg-logo-preview" />
                 </div>
               )}
               {logoPreview && (
@@ -603,7 +606,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                   Seleccionar imagen (JPG, PNG, GIF, WEBP — max 2 MB)
                   <input
                     type="file"
-                    accept="image/jpeg,image/png,image/gif,image/webp"
+                    accept="image/jpeg,image/jpg,image/pjpeg,image/jfif,image/png,image/gif,image/webp"
                     onChange={handleLogoChange}
                   />
                 </label>
