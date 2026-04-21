@@ -1509,7 +1509,7 @@ export function PurchasesView({
   }
 
   return (
-    <section className="module-panel">
+    <section className="module-panel purchases-module">
       <div className="module-header">
         <h3>{isRestaurant ? 'Compras de Insumos' : 'Compras, Ordenes e Ingresos'}</h3>
         <button type="button" onClick={() => void loadData()} disabled={isLoading || isSubmitting}>
@@ -1565,7 +1565,7 @@ export function PurchasesView({
           </label>
 
           <label className="with-suggest purchases-field-supplier" onBlur={handleSupplierSuggestBlur}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
+            <div className="purchases-supplier-head">
               <span>Proveedor / RUC</span>
               <button
                 type="button"

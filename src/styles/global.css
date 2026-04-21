@@ -5758,6 +5758,195 @@ th {
   }
 }
 
+/* ============================================================
+   PURCHASES - MOBILE/TABLET (<=900px)
+   ============================================================ */
+@media (max-width: 900px) {
+  .purchases-module {
+    padding: 8px;
+  }
+
+  .purchases-module .module-header {
+    gap: 8px;
+  }
+
+  .purchases-module .module-header h3 {
+    font-size: 1rem;
+    line-height: 1.2;
+  }
+
+  .purchases-module .workspace-mode-switch {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .purchases-module .workspace-mode-switch .mode-btn {
+    width: 100%;
+    min-height: 36px;
+    border-radius: 10px;
+    text-align: left;
+    padding: 7px 10px;
+    font-size: 0.82rem;
+  }
+
+  .purchases-grid-head {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+
+  .purchases-grid-head .purchases-field-entry-type,
+  .purchases-grid-head .purchases-field-reference,
+  .purchases-grid-head .purchases-field-supplier,
+  .purchases-grid-head .purchases-field-supplier-address,
+  .purchases-grid-head .purchases-field-payment,
+  .purchases-grid-head .purchases-field-entry-date,
+  .purchases-grid-head .purchases-field-due-date,
+  .purchases-grid-head .purchases-field-item-type {
+    grid-column: 1 / -1 !important;
+    min-width: 0;
+  }
+
+  .purchases-grid-head label {
+    min-width: 0;
+  }
+
+  .purchases-grid-head input,
+  .purchases-grid-head select {
+    width: 100%;
+    min-height: 38px;
+    font-size: 0.86rem;
+  }
+
+  .purchases-supplier-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 4px;
+  }
+
+  .purchases-supplier-head .btn-mini {
+    min-height: 34px;
+    font-size: 0.74rem;
+    padding: 6px 10px;
+  }
+
+  .purchases-entry-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 7px;
+    border: 1px solid #e5decf;
+    border-radius: 12px;
+    background: #fff;
+    padding: 8px;
+  }
+
+  .purchases-entry-row .sales-field-product,
+  .purchases-entry-row .purchases-field-dates,
+  .purchases-entry-row .sales-field-igv,
+  .purchases-entry-row .purchases-field-note,
+  .purchases-entry-row .sales-field-action {
+    grid-column: 1 / -1 !important;
+  }
+
+  .purchases-entry-row .sales-field-qty,
+  .purchases-entry-row .sales-field-price,
+  .purchases-entry-row .sales-field-lot,
+  .purchases-entry-row .sales-field-inline-discount,
+  .purchases-entry-row .sales-field-inline-toggle {
+    grid-column: span 1 !important;
+  }
+
+  .purchases-entry-row .sales-field-action {
+    justify-content: stretch;
+  }
+
+  .purchases-entry-row .sales-field-action button {
+    width: 100%;
+    max-width: none;
+    min-height: 44px;
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+
+  .purchases-entry-row label,
+  .purchases-field-dates > span,
+  .purchases-dates-trigger {
+    font-size: 0.76rem;
+  }
+
+  .purchases-entry-row input,
+  .purchases-entry-row select,
+  .purchases-entry-row .purchases-dates-trigger {
+    height: 36px;
+    min-height: 36px;
+    font-size: 0.84rem;
+    border-radius: 10px;
+  }
+
+  .purchases-dates-popover {
+    width: min(280px, calc(100vw - 32px));
+    right: 0;
+  }
+
+  .purchases-lines-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .purchases-lines-wrap table {
+    min-width: 860px;
+  }
+}
+
+@media (max-width: 640px) {
+  .purchases-module {
+    padding: 6px;
+  }
+
+  .purchases-module .workspace-mode-switch .mode-btn {
+    min-height: 38px;
+    font-size: 0.8rem;
+  }
+
+  .purchases-entry-row {
+    grid-template-columns: 1fr !important;
+    gap: 6px;
+    padding: 7px;
+  }
+
+  .purchases-entry-row .sales-field-product,
+  .purchases-entry-row .sales-field-qty,
+  .purchases-entry-row .sales-field-price,
+  .purchases-entry-row .sales-field-lot,
+  .purchases-entry-row .purchases-field-dates,
+  .purchases-entry-row .sales-field-igv,
+  .purchases-entry-row .purchases-field-note,
+  .purchases-entry-row .sales-field-inline-discount,
+  .purchases-entry-row .sales-field-inline-toggle,
+  .purchases-entry-row .sales-field-action {
+    grid-column: 1 / -1 !important;
+  }
+
+  .purchases-entry-row label,
+  .purchases-field-dates > span {
+    font-size: 0.72rem;
+  }
+
+  .purchases-entry-row input,
+  .purchases-entry-row select,
+  .purchases-entry-row .purchases-dates-trigger {
+    height: 34px;
+    min-height: 34px;
+    font-size: 0.82rem;
+  }
+
+  .purchases-supplier-head .btn-mini {
+    width: 100%;
+  }
+}
+
 @media (max-width: 1200px) {
   .workspace-panel {
     grid-template-columns: 1fr;
@@ -7548,167 +7737,243 @@ th {
 .gre-list-header span {
   font-size: 0.74rem;
   color: #6a655d;
-
-  /* ============================================================
-     VENTAS — MOBILE (≤640px)
-     Optimiza el formulario de items y el panel de totales
-     para pantallas de teléfono.
-     ============================================================ */
-  @media (max-width: 640px) {
-
-    /* 1. Reordenar: panel de montos arriba, form de items abajo */
-    .sales-concepts-shell {
-      display: flex;
-      flex-direction: column;
-    }
-
-    .sales-concepts-side {
-      order: -1;
-      position: static;
-    }
-
-    /* 2. Panel de montos más compacto: fila horizontal */
-    .sales-summary {
-      grid-template-columns: repeat(3, 1fr);
-      gap: 4px;
-    }
-
-    .sales-summary article {
-      padding: 6px 8px;
-      border-radius: 8px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      text-align: center;
-    }
-
-    .sales-summary span {
-      font-size: 0.65rem;
-    }
-
-    .sales-summary strong {
-      font-size: 0.88rem;
-      margin-top: 2px;
-    }
-
-    /* Resumen tributario compacto */
-    .sales-tax-preview {
-      padding: 6px 8px;
-    }
-
-    .sales-tax-preview-grid article {
-      padding: 3px 0;
-    }
-
-    /* Botón emitir — grande y fácil de tocar */
-    .sales-concepts-side > button,
-    .sales-concepts-side form > button[type="submit"],
-    .sales-concepts-side .sales-emit-actions button {
-      width: 100%;
-      min-height: 48px;
-      font-size: 1rem;
-      font-weight: 700;
-      border-radius: 12px;
-      margin-top: 8px;
-    }
-
-    /* Ocultar atajos de teclado en móvil */
-    .shortcut-hint {
-      display: none;
-    }
-
-    /* Ocultar live caption */
-    .sales-live-caption {
-      display: none;
-    }
-
-    /* Header de sección más compacto */
-    .sales-section-head p {
-      display: none;
-    }
-
-    /* 3. Fila de items — 2 columnas en móvil */
-    .sales-grid-row-item {
-      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    }
-
-    .sales-grid-row-item .sales-field-product {
-      grid-column: 1 / -1 !important;
-    }
-
-    .sales-grid-row-item .sales-field-unit,
-    .sales-grid-row-item .sales-field-lot {
-      grid-column: span 1 !important;
-    }
-
-    .sales-grid-row-item.tax-on .sales-field-qty,
-    .sales-grid-row-item.tax-off .sales-field-qty {
-      grid-column: span 1 !important;
-    }
-
-    .sales-grid-row-item.tax-on .sales-field-igv {
-      grid-column: 1 / -1 !important;
-    }
-
-    .sales-grid-row-item.tax-on .sales-field-price,
-    .sales-grid-row-item.tax-off .sales-field-price {
-      grid-column: span 1 !important;
-    }
-
-    .sales-grid-row-item.tax-on .sales-field-inline-discount,
-    .sales-grid-row-item.tax-off .sales-field-inline-discount {
-      grid-column: span 1 !important;
-    }
-
-    .sales-grid-row-item.tax-on .sales-field-inline-toggle,
-    .sales-grid-row-item.tax-off .sales-field-inline-toggle {
-      grid-column: 1 / -1 !important;
-    }
-
-    .sales-grid-row-item .sales-field-action,
-    .sales-grid-row-item.tax-on .sales-field-action,
-    .sales-grid-row-item.tax-off .sales-field-action {
-      grid-column: 1 / -1 !important;
-      justify-content: stretch;
-    }
-
-    /* Botón "Agregar item" full-width y prominente */
-    .sales-field-action button {
-      max-width: none;
-      min-height: 44px;
-      font-size: 0.95rem;
-      font-weight: 700;
-      border-radius: 10px;
-    }
-
-    /* Precio hint más pequeño */
-    .sales-price-hint {
-      font-size: 0.72rem;
-    }
-
-    /* Botón stock toggle más legible */
-    .sales-stock-toggle-inline {
-      font-size: 0.8rem;
-    }
-
-    /* Tabla del carrito: permitir scroll horizontal */
-    .sales-cart-table-scroll {
-      overflow-x: auto;
-      -webkit-overflow-scrolling: touch;
-    }
-
-    /* Panel de montos sticky en la parte superior mientras el usuario scrollea el form */
-    .sales-concepts-side {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      background: #fdfcf9;
-      padding-bottom: 6px;
-      border-bottom: 1px solid #e8e4d9;
-      margin-bottom: 8px;
-    }
-  }
   font-weight: 700;
+}
+
+/* ============================================================
+   SALES - MOBILE/TABLET (<=900px)
+   ============================================================ */
+@media (max-width: 900px) {
+  .sales-concepts-shell {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .sales-concepts-main {
+    background: #fffdf8;
+    border: 1px solid #e7decd;
+    border-radius: 12px;
+    padding: 8px;
+  }
+
+  .sales-concepts-side {
+    order: 2;
+    position: static;
+    align-self: stretch;
+    width: 100%;
+    max-width: none;
+    box-sizing: border-box;
+    background: #fdfcf9;
+    border: 1px solid #e5ded0;
+    border-radius: 12px;
+    padding: 10px;
+    margin-top: 10px;
+  }
+
+  .sales-section-head {
+    display: block;
+  }
+
+  .sales-section-head h4 {
+    font-size: 0.86rem;
+    line-height: 1.2;
+  }
+
+  .sales-section-head p,
+  .sales-live-caption {
+    font-size: 0.7rem;
+    line-height: 1.25;
+  }
+
+  .sales-grid-row-item {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px;
+    border: 1px solid #e4ddcf;
+    border-radius: 10px;
+    background: #fff;
+    padding: 8px;
+  }
+
+  .sales-grid-row-item .sales-field-product,
+  .sales-grid-row-item.tax-on .sales-field-igv,
+  .sales-grid-row-item.tax-on .sales-field-inline-toggle,
+  .sales-grid-row-item.tax-off .sales-field-inline-toggle,
+  .sales-grid-row-item .sales-field-action,
+  .sales-grid-row-item.tax-on .sales-field-action,
+  .sales-grid-row-item.tax-off .sales-field-action {
+    grid-column: 1 / -1 !important;
+  }
+
+  .sales-grid-row-item .sales-field-unit,
+  .sales-grid-row-item .sales-field-lot,
+  .sales-grid-row-item.tax-on .sales-field-qty,
+  .sales-grid-row-item.tax-off .sales-field-qty,
+  .sales-grid-row-item.tax-on .sales-field-price,
+  .sales-grid-row-item.tax-off .sales-field-price,
+  .sales-grid-row-item.tax-on .sales-field-inline-discount,
+  .sales-grid-row-item.tax-off .sales-field-inline-discount {
+    grid-column: span 1 !important;
+  }
+
+  .sales-grid-row-item label,
+  .sales-grid-row-item .sales-field-product-head span,
+  .sales-stock-toggle-inline,
+  .sales-price-hint {
+    font-size: 0.75rem;
+  }
+
+  .sales-field-product-head {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .sales-grid-row-item .sales-field-product-head .sales-stock-toggle-inline {
+    margin-left: 0;
+  }
+
+  .sales-grid-row-item input,
+  .sales-grid-row-item select,
+  .sales-summary input {
+    min-height: 36px;
+    font-size: 0.86rem;
+    padding: 6px 8px;
+    border-radius: 10px;
+  }
+
+  .sales-summary {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .sales-summary-input {
+    grid-column: 1 / -1;
+  }
+
+  .sales-summary article {
+    padding: 10px 12px;
+    border-radius: 10px;
+  }
+
+  .sales-summary span {
+    font-size: 0.74rem;
+  }
+
+  .sales-summary strong {
+    font-size: 1.05rem;
+    margin-top: 4px;
+  }
+
+  .sales-tax-preview {
+    padding: 10px;
+    border-radius: 10px;
+    margin-top: 8px;
+  }
+
+  .sales-tax-preview-grid article {
+    padding: 8px 10px;
+    border-radius: 8px;
+  }
+
+  .sales-tax-preview-grid span {
+    font-size: 0.82rem;
+  }
+
+  .sales-tax-preview-grid strong {
+    font-size: 0.94rem;
+    min-width: 78px;
+  }
+
+  .sales-field-action {
+    justify-content: stretch;
+  }
+
+  .sales-field-action button {
+    max-width: none;
+    width: 100%;
+    min-height: 44px;
+    font-size: 0.96rem;
+    font-weight: 700;
+  }
+
+  .sales-concepts-side > button,
+  .sales-concepts-side form > button[type="submit"] {
+    width: 100%;
+    min-height: 50px;
+    font-size: 1rem;
+    font-weight: 700;
+    border-radius: 12px;
+    margin-top: 10px;
+  }
+
+  .shortcut-hint {
+    font-size: 0.72rem;
+  }
+
+  .sales-cart-table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .suggest-box--product {
+    max-height: 220px;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .sales-concepts-main,
+  .sales-concepts-side {
+    padding: 6px;
+    border-radius: 10px;
+  }
+
+  .sales-grid-row-item {
+    padding: 6px;
+    gap: 5px;
+  }
+
+  .sales-summary {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .sales-grid-row-item label,
+  .sales-grid-row-item .sales-field-product-head span,
+  .sales-stock-toggle-inline,
+  .sales-price-hint {
+    font-size: 0.72rem;
+  }
+
+  .sales-grid-row-item input,
+  .sales-grid-row-item select,
+  .sales-summary input {
+    min-height: 34px;
+    font-size: 0.82rem;
+  }
+
+  .sales-summary span {
+    font-size: 0.72rem;
+  }
+
+  .sales-summary strong {
+    font-size: 0.98rem;
+  }
+
+  .sales-tax-preview-grid span {
+    font-size: 0.78rem;
+  }
+
+  .sales-tax-preview-grid strong {
+    font-size: 0.9rem;
+  }
+
+  .sales-section-head p,
+  .sales-live-caption,
+  .shortcut-hint {
+    display: none;
+  }
 }
 
 .gre-filters {
