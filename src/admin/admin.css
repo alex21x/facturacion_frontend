@@ -672,3 +672,161 @@ body {
   color: #94a3b8;
   max-width: 360px;
 }
+
+/* ── FEATURE CARDS — Activación de funcionalidades por empresa ── */
+.adm-features-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0 0.4rem;
+  margin-bottom: 0.5rem;
+  border-top: 1px solid #e2e8f0;
+}
+.adm-features-section-header:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.adm-features-section-header h4 {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #475569;
+  margin: 0;
+}
+.adm-features-section-count {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  font-weight: 600;
+}
+.adm-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+  margin-bottom: 1rem;
+}
+.adm-feature-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  background: #f8fafc;
+  opacity: 0.8;
+  transition: opacity 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.adm-feature-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+  opacity: 1;
+}
+.adm-feature-card--on {
+  opacity: 1;
+  border-color: #86efac;
+  background: #f0fdf4;
+}
+.adm-feature-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.adm-feature-card__name {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #0f172a;
+  line-height: 1.3;
+  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.adm-feature-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.adm-feature-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: 20px;
+  background: #f1f5f9;
+  color: #64748b;
+  white-space: nowrap;
+}
+.adm-feature-badge--on {
+  background: #dcfce7;
+  color: #15803d;
+}
+.adm-feature-badge--fallback {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+.adm-feature-badge--admin {
+  background: #fef3c7;
+  color: #92400e;
+}
+/* Toggle switch */
+.adm-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.adm-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.adm-switch__slider {
+  display: block;
+  width: 38px;
+  height: 22px;
+  background: #cbd5e1;
+  border-radius: 22px;
+  transition: background 0.2s;
+  position: relative;
+}
+.adm-switch__slider::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  transition: transform 0.2s;
+}
+.adm-switch input:checked ~ .adm-switch__slider {
+  background: #2563eb;
+}
+.adm-switch input:checked ~ .adm-switch__slider::after {
+  transform: translateX(16px);
+}
+.adm-switch input:disabled ~ .adm-switch__slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.adm-features-company-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+}
+.adm-features-company-selector label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #475569;
+  white-space: nowrap;
+}
+.adm-features-empty {
+  text-align: center;
+  color: #94a3b8;
+  padding: 2rem 0;
+  font-size: 0.85rem;
+}
