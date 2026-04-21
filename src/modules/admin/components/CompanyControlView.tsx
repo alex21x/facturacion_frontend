@@ -25,6 +25,33 @@ import type {
   CompanyVerticalAdminMatrixResponse,
 } from '../../appcfg/types';
 
+const FEATURE_LABELS: Record<string, string> = {
+  SALES_CUSTOMER_PRICE_PROFILE: 'Precios por cliente',
+  SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja',
+  SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL: 'Editar emitidos antes de respuesta final SUNAT',
+  SALES_ANTICIPO_ENABLED: 'Cobro con anticipo',
+  SALES_TAX_BRIDGE: 'Envío a SUNAT',
+  SALES_TAX_BRIDGE_DEBUG_VIEW: 'Ver diagnóstico SUNAT',
+  SALES_GLOBAL_DISCOUNT_ENABLED: 'Descuento global en ventas',
+  SALES_ITEM_DISCOUNT_ENABLED: 'Descuento por item en ventas',
+  SALES_FREE_ITEMS_ENABLED: 'Operaciones gratuitas en ventas',
+  SALES_DETRACCION_ENABLED: 'Usar detracción en ventas',
+  SALES_RETENCION_ENABLED: 'Usar retención en ventas',
+  SALES_PERCEPCION_ENABLED: 'Usar percepción en ventas',
+  PURCHASES_GLOBAL_DISCOUNT_ENABLED: 'Descuento global en compras',
+  PURCHASES_ITEM_DISCOUNT_ENABLED: 'Descuento por item en compras',
+  PURCHASES_FREE_ITEMS_ENABLED: 'Operaciones gratuitas en compras',
+  PURCHASES_DETRACCION_ENABLED: 'Usar detracción en compras',
+  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Retención compra por comprador',
+  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Retención compra por proveedor',
+  PURCHASES_PERCEPCION_ENABLED: 'Usar percepción en compras',
+};
+
+function featureLabel(code: string): string {
+  if (FEATURE_LABELS[code]) return FEATURE_LABELS[code];
+  return code.replace(/_+/g, ' ').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+}
+
 type Props = { accessToken: string };
 
 export function CompanyControlView({ accessToken }: Props) {
@@ -63,6 +90,7 @@ export function CompanyControlView({ accessToken }: Props) {
   const [inventoryMatrix, setInventoryMatrix] = useState<CompanyInventorySettingsAdminMatrixResponse | null>(null);
   const [commerceDraftByCompany, setCommerceDraftByCompany] = useState<Record<number, Record<string, boolean>>>({});
   const [inventoryDraftByCompany, setInventoryDraftByCompany] = useState<Record<number, InventorySettingsRecord>>({});
+  const [selectedCommerceCompanyId, setSelectedCommerceCompanyId] = useState<number | null>(null);
   const [createDraft, setCreateDraft] = useState({
     tax_id: '',
     legal_name: '',
@@ -132,6 +160,10 @@ export function CompanyControlView({ accessToken }: Props) {
         nextCommerceDraft[company.company_id] = { ...company.features };
       }
       setCommerceDraftByCompany(nextCommerceDraft);
+
+      setSelectedCommerceCompanyId(prev =>
+        prev !== null ? prev : (commerceResult.companies[0]?.company_id ?? null)
+      );
 
       const nextInventoryDraft: Record<number, InventorySettingsRecord> = {};
       for (const company of inventoryResult.companies) {
@@ -1133,63 +1165,134 @@ export function CompanyControlView({ accessToken }: Props) {
         </div>
       </div>
 
-      {/* Commerce features matrix */}
-      <div className="adm-section">
-        <div className="adm-section-header">
-          <h3>Reglas comerciales por empresa (ventas / compras)</h3>
+      {/* Commerce features — card-based per-company activation */}
+      <div className="adm-card">
+        <div className="adm-card-header">
+          <h3>Activación de funcionalidades por empresa</h3>
+          <div className="adm-card-header-actions">
+            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Ventas y compras — configuradas por empresa desde Admin</span>
+          </div>
         </div>
-        <div className="adm-table-wrap">
-          <table className="adm-table">
-            <thead>
-              <tr>
-                <th>Empresa</th>
-                {(commerceMatrix?.feature_codes ?? []).map(code => (
-                  <th key={code} title={code}>{code.replace(/^(SALES|PURCHASES)_/, '').replace(/_ENABLED$/, '').replace(/_/g, ' ')}</th>
-                ))}
-                <th>Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(commerceMatrix?.companies ?? []).map(company => {
-                const draft = commerceDraftByCompany[company.company_id] ?? company.features;
-                return (
-                  <tr key={company.company_id}>
-                    <td>
-                      <strong>{company.legal_name}</strong>
-                      <br />
-                      <small>{company.tax_id}</small>
-                    </td>
-                    {(commerceMatrix?.feature_codes ?? []).map(code => (
-                      <td key={code} style={{ textAlign: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={draft[code] ?? false}
-                          onChange={e => setCommerceDraftByCompany(prev => ({
-                            ...prev,
-                            [company.company_id]: {
-                              ...(prev[company.company_id] ?? company.features),
-                              [code]: e.target.checked,
-                            },
-                          }))}
-                          disabled={loading}
-                        />
-                      </td>
-                    ))}
-                    <td>
-                      <button
-                        className="adm-btn adm-btn-primary"
-                        type="button"
-                        disabled={loading}
-                        onClick={() => void saveCommerceOne(company.company_id)}
-                      >
-                        Guardar
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="adm-card-body">
+          {/* Company selector */}
+          <div className="adm-features-company-selector">
+            <label>Empresa:</label>
+            <select
+              className="adm-select"
+              value={selectedCommerceCompanyId ?? ''}
+              onChange={e => setSelectedCommerceCompanyId(e.target.value ? Number(e.target.value) : null)}
+              disabled={loading || !commerceMatrix}
+            >
+              <option value="">Seleccionar empresa…</option>
+              {(commerceMatrix?.companies ?? []).map(c => (
+                <option key={c.company_id} value={c.company_id}>
+                  {c.legal_name}{c.trade_name ? ` — ${c.trade_name}` : ''}{c.tax_id ? ` (${c.tax_id})` : ''}
+                </option>
+              ))}
+            </select>
+            {selectedCommerceCompanyId && (
+              <button
+                className="adm-btn adm-btn-primary"
+                type="button"
+                disabled={loading}
+                onClick={() => void saveCommerceOne(selectedCommerceCompanyId)}
+              >
+                Guardar cambios
+              </button>
+            )}
+          </div>
+
+          {!selectedCommerceCompanyId && (
+            <div className="adm-features-empty">Selecciona una empresa para ver y configurar sus funcionalidades.</div>
+          )}
+
+          {selectedCommerceCompanyId && (() => {
+            const featureCodes = commerceMatrix?.feature_codes ?? [];
+            const draft = commerceDraftByCompany[selectedCommerceCompanyId] ?? {};
+
+            const salesCodes    = featureCodes.filter(c => c.toUpperCase().startsWith('SALES_'));
+            const purchasesCodes = featureCodes.filter(c => c.toUpperCase().startsWith('PURCHASES_'));
+            const otherCodes    = featureCodes.filter(c => !c.toUpperCase().startsWith('SALES_') && !c.toUpperCase().startsWith('PURCHASES_'));
+
+            const renderSection = (label: string, codes: string[]) => {
+              if (codes.length === 0) return null;
+              return (
+                <div key={label}>
+                  <div className="adm-features-section-header">
+                    <h4>{label}</h4>
+                    <span className="adm-features-section-count">{codes.length} funcionalidades</span>
+                  </div>
+                  <div className="adm-feature-grid">
+                    {codes.map(code => {
+                      const enabled = draft[code] ?? false;
+                      return (
+                        <div
+                          key={code}
+                          className={`adm-feature-card${enabled ? ' adm-feature-card--on' : ''}`}
+                          title={code}
+                        >
+                          <div className="adm-feature-card__header">
+                            <span className="adm-feature-card__name">{featureLabel(code)}</span>
+                            <label className="adm-switch">
+                              <input
+                                type="checkbox"
+                                checked={enabled}
+                                disabled={loading}
+                                onChange={e => setCommerceDraftByCompany(prev => ({
+                                  ...prev,
+                                  [selectedCommerceCompanyId]: {
+                                    ...(prev[selectedCommerceCompanyId] ?? {}),
+                                    [code]: e.target.checked,
+                                  },
+                                }))}
+                              />
+                              <span className="adm-switch__slider" />
+                            </label>
+                          </div>
+                          <div className="adm-feature-card__meta">
+                            <span className="adm-feature-badge adm-feature-badge--fallback">Fallback empresa/sucursal</span>
+                            <span className={`adm-feature-badge${enabled ? ' adm-feature-badge--on' : ''}`}>
+                              {enabled ? 'Activo' : 'Inactivo'}
+                            </span>
+                            <span className="adm-feature-badge adm-feature-badge--admin">Gestionado en Admin por empresa</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            };
+
+            return (
+              <>
+                {renderSection('VENTAS', salesCodes)}
+                {renderSection('COMPRAS', purchasesCodes)}
+                {renderSection('OTROS', otherCodes)}
+                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.5rem' }}>
+                  <button
+                    className="adm-btn adm-btn-primary"
+                    type="button"
+                    disabled={loading}
+                    onClick={() => void saveCommerceOne(selectedCommerceCompanyId)}
+                  >
+                    Guardar cambios
+                  </button>
+                  <button
+                    className="adm-btn adm-btn-secondary"
+                    type="button"
+                    disabled={loading}
+                    onClick={() => {
+                      const original = commerceMatrix?.companies.find(c => c.company_id === selectedCommerceCompanyId)?.features ?? {};
+                      setCommerceDraftByCompany(prev => ({ ...prev, [selectedCommerceCompanyId]: { ...original } }));
+                    }}
+                  >
+                    Restablecer
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       </div>
 
