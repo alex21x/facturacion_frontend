@@ -87,10 +87,16 @@ export type CloseSessionResponse = {
 };
 
 export type DocumentItem = {
+  product_id?: number | null;
   description: string;
   quantity: number;
   unit_code: string;
   unit_price: number;
+  unit_cost?: number;
+  cost_total?: number;
+  margin_total?: number;
+  margin_percent?: number;
+  margin_source?: 'REAL' | 'ESTIMATED';
   line_total: number;
 };
 
@@ -98,6 +104,7 @@ export type SessionDocument = {
   id: number;
   document_number: string;
   document_kind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER' | 'QUOTATION' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
+  document_kind_label?: string;
   customer_name: string;
   payment_method_name: string | null;
   total: number;

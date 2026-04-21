@@ -1,30 +1,28 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
-import { fetchCompanyVerticalSettings, fetchOperationalContext } from '../modules/appcfg/api';
-import { AppConfigView } from '../modules/appcfg/components/AppConfigView';
-import { CashView } from '../modules/cash/components/CashView';
-import { CompanyConfigView } from '../modules/company/components/CompanyConfigView';
-import { CustomersView } from '../modules/customers/components/CustomersView';
+import { fetchHomeMetricsSummary, fetchOperationalContext } from '../modules/appcfg/api';
 import type { CompanyVerticalSettingsResponse, OperationalContextResponse } from '../modules/appcfg/types';
-import { RestaurantInventoryView } from '../modules/inventory/components/RestaurantInventoryView';
-import { RetailInventoryView } from '../modules/inventory/components/RetailInventoryView';
-import { MastersView } from '../modules/masters/components/MastersView';
-import { RestaurantMenuProductsView } from '../modules/products/components/RestaurantMenuProductsView';
-import { RestaurantSuppliesProductsView } from '../modules/products/components/RestaurantSuppliesProductsView';
-import { RetailProductsView } from '../modules/products/components/RetailProductsView';
-import { RestaurantPurchasesView } from '../modules/purchases/components/RestaurantPurchasesView';
-import { RetailPurchasesView } from '../modules/purchases/components/RetailPurchasesView';
-import { ReportsCenterView } from '../modules/reports/components/ReportsCenterView';
-import { ComandasView } from '../modules/restaurant/components/ComandasView';
-import { RestaurantOrderView } from '../modules/restaurant/components/RestaurantOrderView';
-import { TablesView } from '../modules/restaurant/components/TablesView';
-import { fetchSalesLookups } from '../modules/sales/api';
-import { SalesView } from '../modules/sales/components/SalesView';
-import { DailySummaryView } from '../modules/sales/components/DailySummaryView';
-import { GreGuidesView } from '../modules/sales/components/GreGuidesView';
-import { SunatExceptionsView } from '../modules/sales/components/SunatExceptionsView';
+import quickAppcfgImg from '../assets/quickhome/icons/appcfg.png';
+import quickCashImg from '../assets/quickhome/icons/cash.png';
+import quickComandasImg from '../assets/quickhome/icons/comandas.png';
+import quickCompanyImg from '../assets/quickhome/icons/company.png';
+import quickCustomersImg from '../assets/quickhome/icons/customers.png';
+import quickDailySummaryImg from '../assets/quickhome/icons/daily-summary.png';
+import quickGenericImg from '../assets/quickhome/icons/generic.png';
+import quickGreGuidesImg from '../assets/quickhome/icons/gre-guides.png';
+import quickInventoryImg from '../assets/quickhome/icons/inventory.png';
+import quickMastersImg from '../assets/quickhome/icons/masters.png';
+import quickProductsImg from '../assets/quickhome/icons/products.png';
+import quickPurchasesImg from '../assets/quickhome/icons/purchases.png';
+import quickReportsImg from '../assets/quickhome/icons/reports.png';
+import quickRestaurantMenuImg from '../assets/quickhome/icons/restaurant-menu.png';
+import quickRestaurantOrdersImg from '../assets/quickhome/icons/restaurant-orders.png';
+import quickRestaurantSuppliesImg from '../assets/quickhome/icons/restaurant-supplies.png';
+import quickSalesImg from '../assets/quickhome/icons/sales.png';
+import quickSunatExceptionsImg from '../assets/quickhome/icons/sunat-exceptions.png';
+import quickTablesImg from '../assets/quickhome/icons/tables.png';
 import {
   clearAuthSession,
   loadAuthSession,
@@ -35,10 +33,20 @@ import type { AuthSession, LoginPayload } from '../modules/auth/types';
 
 type UiDensity = 'normal' | 'compact';
 type SalesFlowMode = 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
+type BusinessPulseRange = 'DAY' | 'MONTH' | 'YEAR';
+
+type BusinessPulsePoint = {
+  label: string;
+  sales: number;
+  purchases: number;
+};
+
+type BusinessPulseDataset = Record<BusinessPulseRange, BusinessPulsePoint[]>;
 
 const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
 
 type ModuleTab =
+  | 'home'
   | 'cash'
   | 'restaurant-orders'
   | 'comandas'
@@ -73,6 +81,95 @@ const MENU_GROUPS: Array<{ id: MenuGroup; label: string }> = [
   { id: 'administracion', label: 'Configuracion' },
 ];
 
+const QUICK_ACCESS_PRIORITY: ModuleTab[] = [
+  'home',
+  'sales',
+  'cash',
+  'purchases',
+  'inventory',
+  'products',
+  'customers',
+  'daily-summary',
+  'reports',
+  'masters',
+  'appcfg',
+  'restaurant-orders',
+  'comandas',
+  'tables',
+  'restaurant-menu',
+  'restaurant-supplies',
+  'company',
+  'gre-guides',
+  'sunat-exceptions',
+];
+
+const QUICK_ACCESS_FEATURED: ModuleTab[] = ['sales', 'cash', 'purchases', 'inventory'];
+
+const QUICK_ACCESS_META: Partial<Record<ModuleTab, { badge: string; flow: string; emoji: string }>> = {
+  sales: { badge: 'Venta rapida', flow: 'Emitir comprobante en segundos', emoji: 'POS' },
+  cash: { badge: 'Control de caja', flow: 'Apertura, cobro y cierre del turno', emoji: 'S/' },
+  purchases: { badge: 'Compra agil', flow: 'Registrar ingreso y costo de mercaderia', emoji: 'OC' },
+  inventory: { badge: 'Stock al dia', flow: 'Existencias, lotes y alertas de quiebre', emoji: 'INV' },
+};
+
+const BUSINESS_PULSE_RANGES: BusinessPulseRange[] = ['DAY', 'MONTH', 'YEAR'];
+const BUSINESS_PULSE_EMPTY: BusinessPulseDataset = {
+  DAY: [],
+  MONTH: [],
+  YEAR: [],
+};
+const BUSINESS_PULSE_CACHE_KEY = 'facturacion.businessPulseCache.v1';
+const BUSINESS_PULSE_CACHE_TTL_MS = 2 * 60 * 1000;
+const SALES_FLAGS_CACHE_KEY = 'facturacion.salesFlagsCache.v1';
+const SALES_FLAGS_CACHE_TTL_MS = 5 * 60 * 1000;
+const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
+
+const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
+  'restaurant-orders': quickRestaurantOrdersImg,
+  comandas: quickComandasImg,
+  tables: quickTablesImg,
+  sales: quickSalesImg,
+  'daily-summary': quickDailySummaryImg,
+  'gre-guides': quickGreGuidesImg,
+  'sunat-exceptions': quickSunatExceptionsImg,
+  cash: quickCashImg,
+  purchases: quickPurchasesImg,
+  reports: quickReportsImg,
+  'restaurant-menu': quickRestaurantMenuImg,
+  'restaurant-supplies': quickRestaurantSuppliesImg,
+  inventory: quickInventoryImg,
+  products: quickProductsImg,
+  customers: quickCustomersImg,
+  masters: quickMastersImg,
+  appcfg: quickAppcfgImg,
+  company: quickCompanyImg,
+};
+
+const QUICK_ACCESS_GENERIC_IMAGE = quickGenericImg;
+
+const loadCashView = () => import('../modules/cash/components/CashView');
+const RestaurantOrderView = lazy(() => import('../modules/restaurant/components/RestaurantOrderView').then((m) => ({ default: m.RestaurantOrderView })));
+const ComandasView = lazy(() => import('../modules/restaurant/components/ComandasView').then((m) => ({ default: m.ComandasView })));
+const TablesView = lazy(() => import('../modules/restaurant/components/TablesView').then((m) => ({ default: m.TablesView })));
+const loadSalesView = () => import('../modules/sales/components/SalesView');
+const CashView = lazy(() => loadCashView().then((m) => ({ default: m.CashView })));
+const SalesView = lazy(() => loadSalesView().then((m) => ({ default: m.SalesView })));
+const DailySummaryView = lazy(() => import('../modules/sales/components/DailySummaryView').then((m) => ({ default: m.DailySummaryView })));
+const GreGuidesView = lazy(() => import('../modules/sales/components/GreGuidesView').then((m) => ({ default: m.GreGuidesView })));
+const SunatExceptionsView = lazy(() => import('../modules/sales/components/SunatExceptionsView').then((m) => ({ default: m.SunatExceptionsView })));
+const RestaurantInventoryView = lazy(() => import('../modules/inventory/components/RestaurantInventoryView').then((m) => ({ default: m.RestaurantInventoryView })));
+const RetailInventoryView = lazy(() => import('../modules/inventory/components/RetailInventoryView').then((m) => ({ default: m.RetailInventoryView })));
+const RestaurantPurchasesView = lazy(() => import('../modules/purchases/components/RestaurantPurchasesView').then((m) => ({ default: m.RestaurantPurchasesView })));
+const RetailPurchasesView = lazy(() => import('../modules/purchases/components/RetailPurchasesView').then((m) => ({ default: m.RetailPurchasesView })));
+const ReportsCenterView = lazy(() => import('../modules/reports/components/ReportsCenterView').then((m) => ({ default: m.ReportsCenterView })));
+const RetailProductsView = lazy(() => import('../modules/products/components/RetailProductsView').then((m) => ({ default: m.RetailProductsView })));
+const RestaurantMenuProductsView = lazy(() => import('../modules/products/components/RestaurantMenuProductsView').then((m) => ({ default: m.RestaurantMenuProductsView })));
+const RestaurantSuppliesProductsView = lazy(() => import('../modules/products/components/RestaurantSuppliesProductsView').then((m) => ({ default: m.RestaurantSuppliesProductsView })));
+const CustomersView = lazy(() => import('../modules/customers/components/CustomersView').then((m) => ({ default: m.CustomersView })));
+const MastersView = lazy(() => import('../modules/masters/components/MastersView').then((m) => ({ default: m.MastersView })));
+const AppConfigView = lazy(() => import('../modules/appcfg/components/AppConfigView').then((m) => ({ default: m.AppConfigView })));
+const CompanyConfigView = lazy(() => import('../modules/company/components/CompanyConfigView').then((m) => ({ default: m.CompanyConfigView })));
+
 const MENU_ITEMS: Array<{
   id: ModuleTab;
   group: MenuGroup;
@@ -95,6 +192,18 @@ const MENU_ITEMS: Array<{
    */
   verticalLabels?: Partial<Record<string, { kicker?: string; label?: string; hint?: string }>>;
 }> = [
+  {
+    id: 'home',
+    group: 'operacion',
+    kicker: 'Inicio',
+    label: 'Acceso rapido',
+    hint: 'Pantalla inicial con procesos frecuentes',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5M10 21v-6h4v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
   {
     id: 'cash',
     group: 'operacion',
@@ -453,13 +562,48 @@ function resolveTenantAccessSlugFromPath(): string | null {
   }
 }
 
+function resolveQuickAccessImage(tabId: ModuleTab): string {
+  return QUICK_ACCESS_IMAGES[tabId] ?? QUICK_ACCESS_GENERIC_IMAGE;
+}
+
+function resolveInitialActiveTab(): ModuleTab {
+  if (typeof window === 'undefined') {
+    return 'sales';
+  }
+
+  const saved = (window.localStorage.getItem(LAST_ACTIVE_TAB_STORAGE_KEY) ?? '').trim() as ModuleTab;
+  const allowed: ModuleTab[] = [
+    'home',
+    'cash',
+    'restaurant-orders',
+    'comandas',
+    'tables',
+    'sales',
+    'daily-summary',
+    'gre-guides',
+    'sunat-exceptions',
+    'inventory',
+    'purchases',
+    'reports',
+    'restaurant-menu',
+    'restaurant-supplies',
+    'products',
+    'customers',
+    'masters',
+    'appcfg',
+    'company',
+  ];
+
+  return allowed.includes(saved) ? saved : 'sales';
+}
+
 export function App() {
   const tenantAccessSlug = resolveTenantAccessSlugFromPath();
   const authScope = tenantAccessSlug ? `tenant:${tenantAccessSlug}` : 'default';
   const [session, setSession] = useState<AuthSession | null>(() => loadAuthSession(authScope));
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<ModuleTab>('sales');
+  const [activeTab, setActiveTab] = useState<ModuleTab>(() => resolveInitialActiveTab());
   const [menuSearch, setMenuSearch] = useState('');
   const [context, setContext] = useState<OperationalContextResponse | null>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<number | null>(null);
@@ -468,7 +612,12 @@ export function App() {
   const [isContextPickerOpen, setIsContextPickerOpen] = useState(false);
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
+  const [taxTraceabilityEnabled, setTaxTraceabilityEnabled] = useState(false);
   const [activeVertical, setActiveVertical] = useState<CompanyVerticalSettingsResponse['active_vertical'] | null>(null);
+  const [businessPulseRange, setBusinessPulseRange] = useState<BusinessPulseRange>('DAY');
+  const [businessPulseData, setBusinessPulseData] = useState<BusinessPulseDataset>(BUSINESS_PULSE_EMPTY);
+  const [businessPulseLoading, setBusinessPulseLoading] = useState(false);
+  const [businessPulseError, setBusinessPulseError] = useState<string | null>(null);
   const [uiDensity, setUiDensity] = useState<UiDensity>(() => {
     if (typeof window === 'undefined') {
       return 'compact';
@@ -478,6 +627,9 @@ export function App() {
     return saved === 'normal' ? 'normal' : 'compact';
   });
   const contentPanelRef = useRef<HTMLElement | null>(null);
+  const moduleExecutionRef = useRef<HTMLDivElement | null>(null);
+  const shouldScrollToModuleRef = useRef(false);
+  const hasHydratedOperationalContextRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -488,10 +640,72 @@ export function App() {
   }, [uiDensity]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(LAST_ACTIVE_TAB_STORAGE_KEY, activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!shouldScrollToModuleRef.current) {
+      return;
+    }
+
+    if (!window.matchMedia('(max-width: 980px)').matches) {
+      shouldScrollToModuleRef.current = false;
+      return;
+    }
+
+    shouldScrollToModuleRef.current = false;
+
+    window.requestAnimationFrame(() => {
+      moduleExecutionRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  }, [activeTab]);
+
+  useEffect(() => {
     return onAuthSessionChanged((nextSession) => {
       setSession(nextSession);
     }, authScope);
   }, [authScope]);
+
+  useEffect(() => {
+    if (!session?.accessToken) {
+      return;
+    }
+
+    const normalizedRoleCode = (session.user.role_code ?? '').toUpperCase();
+    const normalizedRoleProfile = (session.user.role_profile ?? '').toUpperCase();
+    const isAdmin = normalizedRoleCode.includes('ADMIN');
+    const isCashier = normalizedRoleProfile === 'CASHIER'
+      || normalizedRoleCode.includes('CAJA')
+      || normalizedRoleCode.includes('CAJER')
+      || normalizedRoleCode.includes('CASHIER');
+    const isSeller = normalizedRoleProfile === 'SELLER'
+      || normalizedRoleCode.includes('VENDED')
+      || normalizedRoleCode.includes('SELLER');
+
+    const preloadTimer = window.setTimeout(() => {
+      // Preload only operational core modules, without touching other module chunks.
+      const preloaders: Array<Promise<unknown>> = [loadSalesView()];
+      if (isAdmin || isCashier || !isSeller) {
+        preloaders.push(loadCashView());
+      }
+      void Promise.allSettled(preloaders);
+    }, 700);
+
+    return () => {
+      window.clearTimeout(preloadTimer);
+    };
+  }, [session?.accessToken, session?.user?.role_code, session?.user?.role_profile]);
 
   const fullName = useMemo(() => {
     if (!session?.user) {
@@ -507,6 +721,8 @@ export function App() {
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
   const shouldHideCashModule = salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser && !isCashierUser && !isAdminUser;
+  const inventoryPermissions = session?.user?.permissions?.INVENTORY;
+  const canEditPurchaseEntries = Boolean(inventoryPermissions?.can_update) && Boolean(inventoryPermissions?.can_approve);
 
   const permittedMenuItems = useMemo(() => {
     return MENU_ITEMS.filter((item) => {
@@ -561,22 +777,249 @@ export function App() {
     return grouped;
   }, [filteredMenuItems]);
 
-  function handleMenuTabSelect(nextTab: ModuleTab): void {
-    setActiveTab(nextTab);
+  const quickAccessItems = useMemo(() => {
+    const priorityRank = new Map<ModuleTab, number>(
+      QUICK_ACCESS_PRIORITY.map((id, index) => [id, index]),
+    );
 
-    if (typeof window === 'undefined') {
+    return [...permittedMenuItems]
+      .filter((item) => item.id !== 'home')
+      .sort((a, b) => {
+        const rankA = priorityRank.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+        const rankB = priorityRank.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+        return rankA - rankB;
+      })
+      .slice(0, 8)
+      .map((item) => {
+        const resolved = resolveVerticalLabel(item, activeVertical?.code ?? null);
+        return { ...item, ...resolved };
+      });
+  }, [activeVertical?.code, permittedMenuItems]);
+
+  const featuredQuickAccessItems = useMemo(() => {
+    const featuredSet = new Set(QUICK_ACCESS_FEATURED);
+    return quickAccessItems
+      .filter((item) => featuredSet.has(item.id))
+      .sort((a, b) => QUICK_ACCESS_FEATURED.indexOf(a.id) - QUICK_ACCESS_FEATURED.indexOf(b.id));
+  }, [quickAccessItems]);
+
+  const secondaryQuickAccessItems = useMemo(() => {
+    const featuredSet = new Set(QUICK_ACCESS_FEATURED);
+    return quickAccessItems.filter((item) => !featuredSet.has(item.id));
+  }, [quickAccessItems]);
+
+  const activeBusinessPulsePoints = businessPulseData[businessPulseRange] ?? [];
+
+  const businessPulseMaxValue = useMemo(() => {
+    return activeBusinessPulsePoints.reduce((acc, row) => {
+      return Math.max(acc, row.sales, row.purchases);
+    }, 0);
+  }, [activeBusinessPulsePoints]);
+
+  const businessPulseTotals = useMemo(() => {
+    return activeBusinessPulsePoints.reduce(
+      (acc, row) => {
+        acc.sales += row.sales;
+        acc.purchases += row.purchases;
+        return acc;
+      },
+      { sales: 0, purchases: 0 },
+    );
+  }, [activeBusinessPulsePoints]);
+
+  const businessPulseChart = useMemo(() => {
+    const rows = activeBusinessPulsePoints;
+    if (!rows.length || businessPulseMaxValue <= 0) {
+      return {
+        salesPath: '',
+        purchasesPath: '',
+        salesArea: '',
+        purchasesArea: '',
+        salesDots: [] as Array<{ x: number; y: number; key: string }>,
+        purchasesDots: [] as Array<{ x: number; y: number; key: string }>,
+        grid: [25, 50, 75],
+      };
+    }
+
+    const width = 640;
+    const height = 220;
+    const left = 16;
+    const right = 16;
+    const top = 14;
+    const bottom = 18;
+    const innerW = width - left - right;
+    const innerH = height - top - bottom;
+
+    const stepX = rows.length <= 1 ? 0 : innerW / (rows.length - 1);
+
+    const salesPoints = rows.map((row, idx) => {
+      const x = left + stepX * idx;
+      const y = top + innerH - ((row.sales / businessPulseMaxValue) * innerH);
+      return {
+        x,
+        y,
+        point: `${x.toFixed(2)},${y.toFixed(2)}`,
+        key: `${row.label}-s-${idx}`,
+      };
+    });
+
+    const purchasesPoints = rows.map((row, idx) => {
+      const x = left + stepX * idx;
+      const y = top + innerH - ((row.purchases / businessPulseMaxValue) * innerH);
+      return {
+        x,
+        y,
+        point: `${x.toFixed(2)},${y.toFixed(2)}`,
+        key: `${row.label}-p-${idx}`,
+      };
+    });
+
+    const salesPath = salesPoints.map((entry) => entry.point).join(' ');
+    const purchasesPath = purchasesPoints.map((entry) => entry.point).join(' ');
+
+    const baseline = (top + innerH).toFixed(2);
+    const firstX = left.toFixed(2);
+    const lastX = (left + stepX * (rows.length - 1)).toFixed(2);
+    const salesArea = `${firstX},${baseline} ${salesPath} ${lastX},${baseline}`;
+    const purchasesArea = `${firstX},${baseline} ${purchasesPath} ${lastX},${baseline}`;
+
+    return {
+      salesPath,
+      purchasesPath,
+      salesArea,
+      purchasesArea,
+      salesDots: salesPoints.map((entry) => ({ x: entry.x, y: entry.y, key: entry.key })),
+      purchasesDots: purchasesPoints.map((entry) => ({ x: entry.x, y: entry.y, key: entry.key })),
+      grid: [25, 50, 75],
+    };
+  }, [activeBusinessPulsePoints, businessPulseMaxValue]);
+
+  useEffect(() => {
+    if (!session?.accessToken) {
+      setBusinessPulseData(BUSINESS_PULSE_EMPTY);
+      setBusinessPulseError(null);
+      setBusinessPulseLoading(false);
       return;
     }
 
-    // On mobile/tablet, jump directly to module content after tapping a menu item.
-    if (window.matchMedia('(max-width: 980px)').matches) {
-      window.requestAnimationFrame(() => {
-        contentPanelRef.current?.scrollIntoView({
-          behavior: 'smooth',
-          block: 'start',
-        });
-      });
+    // Avoid heavy startup calls when the user is not on dashboard home.
+    if (activeTab !== 'home') {
+      setBusinessPulseLoading(false);
+      return;
     }
+
+    let cancelled = false;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const cacheScope = `${session.user.company_id}:${selectedBranchId ?? 'ALL'}:${selectedWarehouseId ?? 'ALL'}`;
+    let cachedData: BusinessPulseDataset | null = null;
+
+    try {
+      if (typeof window !== 'undefined') {
+        const rawCache = window.localStorage.getItem(BUSINESS_PULSE_CACHE_KEY);
+        if (rawCache) {
+          const parsed = JSON.parse(rawCache) as {
+            scope?: string;
+            generatedAt?: number;
+            data?: BusinessPulseDataset;
+          };
+
+          const generatedAt = Number(parsed.generatedAt ?? 0);
+          const isFresh = Number.isFinite(generatedAt) && (Date.now() - generatedAt) <= BUSINESS_PULSE_CACHE_TTL_MS;
+          if (parsed.scope === cacheScope && parsed.data && isFresh) {
+            cachedData = {
+              DAY: parsed.data.DAY ?? [],
+              MONTH: parsed.data.MONTH ?? [],
+              YEAR: parsed.data.YEAR ?? [],
+            };
+            setBusinessPulseData(cachedData);
+
+            if ((cachedData[businessPulseRange] ?? []).length > 0) {
+              setBusinessPulseError(null);
+              setBusinessPulseLoading(false);
+              return;
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore cache parse issues and continue with network fetch.
+    }
+
+    const loadBusinessPulse = async () => {
+      setBusinessPulseLoading(true);
+      setBusinessPulseError(null);
+
+      const rangeToLoad = businessPulseRange;
+
+      try {
+        const response = await fetchHomeMetricsSummary(session.accessToken, {
+          range: rangeToLoad,
+          branchId: selectedBranchId,
+          warehouseId: selectedWarehouseId,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        const aggregatedRange = (response.points ?? []).map((row) => ({
+          label: String(row.label ?? ''),
+          sales: Number(row.sales ?? 0),
+          purchases: Number(row.purchases ?? 0),
+        }));
+
+        const nextData: BusinessPulseDataset = {
+          DAY: rangeToLoad === 'DAY' ? aggregatedRange : (cachedData?.DAY ?? []),
+          MONTH: rangeToLoad === 'MONTH' ? aggregatedRange : (cachedData?.MONTH ?? []),
+          YEAR: rangeToLoad === 'YEAR' ? aggregatedRange : (cachedData?.YEAR ?? []),
+        };
+
+        setBusinessPulseData(nextData);
+
+        try {
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(
+              BUSINESS_PULSE_CACHE_KEY,
+              JSON.stringify({
+                scope: cacheScope,
+                generatedAt: Date.now(),
+                data: nextData,
+              }),
+            );
+          }
+        } catch {
+          // Ignore localStorage write issues.
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setBusinessPulseError(error instanceof Error ? error.message : 'No se pudo cargar el pulso del negocio.');
+        }
+      } finally {
+        if (!cancelled) {
+          setBusinessPulseLoading(false);
+        }
+      }
+    };
+
+    // Small delay to keep the UI responsive right after hard refresh.
+    timerId = setTimeout(() => {
+      if (!cancelled) {
+        void loadBusinessPulse();
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      if (timerId) {
+        clearTimeout(timerId);
+      }
+    };
+  }, [session?.accessToken, session?.user?.company_id, selectedBranchId, selectedWarehouseId, activeTab, businessPulseRange]);
+
+  function handleMenuTabSelect(nextTab: ModuleTab): void {
+    shouldScrollToModuleRef.current = true;
+    setActiveTab(nextTab);
   }
 
   async function handleLogin(payload: LoginPayload): Promise<void> {
@@ -662,6 +1105,8 @@ export function App() {
       setSelectedBranchId(nextBranchId);
       setSelectedWarehouseId(nextWarehouseId);
       setSelectedCashRegisterId(nextCashRegisterId);
+      setActiveVertical(nextContext.active_vertical ?? null);
+      hasHydratedOperationalContextRef.current = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar contexto operativo';
       setErrorMessage(message);
@@ -673,12 +1118,24 @@ export function App() {
       return;
     }
 
+    hasHydratedOperationalContextRef.current = false;
+
     void loadOperationalContext(session.accessToken);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.accessToken]);
 
   useEffect(() => {
-    if (!session) {
+    if (!session || !context || !hasHydratedOperationalContextRef.current) {
+      return;
+    }
+
+    const currentContextBranchId =
+      context.selected.branch_id
+      ?? context.branches[0]?.id
+      ?? null;
+
+    // Skip redundant first reload after initial hydration.
+    if (selectedBranchId === currentContextBranchId) {
       return;
     }
 
@@ -693,63 +1150,41 @@ export function App() {
 
   useEffect(() => {
     if (!session) {
-      setActiveVertical(null);
-      return;
-    }
-
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const settings = await fetchCompanyVerticalSettings(session.accessToken);
-        if (!cancelled) {
-          setActiveVertical(settings.active_vertical);
-        }
-      } catch {
-        if (!cancelled) {
-          setActiveVertical(null);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [session]);
-
-  useEffect(() => {
-    if (!session) {
       setSalesFlowMode('DIRECT_CASHIER');
+      setTaxTraceabilityEnabled(false);
       return;
     }
 
-    let cancelled = false;
+    const cacheScope = `${session.user.company_id}:${selectedBranchId ?? 'ALL'}`;
 
-    void (async () => {
-      try {
-        const lookups = await fetchSalesLookups(session.accessToken, {
-          branchId: selectedBranchId,
-        });
+    try {
+      if (typeof window !== 'undefined') {
+        const raw = window.localStorage.getItem(SALES_FLAGS_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as {
+            scope?: string;
+            generatedAt?: number;
+            salesFlowMode?: SalesFlowMode;
+            taxTraceabilityEnabled?: boolean;
+          };
 
-        if (cancelled) {
-          return;
-        }
-
-        const isSeparatedMode = Boolean(
-          (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_SELLER_TO_CASHIER')?.is_enabled
-        );
-
-        setSalesFlowMode(isSeparatedMode ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER');
-      } catch {
-        if (!cancelled) {
-          setSalesFlowMode('DIRECT_CASHIER');
+          const generatedAt = Number(parsed.generatedAt ?? 0);
+          const isFresh = Number.isFinite(generatedAt) && (Date.now() - generatedAt) <= SALES_FLAGS_CACHE_TTL_MS;
+          if (parsed.scope === cacheScope && isFresh) {
+            setSalesFlowMode(parsed.salesFlowMode === 'SELLER_TO_CASHIER' ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER');
+            setTaxTraceabilityEnabled(Boolean(parsed.taxTraceabilityEnabled));
+            return undefined;
+          }
         }
       }
-    })();
+    } catch {
+      // Ignore cache parsing issues.
+    }
 
-    return () => {
-      cancelled = true;
-    };
+    // Cache miss: keep fast defaults and let module-level views resolve flags when needed.
+    setSalesFlowMode('DIRECT_CASHIER');
+    setTaxTraceabilityEnabled(false);
+    return undefined;
   }, [session, selectedBranchId]);
 
   useEffect(() => {
@@ -920,6 +1355,177 @@ export function App() {
             </aside>
 
             <section ref={contentPanelRef} className="content-panel">
+              {activeTab === 'home' && (
+                <section className="quick-home-panel" aria-label="Inicio y accesos rapidos">
+                  <header className="quick-home-head">
+                    <div>
+                      <p className="eyebrow">Inicio</p>
+                      <h2>Acceso rapido</h2>
+                      <p>Atajos de alta rotacion para operar mas rapido, con foco en venta, caja y abastecimiento.</p>
+                    </div>
+                  </header>
+
+                  {featuredQuickAccessItems.length > 0 && (
+                    <section className="quick-home-featured" aria-label="Procesos clave">
+                      <p className="quick-home-section-title">Procesos clave</p>
+                      <div className="quick-home-featured-grid">
+                        {featuredQuickAccessItems.map((item) => {
+                          const meta = QUICK_ACCESS_META[item.id];
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className={`quick-home-card quick-home-card-featured module-${item.id}`}
+                              onClick={() => handleMenuTabSelect(item.id)}
+                            >
+                              <span className={`quick-home-visual theme-${item.group}`} aria-hidden="true">
+                                <img className="quick-home-visual-img" src={resolveQuickAccessImage(item.id)} alt="" />
+                              </span>
+                              <span className="quick-home-card-body">
+                                <span className="quick-home-icon">{item.icon}</span>
+                                <span className="quick-home-copy">
+                                  <span className="quick-home-badge">{meta?.badge ?? 'Acceso rapido'}</span>
+                                  <strong>{item.label}</strong>
+                                  <small>{item.hint}</small>
+                                  <small className="quick-home-flow">{meta?.flow ?? 'Abrir modulo para continuar'}</small>
+                                </span>
+                              </span>
+                              <span className="quick-home-go" aria-hidden="true">Entrar ahora</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  )}
+
+                  {secondaryQuickAccessItems.length > 0 && (
+                    <section className="quick-home-secondary" aria-label="Accesos adicionales">
+                      <p className="quick-home-section-title">Accesos adicionales</p>
+                      <div className="quick-home-grid">
+                        {secondaryQuickAccessItems.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={`quick-home-card module-${item.id}`}
+                        onClick={() => handleMenuTabSelect(item.id)}
+                      >
+                        <span className={`quick-home-visual theme-${item.group}`} aria-hidden="true">
+                          <img className="quick-home-visual-img" src={resolveQuickAccessImage(item.id)} alt="" />
+                        </span>
+                        <span className="quick-home-card-body">
+                          <span className="quick-home-icon">{item.icon}</span>
+                          <span className="quick-home-copy">
+                            <strong>{item.label}</strong>
+                            <small>{item.hint}</small>
+                          </span>
+                        </span>
+                        <span className="quick-home-go" aria-hidden="true">Abrir modulo</span>
+                      </button>
+                    ))}
+                      </div>
+                    </section>
+                  )}
+
+                  <section className="quick-home-pulse" aria-label="Pulso del negocio">
+                    <div className="quick-home-pulse-head">
+                      <div>
+                        <p className="quick-home-section-title">Pulso del negocio</p>
+                        <h3>Ventas vs Compras</h3>
+                        <p>Vista rapida con grafica para entender como se mueve el negocio.</p>
+                      </div>
+                      <div className="quick-home-pulse-tabs" role="tablist" aria-label="Rango del pulso de negocio">
+                        {BUSINESS_PULSE_RANGES.map((range) => (
+                          <button
+                            key={range}
+                            type="button"
+                            role="tab"
+                            className={businessPulseRange === range ? 'is-active' : ''}
+                            aria-selected={businessPulseRange === range}
+                            onClick={() => setBusinessPulseRange(range)}
+                          >
+                            {range === 'DAY' ? 'Dias' : range === 'MONTH' ? 'Meses' : 'Anios'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="quick-home-pulse-kpis">
+                      <article>
+                        <span>Ventas ({businessPulseRange === 'DAY' ? '7d' : businessPulseRange === 'MONTH' ? '6m' : '3a'})</span>
+                        <strong>S/ {businessPulseTotals.sales.toFixed(2)}</strong>
+                      </article>
+                      <article>
+                        <span>Compras ({businessPulseRange === 'DAY' ? '7d' : businessPulseRange === 'MONTH' ? '6m' : '3a'})</span>
+                        <strong>S/ {businessPulseTotals.purchases.toFixed(2)}</strong>
+                      </article>
+                      <article>
+                        <span>Balance</span>
+                        <strong>S/ {(businessPulseTotals.sales - businessPulseTotals.purchases).toFixed(2)}</strong>
+                      </article>
+                    </div>
+
+                    {businessPulseError && <p className="notice" style={{ margin: 0 }}>{businessPulseError}</p>}
+
+                    {businessPulseLoading ? (
+                      <p className="notice" style={{ margin: 0 }}>Cargando grafica de movimiento...</p>
+                    ) : (
+                      <div className="quick-home-pulse-chart" role="img" aria-label="Grafica comparativa de ventas y compras">
+                        {activeBusinessPulsePoints.length === 0 && (
+                          <p className="notice" style={{ margin: 0 }}>Sin datos suficientes para este periodo.</p>
+                        )}
+
+                        {activeBusinessPulsePoints.length > 0 && (
+                          <>
+                            <div className="quick-home-pulse-legend">
+                              <span className="dot-sales">Ventas</span>
+                              <span className="dot-purchases">Compras</span>
+                            </div>
+                            <svg viewBox="0 0 640 220" className="quick-home-pulse-svg" aria-hidden="true">
+                              <defs>
+                                <linearGradient id="pulseSalesFill" x1="0" y1="20" x2="0" y2="220" gradientUnits="userSpaceOnUse">
+                                  <stop offset="0" stopColor="#16A34A" stopOpacity="0.34" />
+                                  <stop offset="1" stopColor="#16A34A" stopOpacity="0.04" />
+                                </linearGradient>
+                                <linearGradient id="pulsePurchasesFill" x1="0" y1="20" x2="0" y2="220" gradientUnits="userSpaceOnUse">
+                                  <stop offset="0" stopColor="#EA580C" stopOpacity="0.32" />
+                                  <stop offset="1" stopColor="#EA580C" stopOpacity="0.04" />
+                                </linearGradient>
+                              </defs>
+                              {businessPulseChart.grid.map((pct) => (
+                                <line
+                                  key={pct}
+                                  x1="16"
+                                  y1={14 + ((100 - pct) / 100) * (220 - 14 - 18)}
+                                  x2="624"
+                                  y2={14 + ((100 - pct) / 100) * (220 - 14 - 18)}
+                                  className="pulse-grid-line"
+                                />
+                              ))}
+                              <polygon className="pulse-area-purchases" points={businessPulseChart.purchasesArea} />
+                              <polygon className="pulse-area-sales" points={businessPulseChart.salesArea} />
+                              <polyline className="pulse-line-sales" points={businessPulseChart.salesPath} />
+                              <polyline className="pulse-line-purchases" points={businessPulseChart.purchasesPath} />
+                              {businessPulseChart.salesDots.map((dot) => (
+                                <circle key={dot.key} className="pulse-dot-sales" cx={dot.x} cy={dot.y} r="4.6" />
+                              ))}
+                              {businessPulseChart.purchasesDots.map((dot) => (
+                                <circle key={dot.key} className="pulse-dot-purchases" cx={dot.x} cy={dot.y} r="4.4" />
+                              ))}
+                            </svg>
+                            <div className="quick-home-pulse-axis">
+                              {activeBusinessPulsePoints.map((row) => (
+                                <span key={row.label}>{row.label}</span>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                </section>
+              )}
+
+              {activeTab !== 'home' && (
               <header className="active-module-head">
                 <div>
                   <p className="eyebrow">Seccion activa</p>
@@ -1005,140 +1611,153 @@ export function App() {
                   )}
                 </div>
               </header>
+              )}
 
-              {activeTab === 'cash' && (
-                <CashView
-                  accessToken={session.accessToken}
-                  cashRegisterId={selectedCashRegisterId}
-                />
-              )}
-              {activeTab === 'restaurant-orders' && (
-                <RestaurantOrderView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                />
-              )}
-              {activeTab === 'comandas' && (
-                <ComandasView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  cashRegisterId={selectedCashRegisterId}
-                />
-              )}
-              {activeTab === 'tables' && (
-                <TablesView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'sales' && (
-                <SalesView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  cashRegisterId={selectedCashRegisterId}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                  currentUserRoleCode={session.user.role_code ?? null}
-                  currentUserRoleProfile={session.user.role_profile ?? null}
-                />
-              )}
-              {activeTab === 'daily-summary' && (
-                <DailySummaryView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'gre-guides' && (
-                <GreGuidesView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'sunat-exceptions' && (
-                <SunatExceptionsView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                />
-              )}
-              {activeTab === 'inventory' && (
-                (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
-                  <RestaurantInventoryView
+              <div ref={moduleExecutionRef} aria-hidden="true" />
+
+              <Suspense fallback={<p className="notice" style={{ margin: 0 }}>Cargando modulo...</p>}>
+                {activeTab === 'home' && null}
+                {activeTab === 'cash' && (
+                  <CashView
                     accessToken={session.accessToken}
+                    cashRegisterId={selectedCashRegisterId}
+                  />
+                )}
+                {activeTab === 'restaurant-orders' && (
+                  <RestaurantOrderView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
                     warehouseId={selectedWarehouseId}
+                  />
+                )}
+                {activeTab === 'comandas' && (
+                  <ComandasView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
+                  />
+                )}
+                {activeTab === 'tables' && (
+                  <TablesView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                  />
+                )}
+                {activeTab === 'sales' && (
+                  <SalesView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                    currentUserRoleCode={session.user.role_code ?? null}
+                    currentUserRoleProfile={session.user.role_profile ?? null}
+                  />
+                )}
+                {activeTab === 'daily-summary' && (
+                  <DailySummaryView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    traceabilityEnabled={taxTraceabilityEnabled}
+                  />
+                )}
+                {activeTab === 'gre-guides' && (
+                  <GreGuidesView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    traceabilityEnabled={taxTraceabilityEnabled}
+                  />
+                )}
+                {activeTab === 'sunat-exceptions' && (
+                  <SunatExceptionsView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                  />
+                )}
+                {activeTab === 'inventory' && (
+                  (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
+                    <RestaurantInventoryView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                    />
+                  ) : (
+                    <RetailInventoryView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                    />
+                  )
+                )}
+                {activeTab === 'purchases' && (
+                  (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
+                    <RestaurantPurchasesView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                      canEditPurchaseEntries={canEditPurchaseEntries}
+                    />
+                  ) : (
+                    <RetailPurchasesView
+                      accessToken={session.accessToken}
+                      warehouseId={selectedWarehouseId}
+                      activeVerticalCode={activeVertical?.code ?? null}
+                      canEditPurchaseEntries={canEditPurchaseEntries}
+                    />
+                  )
+                )}
+                {activeTab === 'reports' && (
+                  <ReportsCenterView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                  />
+                )}
+                {activeTab === 'products' && (
+                  <RetailProductsView
+                    accessToken={session.accessToken}
                     activeVerticalCode={activeVertical?.code ?? null}
                   />
-                ) : (
-                  <RetailInventoryView
+                )}
+                {activeTab === 'restaurant-menu' && (
+                  <RestaurantMenuProductsView
                     accessToken={session.accessToken}
-                    warehouseId={selectedWarehouseId}
                     activeVerticalCode={activeVertical?.code ?? null}
                   />
-                )
-              )}
-              {activeTab === 'purchases' && (
-                (activeVertical?.code ?? '').toUpperCase() === 'RESTAURANT' ? (
-                  <RestaurantPurchasesView
+                )}
+                {activeTab === 'restaurant-supplies' && (
+                  <RestaurantSuppliesProductsView
                     accessToken={session.accessToken}
-                    warehouseId={selectedWarehouseId}
                     activeVerticalCode={activeVertical?.code ?? null}
                   />
-                ) : (
-                  <RetailPurchasesView
+                )}
+                {activeTab === 'customers' && (
+                  <CustomersView accessToken={session.accessToken} />
+                )}
+                {activeTab === 'masters' && (
+                  <MastersView
                     accessToken={session.accessToken}
+                    branchId={selectedBranchId}
                     warehouseId={selectedWarehouseId}
+                    currentUserRoleCode={session.user.role_code ?? null}
                     activeVerticalCode={activeVertical?.code ?? null}
                   />
-                )
-              )}
-              {activeTab === 'reports' && (
-                <ReportsCenterView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                />
-              )}
-              {activeTab === 'products' && (
-                <RetailProductsView
-                  accessToken={session.accessToken}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                />
-              )}
-              {activeTab === 'restaurant-menu' && (
-                <RestaurantMenuProductsView
-                  accessToken={session.accessToken}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                />
-              )}
-              {activeTab === 'restaurant-supplies' && (
-                <RestaurantSuppliesProductsView
-                  accessToken={session.accessToken}
-                  activeVerticalCode={activeVertical?.code ?? null}
-                />
-              )}
-              {activeTab === 'customers' && (
-                <CustomersView accessToken={session.accessToken} />
-              )}
-              {activeTab === 'masters' && (
-                <MastersView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  currentUserRoleCode={session.user.role_code ?? null}
-                />
-              )}
-              {activeTab === 'appcfg' && (
-                <AppConfigView
-                  accessToken={session.accessToken}
-                  branchId={selectedBranchId}
-                  warehouseId={selectedWarehouseId}
-                  cashRegisterId={selectedCashRegisterId}
-                />
-              )}
-              {activeTab === 'company' && (
-                <CompanyConfigView accessToken={session.accessToken} />
-              )}
+                )}
+                {activeTab === 'appcfg' && (
+                  <AppConfigView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
+                    currentUserRoleCode={session.user.role_code ?? null}
+                    activeVerticalCode={activeVertical?.code ?? null}
+                  />
+                )}
+                {activeTab === 'company' && (
+                  <CompanyConfigView accessToken={session.accessToken} />
+                )}
+              </Suspense>
             </section>
           </section>
         )}

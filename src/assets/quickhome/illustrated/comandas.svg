@@ -1,0 +1,18 @@
+<svg width="960" height="320" viewBox="0 0 960 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="960" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFF7ED"/>
+      <stop offset="1" stop-color="#FED7AA"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="320" rx="28" fill="url(#bg)"/>
+  <rect x="38" y="30" width="884" height="260" rx="22" fill="#FFFFFF" stroke="#DDE5EE" stroke-width="2"/>
+  <rect x="248" y="74" width="272" height="172" rx="24" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <path d="M320 188H450" stroke="#EA580C" stroke-width="8" stroke-linecap="round"/><path d="M348 188C348 154 366 136 384 136C402 136 420 154 420 188" stroke="#EA580C" stroke-width="8" stroke-linecap="round"/><circle cx="384" cy="126" r="8" fill="#FDBA74"/>
+  <rect x="548" y="96" width="274" height="22" rx="11" fill="#EA580C"/>
+  <rect x="548" y="132" width="188" height="16" rx="8" fill="#94A3B8"/>
+  <rect x="548" y="156" width="230" height="16" rx="8" fill="#CBD5E1"/>
+  <rect x="548" y="180" width="140" height="16" rx="8" fill="#E2E8F0"/>
+  <rect x="548" y="210" width="102" height="30" rx="12" fill="#EA580C"/>
+  <text x="576" y="230" font-family="Arial" font-size="14" font-weight="700" fill="white">CMD</text>
+</svg>

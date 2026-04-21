@@ -14,6 +14,11 @@ import type {
   UpdateCommercialDocumentPayload,
   VoidCommercialDocumentPayload,
 } from './types';
+
+export type SalesBootstrapResponse = {
+  lookups: SalesLookups;
+  documents: PaginatedCommercialDocuments | null;
+};
 import type { PrintableSalesDocument } from './print';
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -68,6 +73,78 @@ export async function fetchSalesLookups(
   });
 }
 
+export async function fetchSalesBootstrap(
+  accessToken: string,
+  context?: {
+    branchId?: number | null;
+    warehouseId?: number | null;
+    cashRegisterId?: number | null;
+    includeDocuments?: boolean;
+    documentKind?: string;
+    documentKindId?: number | string | null;
+    status?: string;
+    conversionState?: 'PENDING' | 'CONVERTED' | null;
+    customer?: string;
+    issueDateFrom?: string;
+    issueDateTo?: string;
+    series?: string;
+    number?: string;
+    page?: number;
+    perPage?: number;
+  }
+): Promise<SalesBootstrapResponse> {
+  const query = new URLSearchParams();
+  query.set('include_documents', context?.includeDocuments ? '1' : '0');
+
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
+  if (context?.warehouseId) {
+    query.set('warehouse_id', String(context.warehouseId));
+  }
+  if (context?.cashRegisterId) {
+    query.set('cash_register_id', String(context.cashRegisterId));
+  }
+  if (context?.documentKind) {
+    query.set('document_kind', context.documentKind);
+  }
+  if (context?.documentKindId) {
+    query.set('document_kind_id', String(context.documentKindId));
+  }
+  if (context?.status) {
+    query.set('status', context.status);
+  }
+  if (context?.conversionState) {
+    query.set('conversion_state', context.conversionState);
+  }
+  if (context?.customer) {
+    query.set('customer', context.customer);
+  }
+  if (context?.issueDateFrom) {
+    query.set('issue_date_from', context.issueDateFrom);
+  }
+  if (context?.issueDateTo) {
+    query.set('issue_date_to', context.issueDateTo);
+  }
+  if (context?.series) {
+    query.set('series', context.series);
+  }
+  if (context?.number) {
+    query.set('number', context.number);
+  }
+  if (context?.page) {
+    query.set('page', String(context.page));
+  }
+  if (context?.perPage) {
+    query.set('per_page', String(context.perPage));
+  }
+
+  return apiClient.request<SalesBootstrapResponse>(`/api/sales/bootstrap?${query.toString()}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
 export async function fetchCustomerAutocomplete(
   accessToken: string,
   queryText: string
@@ -87,6 +164,29 @@ export async function fetchCustomerAutocomplete(
   return response.data;
 }
 
+export type ResolveCustomerByDocumentResponse = {
+  data: SalesCustomerSuggestion;
+  source: 'local' | 'reniec' | 'sunat';
+  created: boolean;
+  message: string;
+};
+
+export async function resolveCustomerByDocument(
+  accessToken: string,
+  document: string
+): Promise<ResolveCustomerByDocumentResponse> {
+  const query = new URLSearchParams();
+  query.set('document', document);
+
+  return apiClient.request<ResolveCustomerByDocumentResponse>(
+    `/api/sales/customers/resolve-document?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+}
+
 export async function fetchCommercialDocuments(
   accessToken: string,
   context?: {
@@ -94,6 +194,7 @@ export async function fetchCommercialDocuments(
     warehouseId?: number | null;
     cashRegisterId?: number | null;
     documentKind?: string;
+    documentKindId?: number | string | null;
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
@@ -120,6 +221,9 @@ export async function fetchCommercialDocuments(
   }
   if (context?.documentKind) {
     query.set('document_kind', context.documentKind);
+  }
+  if (context?.documentKindId) {
+    query.set('document_kind_id', String(context.documentKindId));
   }
   if (context?.status) {
     query.set('status', context.status);
@@ -240,6 +344,7 @@ export async function fetchReferenceDocuments(
   context: {
     customerId: number;
     branchId?: number | null;
+    documentKindId?: number | null;
     noteKind?: 'CREDIT_NOTE' | 'DEBIT_NOTE' | null;
     limit?: number;
   }
@@ -249,6 +354,9 @@ export async function fetchReferenceDocuments(
 
   if (context.branchId) {
     query.set('branch_id', String(context.branchId));
+  }
+  if (context.documentKindId) {
+    query.set('document_kind_id', String(context.documentKindId));
   }
   if (context.noteKind) {
     query.set('note_kind', context.noteKind);
@@ -304,6 +412,29 @@ export async function voidCommercialDocument(
   });
 }
 
+function nowInLimaIso(): string {
+  const parts = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  const year = pick('year');
+  const month = pick('month');
+  const day = pick('day');
+  const hour = pick('hour');
+  const minute = pick('minute');
+  const second = pick('second');
+
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}-05:00`;
+}
+
 export async function createCommercialDocument(accessToken: string, form: CreateDocumentForm) {
   const items = (form.items && form.items.length > 0
     ? form.items
@@ -330,7 +461,12 @@ export async function createCommercialDocument(accessToken: string, form: Create
     const grossLine = qty * unitPrice;
     const subtotal = includesTax ? +(grossLine / divisor).toFixed(2) : +(grossLine).toFixed(2);
     const taxTotal = includesTax ? +(grossLine - subtotal).toFixed(2) : +(subtotal * (taxRate / 100)).toFixed(2);
-    const total = includesTax ? +(grossLine).toFixed(2) : +(subtotal + taxTotal).toFixed(2);
+    const grossTotal = includesTax ? +(grossLine).toFixed(2) : +(subtotal + taxTotal).toFixed(2);
+    const isFreeOperation = Boolean(item.isFreeOperation);
+    const rawDiscount = Number(item.discountTotal ?? 0);
+    const discountTotal = isFreeOperation ? grossTotal : Math.max(0, Math.min(rawDiscount, grossTotal));
+    const total = Math.max(0, +(grossTotal - discountTotal).toFixed(2));
+    const gratuities = isFreeOperation ? subtotal : Number(item.freeOperationTotal ?? 0);
 
     return {
       description: item.description,
@@ -345,11 +481,15 @@ export async function createCommercialDocument(accessToken: string, form: Create
       conversion_factor: item.conversionFactor != null ? Number(item.conversionFactor) : undefined,
       base_unit_price: item.baseUnitPrice != null ? Number(item.baseUnitPrice) : undefined,
       unit_price: unitPrice,
+      discount_total: discountTotal > 0 ? discountTotal : undefined,
       subtotal,
       tax_total: taxTotal,
       total,
       metadata: {
         price_includes_tax: includesTax,
+        descuento: discountTotal > 0 ? discountTotal : 0,
+        gratuitas: gratuities > 0 ? gratuities : 0,
+        is_free_operation: isFreeOperation,
       },
       lots: item.lotId ? [
         {
@@ -361,6 +501,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
   });
 
   const total = items.reduce((acc, item) => acc + Number(item.total), 0);
+  const globalDiscountAmount = Math.max(0, Number(form.globalDiscountAmount ?? 0));
   const targetStatus = form.status ?? ((form.documentKind === 'SALES_ORDER' || form.documentKind === 'QUOTATION') ? 'DRAFT' : 'ISSUED');
   const isPreDocument = targetStatus !== 'ISSUED';
   const advanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
@@ -384,7 +525,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
                 payment_method_id: Number(form.paymentMethodId),
                 amount: Number(advanceAmount.toFixed(2)),
                 status: 'PAID',
-                paid_at: new Date().toISOString(),
+                paid_at: nowInLimaIso(),
                 notes: 'Anticipo aplicado en emisión',
               }]
             : []),
@@ -401,7 +542,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
             payment_method_id: Number(form.paymentMethodId),
             amount: total,
             status: 'PAID',
-            paid_at: new Date().toISOString(),
+            paid_at: nowInLimaIso(),
           },
         ];
 
@@ -410,6 +551,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
     headers: authHeaders(accessToken),
     body: JSON.stringify({
       document_kind: form.documentKind,
+      document_kind_id: form.documentKindId ?? undefined,
       branch_id: form.branchId ?? undefined,
       warehouse_id: form.warehouseId ?? undefined,
       cash_register_id: form.cashRegisterId ?? undefined,
@@ -420,12 +562,13 @@ export async function createCommercialDocument(accessToken: string, form: Create
       currency_id: Number(form.currencyId),
       payment_method_id: Number(form.paymentMethodId),
       metadata: {
+        defer_sunat_send: form.receiptSendMode === 'NO_SEND',
         table_label: form.documentKind === 'SALES_ORDER'
           ? (form.restaurantTableLabel?.trim() || null)
           : null,
         restaurant_order_status: form.documentKind === 'SALES_ORDER' ? 'PENDING' : null,
         receipt_send_mode: form.documentKind === 'RECEIPT'
-          ? (form.receiptSendMode ?? 'DIRECT')
+          ? ((form.receiptSendMode === 'SUMMARY') ? 'SUMMARY' : 'DIRECT')
           : null,
         customer_address: form.customerAddress?.trim() || null,
         source_document_id: form.noteAffectedDocumentId ?? null,
@@ -449,6 +592,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
         credit_total: form.isCreditSale ? Number(pendingCreditTotal.toFixed(2)) : 0,
         has_advance: hasAdvance,
         advance_amount: hasAdvance ? Number(advanceAmount.toFixed(2)) : 0,
+        discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
       },
       status: targetStatus,
       items,
@@ -490,6 +634,7 @@ export async function exportCommercialDocumentsExcel(
     warehouseId?: number | null;
     cashRegisterId?: number | null;
     documentKind?: string;
+    documentKindId?: number | string | null;
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
@@ -513,6 +658,9 @@ export async function exportCommercialDocumentsExcel(
   }
   if (context?.documentKind) {
     query.set('document_kind', context.documentKind);
+  }
+  if (context?.documentKindId) {
+    query.set('document_kind_id', String(context.documentKindId));
   }
   if (context?.status) {
     query.set('status', context.status);
@@ -566,6 +714,7 @@ export async function exportCommercialDocumentsJson(
     warehouseId?: number | null;
     cashRegisterId?: number | null;
     documentKind?: string;
+    documentKindId?: number | string | null;
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
@@ -590,6 +739,9 @@ export async function exportCommercialDocumentsJson(
   }
   if (context?.documentKind) {
     query.set('document_kind', context.documentKind);
+  }
+  if (context?.documentKindId) {
+    query.set('document_kind_id', String(context.documentKindId));
   }
   if (context?.status) {
     query.set('status', context.status);
@@ -722,6 +874,158 @@ export async function fetchTaxBridgePreview(accessToken: string, documentId: num
     suffix
       ? `/api/sales/commercial-documents/${documentId}/tax-bridge-preview?${suffix}`
       : `/api/sales/commercial-documents/${documentId}/tax-bridge-preview`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+}
+
+export async function fetchTaxBridgeDebug(accessToken: string, documentId: number, companyId?: number) {
+  const query = new URLSearchParams();
+  if (companyId) {
+    query.set('company_id', String(companyId));
+  }
+
+  const suffix = query.toString();
+
+  return apiClient.request<{
+    message: string;
+    document_id: number;
+    debug: {
+      bridge_mode?: string;
+      sunat_status?: string;
+      sunat_status_label?: string;
+      endpoint?: string;
+      method?: string;
+      content_type?: string;
+      form_key?: string;
+      payload?: unknown;
+      payload_length?: number | null;
+      payload_sha1?: string | null;
+      bridge_http_code?: number | null;
+      bridge_response?: unknown;
+      sunat_ticket?: string | null;
+      bridge_note?: string;
+      sunat_error_code?: string | null;
+      sunat_error_message?: string | null;
+    } | null;
+  }>(
+    suffix
+      ? `/api/sales/commercial-documents/${documentId}/tax-bridge-debug?${suffix}`
+      : `/api/sales/commercial-documents/${documentId}/tax-bridge-debug`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+}
+
+export type TaxBridgeAuditAttempt = {
+  id: number;
+  document: string;
+  document_kind: string;
+  tributary_type: string;
+  status: string;
+  http_code: number | null;
+  response_time_ms: number | null;
+  attempt_number: number;
+  is_retry: boolean;
+  error_kind: string | null;
+  message: string | null;
+  sent_at: string | null;
+  initiated_by: string | null;
+};
+
+export type TaxBridgeAuditAttemptDetail = {
+  id: number;
+  document: {
+    id: number | null;
+    kind: string | null;
+    series: string | null;
+    number: string | null;
+    full_number: string | null;
+  };
+  tributary_type: string;
+  attempt: {
+    number: number;
+    is_retry: boolean;
+    is_manual: boolean;
+  };
+  bridge: {
+    mode: string | null;
+    endpoint: string | null;
+    method: string | null;
+    content_type: string | null;
+  };
+  request: {
+    size_bytes: number | null;
+    sha1: string | null;
+    payload: unknown;
+  };
+  response: {
+    status_code: number | null;
+    size_bytes: number | null;
+    time_ms: number | null;
+    body: unknown;
+  };
+  sunat: {
+    status: string | null;
+    code: string | null;
+    message: string | null;
+    ticket: string | null;
+    cdr_code: string | null;
+  };
+  error: {
+    kind: string;
+    message: string | null;
+  } | null;
+  audit: {
+    initiated_by_user_id: number | null;
+    initiated_by_username: string | null;
+    sent_at: string | null;
+    received_at: string | null;
+  };
+};
+
+export async function fetchTaxBridgeAuditDocumentHistory(
+  accessToken: string,
+  documentId: number,
+  limit = 30,
+  companyId?: number
+): Promise<{
+  document_id: number;
+  count: number;
+  logs: TaxBridgeAuditAttempt[];
+}> {
+  const query = new URLSearchParams();
+  query.set('limit', String(limit));
+  if (companyId) {
+    query.set('company_id', String(companyId));
+  }
+
+  return apiClient.request(
+    `/api/tax-bridge/audit/document/${documentId}?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+}
+
+export async function fetchTaxBridgeAuditAttemptDetail(
+  accessToken: string,
+  logId: number,
+  companyId?: number
+): Promise<TaxBridgeAuditAttemptDetail> {
+  const query = new URLSearchParams();
+  if (companyId) {
+    query.set('company_id', String(companyId));
+  }
+
+  const suffix = query.toString();
+  return apiClient.request(
+    suffix ? `/api/tax-bridge/audit/${logId}?${suffix}` : `/api/tax-bridge/audit/${logId}`,
     {
       method: 'GET',
       headers: authHeaders(accessToken),

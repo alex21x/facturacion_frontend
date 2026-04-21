@@ -68,10 +68,21 @@ export type KardexRow = {
   quantity: string;
   unit_cost: string;
   line_total: string;
+  stock_balance?: string;
   ref_type: string | null;
   ref_id: number | null;
+  stock_entry_type?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+  stock_entry_reference_no?: string | null;
+  stock_entry_supplier_reference?: string | null;
   notes: string | null;
   moved_at: string;
+};
+
+export type KardexMeta = {
+  current_page: number;
+  per_page: number;
+  total: number;
+  total_pages: number;
 };
 
 export type InventoryProProfile = {
@@ -251,3 +262,40 @@ export type InventoryProReportRequestDetail = {
 };
 
 export type InventoryProReportRequestDetailResponse = InventoryProReportRequestDetail;
+
+export type InventoryProductImportBatch = {
+  id: number;
+  company_id: number;
+  imported_by: number;
+  imported_by_name: string | null;
+  imported_by_username: string | null;
+  filename: string | null;
+  total_rows: number;
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  error_count: number;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  created_at: string;
+};
+
+export type InventoryProductImportBatchItem = {
+  id: number;
+  batch_id: number;
+  row_number: number;
+  action_status: 'CREATED' | 'UPDATED' | 'SKIPPED' | string;
+  product_id: number | null;
+  sku: string | null;
+  barcode: string | null;
+  name: string | null;
+  message: string | null;
+  created_at: string;
+};
+
+export type InventoryProductImportBatchDetail = {
+  batch: InventoryProductImportBatch;
+  items: InventoryProductImportBatchItem[];
+  errors: Array<{ row: number; message: string }>;
+};

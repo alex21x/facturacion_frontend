@@ -1,5 +1,5 @@
 import { apiClient } from '../../shared/api/client';
-import type { CreateStockEntryPayload, StockEntryRow, PurchasesLookups, PaginatedStockEntries } from './types';
+import type { CreateStockEntryPayload, UpdateStockEntryPayload, StockEntryRow, PurchasesLookups, PaginatedStockEntries } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
   return {
@@ -45,6 +45,18 @@ export async function createStockEntry(
 ): Promise<{ message: string; data: { id: number } }> {
   return apiClient.request<{ message: string; data: { id: number } }>('/api/inventory/stock-entries', {
     method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateStockEntry(
+  accessToken: string,
+  entryId: number,
+  payload: UpdateStockEntryPayload
+): Promise<{ message: string; data: { id: number } }> {
+  return apiClient.request<{ message: string; data: { id: number } }>(`/api/purchases/stock-entries/${entryId}`, {
+    method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   });
@@ -129,8 +141,9 @@ export async function fetchPurchasesReport(
   });
 }
 
-export async function exportPurchasesExcel(
+async function exportPurchasesFile(
   accessToken: string,
+  format: 'csv' | 'xlsx',
   params?: {
     warehouseId?: number | null;
     entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
@@ -140,7 +153,7 @@ export async function exportPurchasesExcel(
   }
 ): Promise<{ blob: Blob; fileName: string }> {
   const query = new URLSearchParams();
-  query.set('format', 'xlsx');
+  query.set('format', format);
 
   if (params?.warehouseId) {
     query.set('warehouse_id', String(params.warehouseId));
@@ -173,9 +186,36 @@ export async function exportPurchasesExcel(
   const blob = await response.blob();
   const disposition = response.headers.get('content-disposition') ?? '';
   const match = disposition.match(/filename="?([^";]+)"?/i);
-  const fileName = (match?.[1] ?? 'reporte_compras.xlsx').trim();
+  const fallback = format === 'xlsx' ? 'reporte_compras.xlsx' : 'reporte_compras.csv';
+  const fileName = (match?.[1] ?? fallback).trim();
 
   return { blob, fileName };
+}
+
+export async function exportPurchasesExcel(
+  accessToken: string,
+  params?: {
+    warehouseId?: number | null;
+    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    reference?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+): Promise<{ blob: Blob; fileName: string }> {
+  return exportPurchasesFile(accessToken, 'xlsx', params);
+}
+
+export async function exportPurchasesCsv(
+  accessToken: string,
+  params?: {
+    warehouseId?: number | null;
+    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    reference?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  }
+): Promise<{ blob: Blob; fileName: string }> {
+  return exportPurchasesFile(accessToken, 'csv', params);
 }
 
 export async function exportPurchasesJson(
@@ -215,4 +255,58 @@ export async function exportPurchasesJson(
   });
 
   return response.data;
+}
+
+export type ResolveSupplierByDocumentResponse = {
+  id: number;
+  doc_number: string;
+  doc_type: 'DNI' | 'RUC' | string | null;
+  name: string;
+  address: string | null;
+  source: 'local' | 'reniec' | 'sunat';
+  message: string;
+};
+
+export type SupplierAutocompleteItem = {
+  id: number;
+  doc_type: string | null;
+  doc_number: string;
+  name: string;
+  address: string | null;
+  source: string;
+};
+
+export async function fetchSupplierAutocomplete(
+  accessToken: string,
+  queryText: string
+): Promise<SupplierAutocompleteItem[]> {
+  const query = new URLSearchParams();
+  query.set('q', queryText);
+  query.set('limit', '12');
+
+  const response = await apiClient.request<{ data: SupplierAutocompleteItem[] }>(
+    `/api/purchases/suppliers/autocomplete?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+
+  return response.data;
+}
+
+export async function resolveSupplierByDocument(
+  accessToken: string,
+  document: string
+): Promise<ResolveSupplierByDocumentResponse> {
+  const query = new URLSearchParams();
+  query.set('document', document);
+
+  return apiClient.request<ResolveSupplierByDocumentResponse>(
+    `/api/purchases/suppliers/resolve-document?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
 }

@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import './CashView.css';
+import { fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   closeCashSession,
   createCashMovement,
@@ -10,6 +12,8 @@ import {
 } from '../api';
 import { buildCashReportHtml80mm, buildCashReportHtmlA4 } from '../../sales/print';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
+import { fetchCompanyProfile } from '../../company/api';
+import type { CompanyProfile } from '../../company/types';
 import type {
   CashMovement,
   CashSession,
@@ -24,6 +28,60 @@ type CashViewProps = {
   accessToken: string;
   cashRegisterId: number | null;
 };
+
+type MetricGlyphKind = 'status' | 'opening' | 'in' | 'out' | 'expected';
+
+function MetricGlyph({ kind }: { kind: MetricGlyphKind }) {
+  if (kind === 'status') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 3l7 3v5c0 5-3.5 8-7 10-3.5-2-7-5-7-10V6l7-3z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    );
+  }
+
+  if (kind === 'opening') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M5 4h10v16H5z" />
+        <path d="M15 7l4-1v12l-4-1" />
+        <path d="M9 12h.01" />
+      </svg>
+    );
+  }
+
+  if (kind === 'in') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 19V6" />
+        <path d="M7.5 10.5L12 6l4.5 4.5" />
+        <path d="M5 19h14" />
+      </svg>
+    );
+  }
+
+  if (kind === 'out') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 5v13" />
+        <path d="M7.5 13.5L12 18l4.5-4.5" />
+        <path d="M5 19h14" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 4v2" />
+      <path d="M12 18v2" />
+      <path d="M4 12h2" />
+      <path d="M18 12h2" />
+    </svg>
+  );
+}
 
 export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
   const [activeTab, setActiveTab] = useState<'sesion' | 'historial'>('sesion');
@@ -50,6 +108,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
   const [closeNotes, setCloseNotes] = useState('');
   const [showCloseForm, setShowCloseForm] = useState(false);
   const [showConfirmClosePopup, setShowConfirmClosePopup] = useState(false);
+  const [showMovementPopup, setShowMovementPopup] = useState(false);
   const [previewDialog, setPreviewDialog] = useState<null | {
     title: string;
     subtitle: string;
@@ -57,6 +116,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     variant: 'compact' | 'wide';
   }>(null);
   const [closeResponse, setCloseResponse] = useState<CloseSessionResponse | null>(null);
+  const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
 
   // Form: movimiento manual
   const [movType, setMovType] = useState<'IN' | 'OUT'>('IN');
@@ -73,6 +133,30 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     [movements]
   );
 
+  function formatMovementType(type: CashMovement['movement_type']): string {
+    return type === 'IN' ? 'Ingreso' : 'Egreso';
+  }
+
+  function formatReferenceType(refType: string | null): string {
+    if (!refType || refType.trim() === '') return 'Manual';
+    const normalized = refType.trim().toUpperCase();
+    const labels: Record<string, string> = {
+      MANUAL: 'Manual',
+      SALE: 'Venta',
+      SALES: 'Venta',
+      PURCHASE: 'Compra',
+      OPENING: 'Apertura',
+      OPENING_BALANCE: 'Apertura',
+      CLOSING: 'Cierre',
+      CLOSING_BALANCE: 'Cierre',
+      ADJUSTMENT: 'Ajuste',
+      TRANSFER: 'Traslado',
+      PAYMENT: 'Pago',
+      REFUND: 'Devolucion',
+    };
+    return labels[normalized] ?? 'Manual';
+  }
+
   const soldProducts = useMemo(() => {
     const documents = sessionDetail?.documents ?? [];
     const grouped = new Map<string, {
@@ -83,6 +167,9 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       documentNumber: string;
       quantity: number;
       amount: number;
+      costAmount: number;
+      marginAmount: number;
+      marginSource: 'REAL' | 'ESTIMATED' | 'MIXED';
     }>();
 
     for (const doc of documents) {
@@ -90,10 +177,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const description = (item.description || '').trim() || 'Producto sin descripcion';
         const unitCode = (item.unit_code || '').trim() || '-';
         const paymentMethod = (doc.payment_method_name || '').trim() || '-';
-        const rawDocumentKind = (doc.document_kind || '').trim();
-        const documentKind = rawDocumentKind
-          ? ({'QUOTATION':'Cotizacion','SALES_ORDER':'Nota de Pedido','INVOICE':'Factura','RECEIPT':'Boleta','CREDIT_NOTE':'Nota de Credito','DEBIT_NOTE':'Nota de Debito'} as Record<string,string>)[rawDocumentKind] ?? rawDocumentKind
-          : '-';
+        const documentKind = (doc.document_kind_label || doc.document_kind || '').trim() || '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
         const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}`;
         const current = grouped.get(key);
@@ -101,6 +185,11 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         if (current) {
           current.quantity += Number(item.quantity || 0);
           current.amount += Number(item.line_total || 0);
+          current.costAmount += Number(item.cost_total || 0);
+          current.marginAmount += Number(item.margin_total || 0);
+          if ((item.margin_source || 'ESTIMATED') !== current.marginSource) {
+            current.marginSource = 'MIXED';
+          }
         } else {
           grouped.set(key, {
             description,
@@ -110,12 +199,20 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
             documentNumber,
             quantity: Number(item.quantity || 0),
             amount: Number(item.line_total || 0),
+            costAmount: Number(item.cost_total || 0),
+            marginAmount: Number(item.margin_total || 0),
+            marginSource: (item.margin_source || 'ESTIMATED') as 'REAL' | 'ESTIMATED',
           });
         }
       }
     }
 
-    return Array.from(grouped.values()).sort((a, b) => b.amount - a.amount);
+    return Array.from(grouped.values())
+      .map((row) => ({
+        ...row,
+        marginPercent: row.amount > 0 ? (row.marginAmount / row.amount) * 100 : 0,
+      }))
+      .sort((a, b) => b.amount - a.amount);
   }, [sessionDetail]);
 
   async function loadCurrentSession() {
@@ -189,6 +286,27 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     void loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, sessionsPage]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const profile = await fetchCompanyProfile(accessToken);
+        if (!cancelled) {
+          setCompanyProfile(profile);
+        }
+      } catch {
+        if (!cancelled) {
+          setCompanyProfile(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
 
   async function handleOpenSession() {
     if (!cashRegisterId) {
@@ -265,6 +383,16 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       paymentMethodBreakdown: paymentMethods as PaymentMethodBreakdown[],
       movements: (detail?.movements ?? []) as any,
       documents: (detail?.documents ?? []) as any,
+      company: companyProfile
+        ? {
+            taxId: companyProfile.tax_id ?? null,
+            legalName: companyProfile.legal_name ?? null,
+            tradeName: companyProfile.trade_name ?? null,
+            address: companyProfile.address ?? null,
+            phone: companyProfile.phone ?? null,
+            logoUrl: companyProfile.logo_url ?? null,
+          }
+        : null,
     };
   }
 
@@ -345,7 +473,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         {
           closingBalance: countedBalance,
           difference,
-          closedAt: new Date().toISOString(),
+          closedAt: new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()).replace(' ', 'T') + '-05:00',
         },
       );
       setPreviewDialog({
@@ -382,6 +510,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       });
       setMovAmount('');
       setMovDescription('');
+      setShowMovementPopup(false);
       await loadCurrentSession();
     } catch (e) {
       setIsError(true);
@@ -412,10 +541,11 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
   }
 
   return (
-    <section className="module-panel">
-      <div className="module-header">
+    <section className="module-panel cash-module-panel">
+      <div className="module-header cash-module-header">
         <h3>Caja</h3>
         <button
+          className="cash-btn cash-btn-soft"
           type="button"
           onClick={() => {
             if (activeTab === 'sesion') void loadCurrentSession();
@@ -423,29 +553,39 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
           }}
           disabled={loading}
         >
-          Refrescar
+          ⟳ Refrescar
         </button>
       </div>
 
       {message && <p className={isError ? 'error-box' : 'notice'}>{message}</p>}
 
-      <nav className="sub-tabs">
+      <nav className="sub-tabs cash-sub-tabs cash-mode-tabs" role="tablist" aria-label="Vistas de caja">
         <button
           type="button"
-          className={activeTab === 'sesion' ? 'active' : ''}
+          className={activeTab === 'sesion' ? 'cash-tab-btn mode-btn mode-btn-active active' : 'cash-tab-btn mode-btn'}
           onClick={() => { setActiveTab('sesion'); void loadCurrentSession(); }}
+          aria-selected={activeTab === 'sesion'}
+          role="tab"
         >
-          Sesion Activa
+          <span className="cash-tab-icon" aria-hidden="true">🛒</span>
+          <span className="cash-tab-copy">
+            <span className="cash-tab-label">Sesion activa</span>
+          </span>
         </button>
         <button
           type="button"
-          className={activeTab === 'historial' ? 'active' : ''}
+          className={activeTab === 'historial' ? 'cash-tab-btn mode-btn mode-btn-active active' : 'cash-tab-btn mode-btn'}
           onClick={() => {
             setActiveTab('historial');
             setSessionsPage(1);
           }}
+          aria-selected={activeTab === 'historial'}
+          role="tab"
         >
-          Historial
+          <span className="cash-tab-icon" aria-hidden="true">📊</span>
+          <span className="cash-tab-copy">
+            <span className="cash-tab-label">Historial</span>
+          </span>
         </button>
       </nav>
 
@@ -453,7 +593,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       {activeTab === 'sesion' && (
         <>
           {!currentSession && (
-            <div className="form-card">
+            <div className="form-card cash-form-card">
               <h4>Apertura de Caja</h4>
               {!cashRegisterId && (
                 <p className="notice">Selecciona una caja en el panel superior para continuar.</p>
@@ -479,83 +619,136 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                   />
                 </label>
               </div>
-              <button type="button" onClick={handleOpenSession} disabled={loading || !cashRegisterId}>
-                Abrir Caja
+              <button className="cash-btn cash-btn-primary" type="button" onClick={handleOpenSession} disabled={loading || !cashRegisterId}>
+                🟢 Abrir caja
               </button>
             </div>
           )}
 
           {currentSession && (
-            <>
-              <div className="stat-grid">
-                <article>
-                  <span>Estado</span>
-                  <strong style={{ color: 'var(--color-ok)' }}>ABIERTA</strong>
-                </article>
-                <article>
-                  <span>Apertura</span>
-                  <strong>{Number(currentSession.opening_balance).toFixed(2)}</strong>
-                </article>
-                <article>
-                  <span>Ingresos</span>
-                  <strong style={{ color: 'var(--color-ok)' }}>+{totalIn.toFixed(2)}</strong>
-                </article>
-                <article>
-                  <span>Egresos</span>
-                  <strong style={{ color: 'var(--color-err)' }}>-{totalOut.toFixed(2)}</strong>
-                </article>
-                <article>
-                  <span>Saldo esperado</span>
-                  <strong>{Number(currentSession.expected_balance).toFixed(2)}</strong>
-                </article>
-              </div>
+            <div className="cash-session-shell">
+              <div className="cash-session-overview">
+                <div className="stat-grid cash-stat-grid">
+                  <article className="cash-metric-card cash-metric-card-status">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="status" /></span>Estado</span>
+                    <strong className="cash-value-emphasis">Abierta</strong>
+                  </article>
+                  <article className="cash-metric-card cash-metric-card-opening">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="opening" /></span>Apertura</span>
+                    <strong>{Number(currentSession.opening_balance).toFixed(2)}</strong>
+                  </article>
+                  <article className="cash-metric-card cash-metric-card-in">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="in" /></span>Ingresos</span>
+                    <strong className="cash-value-positive">+{totalIn.toFixed(2)}</strong>
+                  </article>
+                  <article className="cash-metric-card cash-metric-card-out">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="out" /></span>Egresos</span>
+                    <strong className="cash-value-negative">-{totalOut.toFixed(2)}</strong>
+                  </article>
+                  <article className="cash-metric-card cash-metric-card-expected">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="expected" /></span>Saldo esperado</span>
+                    <strong>{Number(currentSession.expected_balance).toFixed(2)}</strong>
+                  </article>
+                </div>
 
-              <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
-                Abierta: {currentSession.opened_at} · Caja: {currentSession.cash_register_name ?? currentSession.cash_register_code ?? currentSession.cash_register_id}
-              </p>
+                <div className="cash-session-meta">
+                  <span className="cash-session-meta-pill">Abierta: {currentSession.opened_at}</span>
+                  <span className="cash-session-meta-pill">Caja: {currentSession.cash_register_name ?? currentSession.cash_register_code ?? currentSession.cash_register_id}</span>
+                </div>
+              </div>
 
               {/* Nuevo movimiento */}
-              <div className="form-card">
-                <h4>Registrar Movimiento</h4>
-                <form onSubmit={(e) => void handleAddMovement(e)}>
-                  <div className="grid-form">
-                    <label>
-                      Tipo
-                      <select value={movType} onChange={(e) => setMovType(e.target.value as 'IN' | 'OUT')}>
-                        <option value="IN">Ingreso (IN)</option>
-                        <option value="OUT">Egreso (OUT)</option>
-                      </select>
-                    </label>
-                    <label>
-                      Monto
-                      <input
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        required
-                        value={movAmount}
-                        onChange={(e) => setMovAmount(e.target.value)}
-                      />
-                    </label>
-                    <label style={{ gridColumn: '1 / -1' }}>
-                      Descripcion
-                      <input
-                        type="text"
-                        maxLength={300}
-                        required
-                        value={movDescription}
-                        onChange={(e) => setMovDescription(e.target.value)}
-                      />
-                    </label>
+              <div className="form-card cash-form-card">
+                <div className="cash-section-head">
+                  <div>
+                    <h4>Registrar Movimiento</h4>
+                    <p>Registra ingresos o egresos manuales desde un formulario rapido.</p>
                   </div>
-                  <button type="submit" disabled={submittingMov || loading}>
-                    {submittingMov ? 'Registrando...' : 'Agregar Movimiento'}
+                  <button className="cash-btn cash-btn-primary" type="button" onClick={() => setShowMovementPopup(true)}>
+                    ➕ Nuevo movimiento
                   </button>
-                </form>
+                </div>
+                <div className="cash-movement-inline-summary">
+                  <span className="cash-section-chip">Movimiento manual</span>
+                  <small>El registro se hace en un pop up para no recargar la vista principal.</small>
+                </div>
               </div>
 
+              {showMovementPopup && (
+                <div className="cash-modal-overlay">
+                  <div className="cash-modal-surface cash-modal-surface-movement">
+                    <div className="cash-modal-head">
+                      <div>
+                        <h4>Registrar Movimiento</h4>
+                        <p>{movType === 'IN' ? 'Registra un ingreso manual para la sesion activa.' : 'Registra un egreso manual para la sesion activa.'}</p>
+                      </div>
+                      <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" onClick={() => setShowMovementPopup(false)}>
+                        ✖ Cerrar
+                      </button>
+                    </div>
+                    <form onSubmit={(e) => void handleAddMovement(e)}>
+                      <div className="cash-movement-type-switch" aria-label="Tipo de movimiento">
+                        <button
+                          type="button"
+                          className={movType === 'IN' ? 'cash-movement-type is-active is-in' : 'cash-movement-type is-in'}
+                          onClick={() => setMovType('IN')}
+                        >
+                          <span className="cash-movement-type__kicker">Entrada</span>
+                          <strong>Ingreso manual</strong>
+                        </button>
+                        <button
+                          type="button"
+                          className={movType === 'OUT' ? 'cash-movement-type is-active is-out' : 'cash-movement-type is-out'}
+                          onClick={() => setMovType('OUT')}
+                        >
+                          <span className="cash-movement-type__kicker">Salida</span>
+                          <strong>Egreso manual</strong>
+                        </button>
+                      </div>
+                      <div className="cash-movement-note-strip">
+                        <span className={movType === 'IN' ? 'cash-movement-badge is-in' : 'cash-movement-badge is-out'}>
+                          {movType === 'IN' ? 'Ingreso seleccionado' : 'Egreso seleccionado'}
+                        </span>
+                        <small>{movType === 'IN' ? 'Suma efectivo u otros ingresos a la sesion activa.' : 'Descuenta salida de efectivo u otro ajuste manual.'}</small>
+                      </div>
+                      <div className="grid-form cash-movement-grid">
+                        <label>
+                          Monto
+                          <input
+                            type="number"
+                            min="0.01"
+                            step="0.01"
+                            required
+                            value={movAmount}
+                            onChange={(e) => setMovAmount(e.target.value)}
+                          />
+                        </label>
+                        <label className="wide">
+                          Descripcion
+                          <input
+                            type="text"
+                            maxLength={300}
+                            required
+                            value={movDescription}
+                            onChange={(e) => setMovDescription(e.target.value)}
+                          />
+                        </label>
+                      </div>
+                      <div className="cash-form-actions">
+                        <button className="cash-btn cash-btn-primary" type="submit" disabled={submittingMov || loading}>
+                          {submittingMov ? '⏳ Procesando...' : 'Guardar movimiento'}
+                        </button>
+                        <button className="cash-btn cash-btn-soft" type="button" onClick={() => setShowMovementPopup(false)}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
+
               {/* Movimientos de la sesion */}
-              <div className="table-wrap">
+              <div className="table-wrap cash-table-wrap">
                 <h4>Movimientos de esta sesion</h4>
                 <table>
                   <thead>
@@ -576,12 +769,12 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                       <tr key={m.id}>
                         <td>{m.movement_at}</td>
                         <td style={{ color: m.movement_type === 'IN' ? 'var(--color-ok)' : 'var(--color-err)' }}>
-                          {m.movement_type}
+                          {formatMovementType(m.movement_type)}
                         </td>
                         <td>{Number(m.amount).toFixed(2)}</td>
                         <td>{m.description}</td>
                         <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
-                        <td>{m.ref_type ?? 'MANUAL'}{m.ref_id ? ` #${m.ref_id}` : ''}</td>
+                        <td>{formatReferenceType(m.ref_type)}{m.ref_id ? ` #${m.ref_id}` : ''}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -592,18 +785,25 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
               {!showCloseForm && (
                 <button
                   type="button"
-                  className="danger"
+                  className="cash-btn cash-btn-accent"
                   onClick={() => setShowCloseForm(true)}
                   style={{ marginTop: '1rem' }}
                 >
-                  Cerrar Caja
+                  🛑 Cerrar caja
                 </button>
               )}
 
               {showCloseForm && (
-                <div className="form-card" style={{ borderColor: 'var(--color-err)' }}>
-                  <h4>Cierre de Caja</h4>
-                  <p>Saldo esperado: <strong>{Number(currentSession.expected_balance).toFixed(2)}</strong></p>
+                <div className="form-card cash-form-card cash-close-card" style={{ borderColor: 'var(--color-err)' }}>
+                  <div className="cash-section-head">
+                    <div>
+                      <h4>Cierre de Caja</h4>
+                      <p>Confirma el monto contado y registra observaciones finales de la sesion.</p>
+                    </div>
+                    <span className="cash-section-chip cash-section-chip-muted">
+                      Saldo esperado: <strong>{Number(currentSession.expected_balance).toFixed(2)}</strong>
+                    </span>
+                  </div>
                   <div className="grid-form">
                     <label>
                       Saldo fisico contado
@@ -625,62 +825,38 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                       />
                     </label>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button type="button" onClick={() => void handlePreviewBeforeClose()} disabled={loading || loadingDetail}>
-                      {loadingDetail ? 'Generando vista previa...' : 'Previsualizar Cierre'}
+                  <div className="cash-form-actions">
+                    <button className="cash-btn cash-btn-soft" type="button" onClick={() => void handlePreviewBeforeClose()} disabled={loading || loadingDetail}>
+                      {loadingDetail ? '⏳ Generando vista previa...' : '🧾 Vista previa cierre'}
                     </button>
-                    <button type="button" className="danger" onClick={() => setShowConfirmClosePopup(true)} disabled={loading}>
-                      Confirmar Cierre
+                    <button type="button" className="cash-btn cash-btn-accent" onClick={() => setShowConfirmClosePopup(true)} disabled={loading}>
+                      Confirmar cierre
                     </button>
-                    <button type="button" onClick={() => setShowCloseForm(false)}>
-                      Cancelar
+                    <button className="cash-btn cash-btn-soft" type="button" onClick={() => setShowCloseForm(false)}>
+                      ✖ Cancelar
                     </button>
                   </div>
                 </div>
               )}
 
               {showConfirmClosePopup && (
-                <div
-                  style={{
-                    position: 'fixed',
-                    inset: 0,
-                    background: 'rgba(15, 23, 42, 0.58)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    zIndex: 3000,
-                    padding: '20px',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 'min(520px, 96vw)',
-                      background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
-                      border: '1px solid #dbe4f0',
-                      borderRadius: '14px',
-                      boxShadow: '0 28px 70px rgba(15, 23, 42, 0.38)',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        padding: '14px 16px 10px',
-                        borderBottom: '1px solid #e5e7eb',
-                        background: 'linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%)',
-                        color: '#fff',
-                      }}
-                    >
-                      <h4 style={{ margin: 0, fontSize: '1rem', letterSpacing: '0.2px' }}>Confirmar cierre de caja</h4>
+                <div className="cash-modal-overlay">
+                  <div className="cash-modal-surface cash-modal-surface-confirm">
+                    <div className="cash-modal-head cash-modal-head-confirm">
+                      <div>
+                        <h4>Confirmar cierre de caja</h4>
+                        <p>Revisa esta accion antes de registrar el cierre definitivo.</p>
+                      </div>
                     </div>
-                    <div style={{ padding: '16px' }}>
-                      <p style={{ margin: 0, color: 'var(--color-muted)', fontSize: '0.95rem', lineHeight: 1.45 }}>
+                    <div className="cash-modal-body">
+                      <p className="cash-modal-copy">
                         Esta accion cerrara la sesion actual y registrara el cierre en el sistema. ¿Estas seguro de proceder?
                       </p>
-                      <div style={{ marginTop: '14px', display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <button type="button" onClick={() => setShowConfirmClosePopup(false)}>
-                          Cancelar
+                      <div className="cash-form-actions cash-form-actions-end">
+                        <button className="cash-btn cash-btn-soft" type="button" onClick={() => setShowConfirmClosePopup(false)}>
+                          ✖ Cancelar
                         </button>
-                        <button type="button" className="danger" onClick={() => void confirmAndCloseSession()} disabled={loading}>
+                        <button type="button" className="cash-btn cash-btn-accent" onClick={() => void confirmAndCloseSession()} disabled={loading}>
                           Cerrar caja
                         </button>
                       </div>
@@ -690,9 +866,9 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
               )}
 
               {closeResponse && (
-                <div className="form-card" style={{ borderColor: 'var(--color-ok)' }}>
+                <div className="form-card cash-form-card" style={{ borderColor: 'var(--color-ok)' }}>
                   <h4>Resumen de Cierre</h4>
-                  <div className="stat-grid">
+                  <div className="stat-grid cash-stat-grid">
                     <article>
                       <span>Saldo Inicial</span>
                       <strong>{closeResponse.summary.opening_balance.toFixed(2)}</strong>
@@ -759,19 +935,19 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                   )}
 
                   <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                    <button type="button" onClick={handlePrintReport80mm}>
-                      🖨 Imprimir 80mm (Térmica)
+                    <button className="cash-btn cash-btn-soft" type="button" onClick={handlePrintReport80mm}>
+                      🧾 Ticket 80mm
                     </button>
-                    <button type="button" onClick={handlePrintReportA4}>
-                      🖨 Imprimir A4
+                    <button className="cash-btn cash-btn-soft" type="button" onClick={handlePrintReportA4}>
+                      📄 Formato A4
                     </button>
-                    <button type="button" onClick={() => { setCloseResponse(null); void loadCurrentSession(); }}>
-                      Nueva Sesión
+                    <button className="cash-btn cash-btn-accent" type="button" onClick={() => { setCloseResponse(null); void loadCurrentSession(); }}>
+                      🔄 Nueva sesion
                     </button>
                   </div>
                 </div>
               )}
-            </>
+            </div>
           )}
         </>
       )}
@@ -779,10 +955,16 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       {/* ── HISTORIAL ── */}
       {activeTab === 'historial' && (
         <>
-          <div className="table-wrap">
-            <h4>Historial de Sesiones de Caja</h4>
+          <div className="table-wrap cash-table-wrap cash-history-table-wrap">
+            <div className="cash-table-head">
+              <div>
+                <h4>Historial de Sesiones de Caja</h4>
+                <p>Consulta aperturas, cierres y diferencias con una lectura mas clara.</p>
+              </div>
+              <span className="cash-section-chip cash-section-chip-muted">{sessions.length} sesiones</span>
+            </div>
             <div style={{ overflowX: 'auto', width: '100%' }}>
-            <table style={{ minWidth: '1420px', width: '100%' }}>
+            <table className="cash-history-table" style={{ minWidth: '1420px', width: '100%' }}>
               <thead>
                 <tr>
                   <th style={{ width: '44px', padding: '10px 12px' }}></th>
@@ -803,34 +985,38 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                   const difference = s.closing_balance != null ? Number(s.closing_balance) - Number(s.expected_balance) : null;
                   const isExpanded = expandedSessionId === s.id;
                   return (
-                    <tbody key={`session-${s.id}`}>
-                      <tr onClick={() => void handleExpandSession(s.id)} style={{ cursor: 'pointer', backgroundColor: isExpanded ? '#f0f0f0' : undefined }}>
-                        <td style={{ textAlign: 'center', padding: '10px 12px' }}>{isExpanded ? '▼' : '▶'}</td>
-                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.opened_at ? new Date(s.opened_at).toLocaleString() : '-'}</td>
+                    <Fragment key={`session-${s.id}`}>
+                      <tr className={isExpanded ? 'cash-history-row is-expanded' : 'cash-history-row'} onClick={() => void handleExpandSession(s.id)} style={{ cursor: 'pointer' }}>
+                        <td style={{ textAlign: 'center', padding: '10px 12px' }}>
+                          <span className={isExpanded ? 'cash-row-toggle is-open' : 'cash-row-toggle'}>{isExpanded ? '▾' : '▸'}</span>
+                        </td>
+                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.opened_at ? fmtDateTimeLima(s.opened_at) : '-'}</td>
                         <td style={{ padding: '10px 14px', minWidth: '320px' }}>{s.cash_register_name ?? s.cash_register_code ?? s.cash_register_id}</td>
                         <td style={{ textAlign:'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{Number(s.opening_balance).toFixed(2)}</td>
                         <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.closing_balance != null ? Number(s.closing_balance).toFixed(2) : '-'}</td>
                         <td style={{  textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', color: difference != null && difference >= 0 ? 'var(--color-ok)' : difference != null ? 'var(--color-err)' : undefined }}>
                           {difference != null ? (difference >= 0 ? '+' : '') + difference.toFixed(2) : '-'}
                         </td>
-                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', color: s.status === 'CLOSED' ? 'var(--color-ok)' : 'var(--color-info)' }}>
-                          {s.status}
+                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
+                          <span className={s.status === 'CLOSED' ? 'cash-status-pill cash-status-pill-closed' : 'cash-status-pill cash-status-pill-open'}>
+                            {s.status}
+                          </span>
                         </td>
                         <td style={{ textAlign: 'center', padding: '10px 14px', whiteSpace: 'nowrap' }} onClick={(e) => e.stopPropagation()}>
                           {s.status === 'CLOSED' && (
                             <>
-                              <button type="button" style={{ marginRight: '4px', fontSize: '0.8rem', padding: '2px 8px' }} onClick={(e) => { e.stopPropagation(); void handleRowPrint(s, '80mm'); }}>80mm</button>
-                              <button type="button" style={{ fontSize: '0.8rem', padding: '2px 8px' }} onClick={(e) => { e.stopPropagation(); void handleRowPrint(s, 'A4'); }}>A4</button>
+                              <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" style={{ marginRight: '4px' }} onClick={(e) => { e.stopPropagation(); void handleRowPrint(s, '80mm'); }}>🧾 Ticket</button>
+                              <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" onClick={(e) => { e.stopPropagation(); void handleRowPrint(s, 'A4'); }}>📄 A4</button>
                             </>
                           )}
                         </td>
                       </tr>
                       
                       {isExpanded && sessionDetail && (
-                        <tr style={{ backgroundColor: '#fafafa' }}>
+                        <tr style={{ backgroundColor: '#f8fafc' }}>
                           <td colSpan={8} style={{ padding: '16px', borderTop: '1px solid #ddd' }}>
                             {/* Resumen */}
-                            <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
+                            <div className="cash-detail-card" style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
                               <h5 style={{ margin: '0 0 10px 0' }}>Resumen de Sesión</h5>
                               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: '12px', fontSize: '0.9rem' }}>
                                 <div>
@@ -854,7 +1040,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
 
                             {/* Ventas por Tipo de Pago */}
                             {sessionDetail.payment_method_breakdown.length > 0 && (
-                              <div style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
+                              <div className="cash-detail-card" style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
                                 <h5 style={{ margin: '0 0 10px 0' }}>Ventas por Forma de Pago</h5>
                                 <table style={{ width: '100%', fontSize: '0.85rem' }}>
                                   <thead>
@@ -888,10 +1074,20 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
 
                             {/* Productos vendidos */}
                             {soldProducts.length > 0 && (
-                              <div style={{ padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
+                              <div className="cash-detail-card" style={{ padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
                                 <h5 style={{ margin: '0 0 10px 0' }}>Productos vendidos ({soldProducts.length})</h5>
                                 <div style={{ overflowX: 'auto' }}>
-                                  <table style={{ width: '100%', fontSize: '0.8rem' }}>
+                                  <table style={{ width: '100%', fontSize: '0.8rem', tableLayout: 'fixed' }}>
+                                    <colgroup>
+                                      <col style={{ width: '31%' }} />
+                                      <col style={{ width: '12%' }} />
+                                      <col style={{ width: '7%' }} />
+                                      <col style={{ width: '8%' }} />
+                                      <col style={{ width: '11%' }} />
+                                      <col style={{ width: '12%' }} />
+                                      <col style={{ width: '10%' }} />
+                                      <col style={{ width: '9%' }} />
+                                    </colgroup>
                                     <thead>
                                       <tr style={{ borderBottom: '2px solid #ddd' }}>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Producto</th>
@@ -901,23 +1097,33 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Tipo comprobante</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Serie-correlativo</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Total</th>
+                                        <th style={{ textAlign: 'right', padding: '6px' }}>Margen</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {soldProducts.map((row) => (
                                         <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.documentKind}-${row.documentNumber}`} style={{ borderBottom: '1px solid #eee' }}>
-                                          <td style={{ padding: '6px' }}>{row.description}</td>
-                                          <td style={{ padding: '6px' }}>{row.paymentMethod}</td>
+                                          <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.description}</td>
+                                          <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.paymentMethod}</td>
                                           <td style={{ padding: '6px', textAlign: 'center' }}>{row.unitCode}</td>
                                           <td style={{ padding: '6px', textAlign: 'right' }}>{row.quantity.toFixed(3)}</td>
                                           <td style={{ padding: '6px' }}>{row.documentKind}</td>
                                           <td style={{ padding: '6px' }}>{row.documentNumber}</td>
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600 }}>{row.amount.toFixed(2)}</td>
+                                          <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmount >= 0 ? '#0f766e' : '#b91c1c' }}>
+                                            {row.marginAmount.toFixed(2)} ({row.marginPercent.toFixed(1)}%)
+                                            <div style={{ fontWeight: 500, fontSize: '0.68rem', color: '#64748b' }}>
+                                              {row.marginSource === 'REAL' ? 'Costo real' : row.marginSource === 'MIXED' ? 'Mixto' : 'Estimado'}
+                                            </div>
+                                          </td>
                                         </tr>
                                       ))}
                                     </tbody>
                                   </table>
                                 </div>
+                                <p style={{ marginTop: '8px', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+                                  * Margen estimado usa un ratio conservador cuando el item no tiene costo trazable en inventario.
+                                </p>
                               </div>
                             )}
 
@@ -933,7 +1139,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                           <td colSpan={8} style={{ padding: '16px', textAlign: 'center' }}>Cargando detalles...</td>
                         </tr>
                       )}
-                    </tbody>
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -945,18 +1151,20 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
               </small>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button
+                  className="cash-btn cash-btn-soft"
                   type="button"
                   disabled={loading || sessionsMeta.page <= 1}
                   onClick={() => setSessionsPage((prev) => Math.max(1, prev - 1))}
                 >
-                  Anterior
+                  ← Anterior
                 </button>
                 <button
+                  className="cash-btn cash-btn-soft"
                   type="button"
                   disabled={loading || sessionsMeta.page >= sessionsMeta.last_page}
                   onClick={() => setSessionsPage((prev) => Math.min(sessionsMeta.last_page, prev + 1))}
                 >
-                  Siguiente
+                  Siguiente →
                 </button>
               </div>
             </div>

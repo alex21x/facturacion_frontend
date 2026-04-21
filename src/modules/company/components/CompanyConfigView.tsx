@@ -45,6 +45,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [uploadingLogo, setUploadingLogo] = useState(false);
+  const [logoCacheBuster, setLogoCacheBuster] = useState<number>(Date.now());
 
   // Certificado digital
   const [certFile, setCertFile] = useState<File | null>(null);
@@ -82,6 +83,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     try {
       const p = await fetchCompanyProfile(accessToken);
       setProfile(p);
+      setLogoCacheBuster(Date.now());
       populateForm(p);
     } catch (e) {
       setIsError(true);
@@ -190,6 +192,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
       setMessage(res.message);
       setLogoFile(null);
       setLogoPreview(null);
+      setLogoCacheBuster(Date.now());
       await loadProfile();
     } catch (e) {
       setIsError(true);
@@ -214,9 +217,12 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   }
 
   return (
-    <section className="module-panel">
-      <div className="module-header">
-        <h3>Configuracion de Empresa</h3>
+    <section className="module-panel companycfg-panel">
+      <div className="module-header companycfg-header">
+        <div>
+          <h3>Configuracion de Empresa</h3>
+          <p className="companycfg-lead">Centraliza datos fiscales, contactos, certificados y branding.</p>
+        </div>
         <button type="button" onClick={() => void loadProfile()} disabled={loading}>
           Refrescar
         </button>
@@ -224,11 +230,28 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
 
       {message && <p className={isError ? 'error-box' : 'notice'}>{message}</p>}
 
-      {/* ── DATOS BASICOS ── */}
-      <form onSubmit={(e) => void handleSaveProfile(e)}>
-        <div className="form-card">
-          <h4>Datos de la Empresa</h4>
-          <div className="grid-form">
+      <div className="companycfg-top-stats">
+        <article>
+          <span>RUC</span>
+          <strong>{taxId || 'No definido'}</strong>
+        </article>
+        <article>
+          <span>Razon social</span>
+          <strong>{legalName || 'No definida'}</strong>
+        </article>
+        <article>
+          <span>Certificado</span>
+          <strong>{profile?.has_cert ? 'Configurado' : 'Pendiente'}</strong>
+        </article>
+      </div>
+
+      <form className="companycfg-form" onSubmit={(e) => void handleSaveProfile(e)}>
+        <details className="companycfg-section" open>
+          <summary>Identidad y contacto</summary>
+          <div className="companycfg-section-body">
+            <div className="form-card companycfg-card">
+              <h4>Datos de la Empresa</h4>
+              <div className="grid-form">
             <label>
               RUC / Tax ID
               <input
@@ -319,295 +342,295 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                 placeholder="https://www.empresa.com"
               />
             </label>
-          </div>
-        </div>
+              </div>
+            </div>
 
-        {/* ── UBICACION ── */}
-        <div className="form-card">
-          <h4>Ubicacion Geográfica</h4>
-          <div className="grid-form">
-            <label>
-              UBIGEO (6 dígitos)
-              <input
-                type="text"
-                maxLength={6}
-                value={ubigeo}
-                onChange={(e) => setUbigeo(e.target.value)}
-                placeholder="150131"
-              />
-            </label>
-            <label>
-              Departamento
-              <input
-                type="text"
-                maxLength={100}
-                value={departamento}
-                onChange={(e) => setDepartamento(e.target.value)}
-                placeholder="LIMA"
-              />
-            </label>
-            <label>
-              Provincia
-              <input
-                type="text"
-                maxLength={100}
-                value={provincia}
-                onChange={(e) => setProvincia(e.target.value)}
-                placeholder="LIMA"
-              />
-            </label>
-            <label>
-              Distrito
-              <input
-                type="text"
-                maxLength={100}
-                value={distrito}
-                onChange={(e) => setDistrito(e.target.value)}
-                placeholder="SAN ISIDRO"
-              />
-            </label>
-            <label>
-              Urbanizacion
-              <input
-                type="text"
-                maxLength={100}
-                value={urbanizacion}
-                onChange={(e) => setUrbanizacion(e.target.value)}
-                placeholder="ORRANTIA"
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="form-card">
-          <h4>Credenciales SUNAT Secundarias</h4>
-          <div className="grid-form">
-            <label>
-              Usuario secundario SUNAT
-              <input
-                type="text"
-                maxLength={100}
-                value={sunatSecondaryUser}
-                onChange={(e) => setSunatSecondaryUser(e.target.value)}
-                placeholder="MODDATOS"
-              />
-            </label>
-            <label>
-              Password secundario SUNAT
-              <input
-                type="password"
-                maxLength={100}
-                value={sunatSecondaryPass}
-                onChange={(e) => setSunatSecondaryPass(e.target.value)}
-                placeholder="••••••••"
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
-        </div>
-
-        <div className="form-card">
-          <h4>Credenciales API GRE</h4>
-          <div className="grid-form">
-            <label>
-              Client ID
-              <input
-                type="text"
-                maxLength={200}
-                value={clientId}
-                onChange={(e) => setClientId(e.target.value)}
-                placeholder="Ingresa client_id"
-              />
-            </label>
-            <label>
-              Client Secret
-              <input
-                type="password"
-                maxLength={500}
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                placeholder="Ingresa client_secret"
-                autoComplete="new-password"
-              />
-            </label>
-          </div>
-        </div>
-
-        {/* ── CUENTAS BANCARIAS ── */}
-        <div className="form-card">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h4>Cuentas Bancarias</h4>
-            <button type="button" onClick={addBankAccount}>
-              + Agregar cuenta
-            </button>
-          </div>
-
-          {bankAccounts.length === 0 && (
-            <p className="notice">Sin cuentas bancarias registradas.</p>
-          )}
-
-          {bankAccounts.map((acc, idx) => (
-            <div key={idx} style={{ border: '1px solid var(--color-border)', borderRadius: 6, padding: '0.75rem', marginTop: '0.5rem' }}>
+            <div className="form-card companycfg-card">
+              <h4>Ubicacion Geografica</h4>
               <div className="grid-form">
                 <label>
-                  Banco
+                  UBIGEO (6 digitos)
+                  <input
+                    type="text"
+                    maxLength={6}
+                    value={ubigeo}
+                    onChange={(e) => setUbigeo(e.target.value)}
+                    placeholder="150131"
+                  />
+                </label>
+                <label>
+                  Departamento
                   <input
                     type="text"
                     maxLength={100}
-                    value={acc.bank_name}
-                    onChange={(e) => updateBankAccount(idx, 'bank_name', e.target.value)}
-                    placeholder="BCP, BBVA, Interbank..."
+                    value={departamento}
+                    onChange={(e) => setDepartamento(e.target.value)}
+                    placeholder="LIMA"
                   />
                 </label>
                 <label>
-                  Numero de cuenta
+                  Provincia
                   <input
                     type="text"
-                    maxLength={50}
-                    value={acc.account_number}
-                    onChange={(e) => updateBankAccount(idx, 'account_number', e.target.value)}
-                    placeholder="123-4567890-0-12"
+                    maxLength={100}
+                    value={provincia}
+                    onChange={(e) => setProvincia(e.target.value)}
+                    placeholder="LIMA"
                   />
                 </label>
                 <label>
-                  Moneda
-                  <select value={acc.currency} onChange={(e) => updateBankAccount(idx, 'currency', e.target.value)}>
-                    <option value="PEN">PEN - Soles</option>
-                    <option value="USD">USD - Dolares</option>
-                    <option value="EUR">EUR - Euros</option>
-                  </select>
+                  Distrito
+                  <input
+                    type="text"
+                    maxLength={100}
+                    value={distrito}
+                    onChange={(e) => setDistrito(e.target.value)}
+                    placeholder="SAN ISIDRO"
+                  />
                 </label>
                 <label>
-                  Tipo de cuenta
-                  <select value={acc.account_type} onChange={(e) => updateBankAccount(idx, 'account_type', e.target.value)}>
-                    <option value="Corriente">Corriente</option>
-                    <option value="Ahorros">Ahorros</option>
-                    <option value="CCI">CCI</option>
-                  </select>
+                  Urbanizacion
+                  <input
+                    type="text"
+                    maxLength={100}
+                    value={urbanizacion}
+                    onChange={(e) => setUrbanizacion(e.target.value)}
+                    placeholder="ORRANTIA"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="form-card companycfg-card">
+              <h4>Credenciales SUNAT Secundarias</h4>
+              <div className="grid-form">
+                <label>
+                  Usuario secundario SUNAT
+                  <input
+                    type="text"
+                    maxLength={100}
+                    value={sunatSecondaryUser}
+                    onChange={(e) => setSunatSecondaryUser(e.target.value)}
+                    placeholder="MODDATOS"
+                  />
+                </label>
+                <label>
+                  Password secundario SUNAT
+                  <input
+                    type="password"
+                    maxLength={100}
+                    value={sunatSecondaryPass}
+                    onChange={(e) => setSunatSecondaryPass(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="new-password"
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="form-card companycfg-card">
+              <h4>Credenciales API GRE</h4>
+              <div className="grid-form">
+                <label>
+                  Client ID
+                  <input
+                    type="text"
+                    maxLength={200}
+                    value={clientId}
+                    onChange={(e) => setClientId(e.target.value)}
+                    placeholder="Ingresa client_id"
+                  />
+                </label>
+                <label>
+                  Client Secret
+                  <input
+                    type="password"
+                    maxLength={500}
+                    value={clientSecret}
+                    onChange={(e) => setClientSecret(e.target.value)}
+                    placeholder="Ingresa client_secret"
+                    autoComplete="new-password"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <details className="companycfg-section" open>
+          <summary>Bancos y certificados</summary>
+          <div className="companycfg-section-body">
+            <div className="form-card companycfg-card">
+              <div className="companycfg-card-head">
+                <h4>Cuentas Bancarias</h4>
+                <button type="button" onClick={addBankAccount}>
+                  + Agregar cuenta
+                </button>
+              </div>
+
+              {bankAccounts.length === 0 && (
+                <p className="notice">Sin cuentas bancarias registradas.</p>
+              )}
+
+              {bankAccounts.map((acc, idx) => (
+                <div key={idx} className="companycfg-bank-item">
+                  <div className="grid-form">
+                    <label>
+                      Banco
+                      <input
+                        type="text"
+                        maxLength={100}
+                        value={acc.bank_name}
+                        onChange={(e) => updateBankAccount(idx, 'bank_name', e.target.value)}
+                        placeholder="BCP, BBVA, Interbank..."
+                      />
+                    </label>
+                    <label>
+                      Numero de cuenta
+                      <input
+                        type="text"
+                        maxLength={50}
+                        value={acc.account_number}
+                        onChange={(e) => updateBankAccount(idx, 'account_number', e.target.value)}
+                        placeholder="123-4567890-0-12"
+                      />
+                    </label>
+                    <label>
+                      Moneda
+                      <select
+                        value={acc.currency}
+                        onChange={(e) => updateBankAccount(idx, 'currency', e.target.value)}
+                      >
+                        <option value="PEN">PEN - Soles</option>
+                        <option value="USD">USD - Dolares</option>
+                        <option value="EUR">EUR - Euros</option>
+                      </select>
+                    </label>
+                    <label>
+                      Tipo de cuenta
+                      <select
+                        value={acc.account_type}
+                        onChange={(e) => updateBankAccount(idx, 'account_type', e.target.value)}
+                      >
+                        <option value="Corriente">Corriente</option>
+                        <option value="Ahorros">Ahorros</option>
+                        <option value="CCI">CCI</option>
+                      </select>
+                    </label>
+                  </div>
+                  <button type="button" className="danger companycfg-bank-remove" onClick={() => removeBankAccount(idx)}>
+                    Eliminar
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="form-card companycfg-card">
+              <h4>Certificado Digital</h4>
+              <p className="companycfg-muted">
+                Estado:{' '}
+                <strong className={profile?.has_cert ? 'companycfg-ok' : ''}>
+                  {profile?.has_cert ? 'Certificado configurado' : 'Sin certificado'}
+                </strong>
+              </p>
+              <p className="companycfg-muted">
+                Este bloque usa el mismo boton Guardar Cambios. Si seleccionas certificado, primero guarda en BD
+                y luego registra en el puente.
+              </p>
+              <div className="grid-form">
+                <label>
+                  Archivo del certificado (.p12, .pfx, .pem)
+                  <input
+                    type="file"
+                    accept=".p12,.pfx,.pem"
+                    onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
+                  />
+                </label>
+                <label>
+                  Contrasena del certificado
+                  <input
+                    type="password"
+                    value={certPassword}
+                    autoComplete="new-password"
+                    onChange={(e) => setCertPassword(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                </label>
+              </div>
+
+              {certBridgeDebug && (
+                <div className="companycfg-debug-wrap">
+                  <h5>Destino del puente</h5>
+                  <div className="notice companycfg-code-line">
+                    {certBridgeDebug.method} {certBridgeDebug.endpoint}
+                  </div>
+
+                  <h5>Payload enviado</h5>
+                  <pre className="companycfg-code-box">{JSON.stringify(certBridgeDebug.payload, null, 2)}</pre>
+
+                  {certBridgeResponse !== null && (
+                    <>
+                      <h5>Respuesta del puente</h5>
+                      <pre className="companycfg-code-box">
+                        {typeof certBridgeResponse === 'string'
+                          ? certBridgeResponse
+                          : JSON.stringify(certBridgeResponse, null, 2)}
+                      </pre>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </details>
+
+        <details className="companycfg-section" open>
+          <summary>Branding de empresa</summary>
+          <div className="companycfg-section-body">
+            <div className="form-card companycfg-card">
+              <h4>Logo de la Empresa</h4>
+              {profile?.logo_url && (
+                <div className="companycfg-image-block">
+                  <p className="companycfg-muted">Logo actual:</p>
+                  <img src={`${profile.logo_url}${profile.logo_url.includes('?') ? '&' : '?'}v=${logoCacheBuster}`} alt="Logo empresa" className="companycfg-logo-preview" />
+                </div>
+              )}
+              {logoPreview && (
+                <div className="companycfg-image-block">
+                  <p className="companycfg-muted">Vista previa:</p>
+                  <img src={logoPreview} alt="Vista previa" className="companycfg-logo-preview is-dashed" />
+                </div>
+              )}
+              <div className="grid-form">
+                <label>
+                  Seleccionar imagen (JPG, PNG, GIF, WEBP — max 2 MB)
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/jpg,image/pjpeg,image/jfif,image/png,image/gif,image/webp"
+                    onChange={handleLogoChange}
+                  />
                 </label>
               </div>
               <button
                 type="button"
-                className="danger"
-                style={{ marginTop: '0.5rem', padding: '0.25rem 0.75rem', fontSize: '0.8rem' }}
-                onClick={() => removeBankAccount(idx)}
+                onClick={handleUploadLogo}
+                disabled={!logoFile || uploadingLogo}
+                className="companycfg-upload-btn"
               >
-                Eliminar
+                {uploadingLogo ? 'Subiendo...' : 'Subir Logo'}
               </button>
             </div>
-          ))}
-        </div>
-
-        <div className="form-card" style={{ marginTop: '1rem' }}>
-          <h4 style={{ margin: 0 }}>Certificado Digital</h4>
-          <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>
-            Estado:{' '}
-            <strong style={{ color: profile?.has_cert ? 'var(--color-ok)' : undefined }}>
-              {profile?.has_cert ? 'Certificado configurado' : 'Sin certificado'}
-            </strong>
-          </p>
-          <p style={{ fontSize: '0.8rem', color: 'var(--color-muted)' }}>
-            Este bloque usa el mismo boton Guardar Cambios.
-            Si seleccionas certificado: guarda en BD y luego registra en el puente.
-            Si no seleccionas certificado: solo guarda en BD.
-          </p>
-          <div className="grid-form">
-            <label>
-              Archivo del certificado (.p12, .pfx, .pem)
-              <input
-                type="file"
-                accept=".p12,.pfx,.pem"
-                onChange={(e) => setCertFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            <label>
-              Contrasena del certificado
-              <input
-                type="password"
-                value={certPassword}
-                autoComplete="new-password"
-                onChange={(e) => setCertPassword(e.target.value)}
-                placeholder="••••••••"
-              />
-            </label>
           </div>
+        </details>
 
-          {certBridgeDebug && (
-            <div style={{ marginTop: '1rem' }}>
-              <h5 style={{ marginBottom: '0.25rem' }}>Destino del puente</h5>
-              <div className="notice" style={{ overflowX: 'auto' }}>
-                {certBridgeDebug.method} {certBridgeDebug.endpoint}
-              </div>
-
-              <h5 style={{ marginTop: '0.75rem', marginBottom: '0.25rem' }}>Payload enviado</h5>
-              <pre style={{ margin: 0, padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#f8fafc', overflowX: 'auto', fontSize: '0.8rem' }}>
-                {JSON.stringify(certBridgeDebug.payload, null, 2)}
-              </pre>
-
-              {certBridgeResponse !== null && (
-                <>
-                  <h5 style={{ marginTop: '0.75rem', marginBottom: '0.25rem' }}>Respuesta del puente</h5>
-                  <pre style={{ margin: 0, padding: '0.75rem', border: '1px solid var(--color-border)', borderRadius: 6, background: '#f8fafc', overflowX: 'auto', fontSize: '0.8rem' }}>
-                    {typeof certBridgeResponse === 'string'
-                      ? certBridgeResponse
-                      : JSON.stringify(certBridgeResponse, null, 2)}
-                  </pre>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <button type="submit" disabled={saving || loading || uploadingCert}>
-          <span style={{ display: 'inline-block', padding: '0.5rem 1.2rem' }}>
+        <div className="companycfg-actions">
+          <button type="submit" disabled={saving || loading || uploadingCert}>
+            <span className="companycfg-save-label">
             {saving || uploadingCert ? 'Guardando...' : 'Guardar Cambios'}
-          </span>
-        </button>
-      </form>
-
-      {/* ── LOGO ── */}
-      <div className="form-card" style={{ marginTop: '1.5rem' }}>
-        <h4>Logo de la Empresa</h4>
-        {profile?.logo_url && (
-          <div style={{ marginBottom: '1rem' }}>
-            <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>Logo actual:</p>
-            <img
-              src={profile.logo_url}
-              alt="Logo empresa"
-              style={{ maxHeight: 100, maxWidth: 300, border: '1px solid var(--color-border)', borderRadius: 4 }}
-            />
-          </div>
-        )}
-        {logoPreview && (
-          <div style={{ marginBottom: '1rem' }}>
-            <p style={{ fontSize: '0.85rem', color: 'var(--color-muted)' }}>Vista previa:</p>
-            <img
-              src={logoPreview}
-              alt="Vista previa"
-              style={{ maxHeight: 100, maxWidth: 300, border: '1px dashed var(--color-border)', borderRadius: 4 }}
-            />
-          </div>
-        )}
-        <div className="grid-form">
-          <label>
-            Seleccionar imagen (JPG, PNG, GIF, WEBP — max 2 MB)
-            <input
-              type="file"
-              accept="image/jpeg,image/png,image/gif,image/webp"
-              onChange={handleLogoChange}
-            />
-          </label>
+            </span>
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={handleUploadLogo}
-          disabled={!logoFile || uploadingLogo}
-          style={{ marginTop: '0.5rem' }}
-        >
-          {uploadingLogo ? 'Subiendo...' : 'Subir Logo'}
-        </button>
-      </div>
-
+      </form>
     </section>
   );
 }

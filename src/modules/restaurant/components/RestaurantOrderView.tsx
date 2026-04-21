@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fetchFeatureToggles } from '../../appcfg/api';
 import { fetchInventoryProducts } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
-import { fetchCustomerAutocomplete, fetchSalesLookups, fetchSeriesNumbers } from '../../sales/api';
+import { fetchCustomerAutocomplete, fetchSalesLookups, fetchSeriesNumbers, resolveCustomerByDocument } from '../../sales/api';
 import type { SalesCustomerSuggestion, SalesLookups, SeriesNumber } from '../../sales/types';
 import {
   createRestaurantOrder,
@@ -74,6 +74,7 @@ function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat('es-PE', {
     dateStyle: 'medium',
     timeStyle: 'short',
+    timeZone: 'America/Lima',
   }).format(date);
 }
 
@@ -133,6 +134,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   // ── customer autocomplete ─────────────────────────────────────────────────
   const [customerQuery, setCustomerQuery] = useState('');
   const [customerSuggestions, setCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
+  const [resolvingCustomerDocument, setResolvingCustomerDocument] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<SalesCustomerSuggestion | null>(null);
   const customerDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -144,6 +146,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   const [featuredProductsLoaded, setFeaturedProductsLoaded] = useState(false);
   const [loadingProducts, setLoadingProducts] = useState(false);
   const productDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const productAutocompleteRequestSeqRef = useRef(0);
   const productPreviewRef = useRef<HTMLDivElement | null>(null);
 
   // ── cart ──────────────────────────────────────────────────────────────────
@@ -353,6 +356,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
     if (q.length < 2) {
       setProductSuggestions([]);
+      productAutocompleteRequestSeqRef.current += 1;
       return;
     }
 
@@ -360,12 +364,18 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
       setLoadingProducts(true);
       void (async () => {
         try {
+          const requestSeq = productAutocompleteRequestSeqRef.current + 1;
+          productAutocompleteRequestSeqRef.current = requestSeq;
           const results = await fetchInventoryProducts(accessToken, {
             search: q,
             warehouseId: warehouseId ?? undefined,
             status: 1,
-            limit: 100,
+            limit: 24,
+            autocomplete: true,
           });
+          if (requestSeq !== productAutocompleteRequestSeqRef.current) {
+            return;
+          }
           setProductSuggestions(results);
         } catch {
           setProductSuggestions([]);
@@ -491,6 +501,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   }
 
   function addProductToCart(product: InventoryProduct) {
+    productAutocompleteRequestSeqRef.current += 1;
     setCart((prev) => {
       const existingIndex = prev.findIndex((item) => (
         item.product_id === product.id
@@ -602,6 +613,29 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     setCustomerQuery('');
     setEditingOrderId(null);
     setMessage('');
+  }
+
+  async function handleResolveCustomerDocument() {
+    const document = (customerQuery ?? '').replace(/\D+/g, '').trim();
+
+    if (document.length !== 8 && document.length !== 11) {
+      setMessage('Ingrese un DNI (8) o RUC (11) para consultar.');
+      return;
+    }
+
+    try {
+      setResolvingCustomerDocument(true);
+      setMessage('Consultando padron...');
+      const resolved = await resolveCustomerByDocument(accessToken, document);
+      setSelectedCustomer(resolved.data);
+      setCustomerQuery('');
+      setCustomerSuggestions([]);
+      setMessage(resolved.message);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo consultar el documento.');
+    } finally {
+      setResolvingCustomerDocument(false);
+    }
   }
 
   // ── submit ────────────────────────────────────────────────────────────────
@@ -875,7 +909,17 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
               {/* Customer */}
               <div className="ro-customer-row">
                 <label className="ro-field ro-field--wide" style={{ position: 'relative' }}>
-                  <span>Cliente</span>
+                  <div className="ro-customer-field-head">
+                    <span>Cliente</span>
+                    <button
+                      type="button"
+                      className="restaurant-ghost-btn ro-customer-resolve-btn"
+                      onClick={() => void handleResolveCustomerDocument()}
+                      disabled={submitting || resolvingCustomerDocument}
+                    >
+                      {resolvingCustomerDocument ? 'Consultando...' : 'Consultar DNI/RUC'}
+                    </button>
+                  </div>
                   <input
                     className="restaurant-input"
                     placeholder='Busca o escribe "Consumidor Final"'

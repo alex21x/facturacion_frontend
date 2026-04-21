@@ -11,6 +11,9 @@ export type SeriesNumber = {
 export type CommercialDocumentListItem = {
   id: number;
   document_kind: string;
+  document_kind_id?: number | null;
+  document_kind_base?: string | null;
+  is_tributary_document?: boolean | string | number;
   series: string;
   number: number;
   source_document_id?: number | null;
@@ -114,9 +117,12 @@ export type ConvertCommercialDocumentPayload = {
   due_at?: string;
   cash_register_id?: number | null;
   payment_method_id?: number | null;
+  defer_sunat_send?: boolean;
 };
 
 export type UpdateCommercialDocumentPayload = {
+  document_kind?: string;
+  document_kind_id?: number | null;
   branch_id?: number | null;
   warehouse_id?: number | null;
   cash_register_id?: number | null;
@@ -161,8 +167,12 @@ export type VoidCommercialDocumentPayload = {
 };
 
 export type SalesDocumentKind = {
-  code: 'QUOTATION' | 'SALES_ORDER' | 'INVOICE' | 'RECEIPT' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
+  id: number;
+  code: string;
   label: string;
+  base_kind: string;
+  kind_group: 'PRE_DOCUMENT' | 'TRIBUTARY' | 'NOTE_CREDIT' | 'NOTE_DEBIT';
+  note_target_kind?: 'INVOICE' | 'RECEIPT' | null;
 };
 
 export type SalesCurrency = {
@@ -288,8 +298,17 @@ export type SalesLookups = {
     is_enabled: boolean;
     company_enabled?: boolean | null;
     branch_enabled?: boolean | null;
+    config?: unknown;
     vertical_source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null;
   }>;
+  company_profile?: {
+    tax_id: string | null;
+    legal_name: string;
+    trade_name: string | null;
+    address: string | null;
+    phone: string | null;
+    logo_url: string | null;
+  } | null;
 };
 
 export type SalesDraftItem = {
@@ -310,6 +329,9 @@ export type SalesDraftItem = {
   description: string;
   qty: number;
   unitPrice: number;
+  discountTotal?: number;
+  isFreeOperation?: boolean;
+  freeOperationTotal?: number;
 };
 
 export type CreateDocumentForm = {
@@ -319,6 +341,7 @@ export type CreateDocumentForm = {
   restaurantTableId?: number | null;
   restaurantTableLabel?: string;
   documentKind: SalesDocumentKind['code'];
+  documentKindId?: number | null;
   customerId: number;
   currencyId: number;
   paymentMethodId: number;
@@ -333,7 +356,7 @@ export type CreateDocumentForm = {
   isManualItem: boolean;
   issueDate: string;
   dueDate: string;
-  receiptSendMode?: 'DIRECT' | 'SUMMARY';
+  receiptSendMode?: 'DIRECT' | 'SUMMARY' | 'NO_SEND';
   series: string;
   noteAffectedDocumentId?: number | null;
   noteReasonCode?: string;
@@ -351,6 +374,9 @@ export type CreateDocumentForm = {
     observation?: string;
   }>;
   advanceAmount?: number;
+  globalDiscountAmount?: number;
+  draftLineDiscount?: number;
+  draftIsFreeOperation?: boolean;
   qty: number;
   unitPrice: number;
   status?: 'DRAFT' | 'APPROVED' | 'ISSUED' | 'VOID' | 'CANCELED';

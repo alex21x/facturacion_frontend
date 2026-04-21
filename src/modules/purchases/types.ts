@@ -33,6 +33,9 @@ export type PurchasesLookups = {
   } | null;
   retencion_percentage?: number;
   percepcion_enabled?: boolean;
+  global_discount_enabled?: boolean;
+  item_discount_enabled?: boolean;
+  free_operation_enabled?: boolean;
   percepcion_types?: Array<{
     code: string;
     name: string;
@@ -53,6 +56,7 @@ export type PurchasesLookups = {
 export type StockEntryItemRow = {
   entry_id: number;
   product_id: number;
+  lot_id?: number | null;
   product_name: string;
   qty: number;
   unit_cost: number;
@@ -61,9 +65,11 @@ export type StockEntryItemRow = {
   tax_label: string;
   tax_rate: number;
   tax_amount: number;
+  discount_total?: number;
   line_total: number;
   lot_code: string | null;
   notes: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type StockEntryRow = {
@@ -78,6 +84,7 @@ export type StockEntryRow = {
   supplier_reference: string | null;
   issue_at: string;
   status: string;
+  status_label?: string | null;
   notes: string | null;
   total_items: string;
   total_qty: string;
@@ -111,6 +118,7 @@ export type CreateStockEntryItemPayload = {
   tax_category_id?: number;
   tax_rate?: number;
   notes?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type CreateStockEntryPayload = {
@@ -122,5 +130,16 @@ export type CreateStockEntryPayload = {
   issue_at?: string;
   notes?: string;
   metadata?: Record<string, unknown>;
+  items: CreateStockEntryItemPayload[];
+};
+
+export type UpdateStockEntryPayload = {
+  reference_no?: string;
+  supplier_reference?: string;
+  payment_method_id?: number;
+  issue_at?: string;
+  notes?: string;
+  metadata?: Record<string, unknown>;
+  edit_reason?: string;
   items: CreateStockEntryItemPayload[];
 };

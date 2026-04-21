@@ -1,4 +1,7 @@
-﻿export type PrintableSalesItem = {
+﻿import { fmtDateLima, fmtDateTimeFullLima } from '../../shared/utils/lima';
+import { apiClient } from '../../shared/api/client';
+
+export type PrintableSalesItem = {
   lineNo: number;
   productId?: number | null;
   unitId?: number | null;
@@ -17,12 +20,13 @@
   unitLabel: string;
   description: string;
   unitPrice: number;
+  discountTotal?: number;
   lineTotal: number;
 };
 
 export type PrintableSalesDocument = {
   id: number;
-  documentKind: 'QUOTATION' | 'SALES_ORDER' | 'INVOICE' | 'RECEIPT' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
+  documentKind: string;
   series: string;
   number: number;
   issueDate: string;
@@ -40,8 +44,18 @@ export type PrintableSalesDocument = {
   gravadaTotal: number;
   inafectaTotal: number;
   exoneradaTotal: number;
+  company?: PrintableCompanyProfile | null;
   metadata?: Record<string, unknown> | null;
   items: PrintableSalesItem[];
+};
+
+export type PrintableCompanyProfile = {
+  taxId?: string | null;
+  legalName?: string | null;
+  tradeName?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  logoUrl?: string | null;
 };
 
 function escapeHtml(value: string): string {
@@ -54,39 +68,122 @@ function escapeHtml(value: string): string {
 }
 
 function formatDate(value: string | null | undefined): string {
-  if (!value) {
-    return '-';
-  }
+  return fmtDateLima(value);
+}
 
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  const day = String(date.getDate()).padStart(2, '0');
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
+function formatDateTime(value: string | null | undefined): string {
+  return fmtDateTimeFullLima(value);
 }
 
 function formatMoney(amount: number): string {
   return Number(amount || 0).toFixed(2);
 }
 
+function normalizePrintAssetUrl(rawUrl: string | null | undefined): string | null {
+  const candidate = String(rawUrl ?? '').trim();
+  if (!candidate) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(candidate) || candidate.startsWith('data:')) {
+    return candidate;
+  }
+
+  const base = apiClient.baseUrl.replace(/\/+$/, '');
+  if (candidate.startsWith('//')) {
+    return `http:${candidate}`;
+  }
+
+  if (candidate.startsWith('/')) {
+    return `${base}${candidate}`;
+  }
+
+  return `${base}/${candidate.replace(/^\/+/, '')}`;
+}
+
+function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashReportPrintData): PrintableCompanyProfile {
+  const metadata = ((source as PrintableSalesDocument).metadata ?? {}) as Record<string, unknown>;
+  const inputCompany = (source.company ?? {}) as Record<string, unknown>;
+
+  const taxId = (
+    inputCompany.taxId
+    ?? inputCompany.tax_id
+    ?? metadata.company_tax_id
+    ?? metadata.tax_id
+    ?? null
+  ) as string | null;
+  const legalName = (
+    inputCompany.legalName
+    ?? inputCompany.legal_name
+    ?? metadata.company_legal_name
+    ?? metadata.legal_name
+    ?? null
+  ) as string | null;
+  const tradeName = (
+    inputCompany.tradeName
+    ?? inputCompany.trade_name
+    ?? metadata.company_trade_name
+    ?? metadata.trade_name
+    ?? null
+  ) as string | null;
+  const address = (
+    inputCompany.address
+    ?? inputCompany.company_address
+    ?? metadata.company_address
+    ?? metadata.address
+    ?? null
+  ) as string | null;
+  const phone = (
+    inputCompany.phone
+    ?? inputCompany.company_phone
+    ?? metadata.company_phone
+    ?? metadata.phone
+    ?? null
+  ) as string | null;
+  const logoCandidate = (
+    inputCompany.logoUrl
+    ?? inputCompany.logo_url
+    ?? metadata.company_logo_url
+    ?? metadata.logo_url
+    ?? null
+  ) as string | null;
+
+  return {
+    taxId,
+    legalName,
+    tradeName,
+    address,
+    phone,
+    logoUrl: normalizePrintAssetUrl(logoCandidate),
+  };
+}
+
+function baseDocumentKind(kind: string): string {
+  const normalized = String(kind || '').trim().toUpperCase();
+  if (normalized === 'CREDIT_NOTE' || normalized.startsWith('CREDIT_NOTE_')) {
+    return 'CREDIT_NOTE';
+  }
+  if (normalized === 'DEBIT_NOTE' || normalized.startsWith('DEBIT_NOTE_')) {
+    return 'DEBIT_NOTE';
+  }
+  return normalized;
+}
+
 function kindMeta(kind: PrintableSalesDocument['documentKind']): { shortCode: string; title: string } {
-  if (kind === 'INVOICE') {
+  const baseKind = baseDocumentKind(kind);
+  if (baseKind === 'INVOICE') {
     return { shortCode: 'F', title: 'FACTURA ELECTRONICA' };
   }
-  if (kind === 'RECEIPT') {
+  if (baseKind === 'RECEIPT') {
     return { shortCode: 'B', title: 'BOLETA DE VENTA ELECTRONICA' };
   }
-  if (kind === 'SALES_ORDER') {
+  if (baseKind === 'SALES_ORDER') {
     return { shortCode: 'P', title: 'PEDIDO DE VENTA' };
   }
-  if (kind === 'QUOTATION') {
+  if (baseKind === 'QUOTATION') {
     return { shortCode: 'C', title: 'COTIZACION' };
   }
-  if (kind === 'CREDIT_NOTE') {
+  if (baseKind === 'CREDIT_NOTE') {
     return { shortCode: 'NC', title: 'NOTA DE CREDITO' };
   }
 
@@ -94,7 +191,13 @@ function kindMeta(kind: PrintableSalesDocument['documentKind']): { shortCode: st
 }
 
 function isTributaryKind(kind: PrintableSalesDocument['documentKind']): boolean {
-  return kind === 'INVOICE' || kind === 'RECEIPT' || kind === 'CREDIT_NOTE' || kind === 'DEBIT_NOTE';
+  const baseKind = baseDocumentKind(kind);
+  return baseKind === 'INVOICE' || baseKind === 'RECEIPT' || baseKind === 'CREDIT_NOTE' || baseKind === 'DEBIT_NOTE';
+}
+
+function isNoteKind(kind: PrintableSalesDocument['documentKind']): boolean {
+  const baseKind = baseDocumentKind(kind);
+  return baseKind === 'CREDIT_NOTE' || baseKind === 'DEBIT_NOTE';
 }
 
 function findMetaStringValue(
@@ -146,7 +249,7 @@ function resolveSunatPrintData(metadata: Record<string, unknown>, docKind: Print
 }
 
 function cashDocumentKindLabel(kind: string): string {
-  const normalized = String(kind || '').toUpperCase();
+  const normalized = baseDocumentKind(kind);
   if (normalized === 'INVOICE') return 'Factura';
   if (normalized === 'RECEIPT') return 'Boleta';
   if (normalized === 'SALES_ORDER') return 'Pedido';
@@ -156,12 +259,47 @@ function cashDocumentKindLabel(kind: string): string {
   return normalized || '-';
 }
 
+function resolveNotePrintDetails(doc: PrintableSalesDocument): {
+  sourceDocumentKind: string;
+  sourceDocumentNumber: string;
+  sourceDocumentLabel: string;
+  noteReasonCode: string;
+  noteReasonDescription: string;
+} {
+  const metadata = (doc.metadata ?? {}) as Record<string, unknown>;
+  const sourceDocumentKind = String(metadata.source_document_kind ?? '').trim();
+  const sourceDocumentNumber = String(metadata.source_document_number ?? '').trim();
+  const sourceDocumentLabel = sourceDocumentKind ? cashDocumentKindLabel(sourceDocumentKind) : '-';
+  const noteReasonCode = String(metadata.note_reason_code ?? '').trim();
+  const noteReasonDescription = String(metadata.note_reason_description ?? '').trim();
+
+  return {
+    sourceDocumentKind,
+    sourceDocumentNumber,
+    sourceDocumentLabel,
+    noteReasonCode,
+    noteReasonDescription,
+  };
+}
+
 export function buildCommercialDocumentA4Html(
   doc: PrintableSalesDocument,
   options?: { embedded?: boolean },
 ): string {
   const meta = kindMeta(doc.documentKind);
+  const showTributaryBreakdown = isTributaryKind(doc.documentKind);
+  const isNoteDocument = isNoteKind(doc.documentKind);
   const isEmbedded = options?.embedded === true;
+  const notePrint = resolveNotePrintDetails(doc);
+  const company = resolvePrintableCompanyProfile(doc);
+  const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
+  const companyLegalName = String(company.legalName || companyTitle).trim();
+  const companyTaxId = String(company.taxId || '00000000000').trim() || '00000000000';
+  const companyAddress = String(company.address || '').trim();
+  const companyPhone = String(company.phone || '').trim();
+  const logoHtml = company.logoUrl
+    ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo empresa" class="brand-logo" />`
+    : `<div class="brand-logo brand-logo--placeholder">LOGO</div>`;
 
   const rows = doc.items
     .map((item) => {
@@ -172,6 +310,7 @@ export function buildCommercialDocumentA4Html(
           <td class="ta-c">${escapeHtml(item.unitLabel)}</td>
           <td>${escapeHtml(item.description)}</td>
           <td class="ta-r">${doc.currencySymbol} ${formatMoney(item.unitPrice)}</td>
+          <td class="ta-r">${doc.currencySymbol} ${formatMoney(Number(item.discountTotal ?? 0))}</td>
           <td class="ta-r">${doc.currencySymbol} ${formatMoney(item.lineTotal)}</td>
         </tr>
       `;
@@ -179,48 +318,35 @@ export function buildCommercialDocumentA4Html(
     .join('');
 
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
+  const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
   const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
   const detraccionAmount = Number(metaData.detraccion_amount ?? 0);
   const detraccionRate = Number(metaData.detraccion_rate_percent ?? 0);
-  const detraccionAccount = String(metaData.detraccion_account_number ?? '').trim();
-  const detraccionBank = String(metaData.detraccion_bank_name ?? '').trim();
   const detraccionType = String(metaData.detraccion_service_name ?? '').trim();
   const retencionAmount = Number(metaData.retencion_amount ?? 0);
   const retencionRate = Number(metaData.retencion_rate_percent ?? 0);
-  const retencionAccount = String(metaData.retencion_account_number ?? '').trim();
-  const retencionBank = String(metaData.retencion_bank_name ?? '').trim();
   const retencionType = String(metaData.retencion_type_name ?? '').trim();
   const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
-  const percepcionAccount = String(metaData.percepcion_account_number ?? '').trim();
-  const percepcionBank = String(metaData.percepcion_bank_name ?? '').trim();
   const percepcionType = String(metaData.percepcion_type_name ?? '').trim();
   const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
 
-  const tributaryRows = [
+  const tributaryRows = showTributaryBreakdown ? [
     sunatOpCode
       ? `<tr><td class="label">Tipo Op. SUNAT:</td><td class="value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</td></tr>`
       : '',
     detraccionAmount > 0
       ? `<tr><td class="label">Detraccion${detraccionType ? ` (${escapeHtml(detraccionType)})` : ''}:</td><td class="value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</td></tr>`
       : '',
-    detraccionAccount
-      ? `<tr><td class="label">Cta. Detraccion:</td><td class="value">${escapeHtml(detraccionAccount)}${detraccionBank ? ` (${escapeHtml(detraccionBank)})` : ''}</td></tr>`
-      : '',
     retencionAmount > 0
       ? `<tr><td class="label">Retencion${retencionType ? ` (${escapeHtml(retencionType)})` : ''}:</td><td class="value">${doc.currencySymbol} ${formatMoney(retencionAmount)} (${formatMoney(retencionRate)}%)</td></tr>`
-      : '',
-    retencionAccount
-      ? `<tr><td class="label">Cta. Retencion:</td><td class="value">${escapeHtml(retencionAccount)}${retencionBank ? ` (${escapeHtml(retencionBank)})` : ''}</td></tr>`
       : '',
     percepcionAmount > 0
       ? `<tr><td class="label">Percepcion${percepcionType ? ` (${escapeHtml(percepcionType)})` : ''}:</td><td class="value">${doc.currencySymbol} ${formatMoney(percepcionAmount)} (${formatMoney(percepcionRate)}%)</td></tr>`
       : '',
-    percepcionAccount
-      ? `<tr><td class="label">Cta. Percepcion:</td><td class="value">${escapeHtml(percepcionAccount)}${percepcionBank ? ` (${escapeHtml(percepcionBank)})` : ''}</td></tr>`
-      : '',
-  ].filter((row) => row !== '').join('');
+  ].filter((row) => row !== '').join('') : '';
 
   return `
     <html>
@@ -254,13 +380,18 @@ export function buildCommercialDocumentA4Html(
           .sheet { width: 100%; border: 1.5px solid #1f2937; min-height: 277mm; padding: 8mm; }
           .head { display: grid; grid-template-columns: 1.1fr 1fr; gap: 10px; align-items: stretch; }
           .brand { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; }
-          .brand h1 { margin: 0; font-size: 24px; letter-spacing: 0.6px; }
+          .brand-head { display: flex; gap: 10px; align-items: flex-start; }
+          .brand-logo { width: 82px; height: 82px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
+          .brand-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
+          .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.4px; line-height: 1.15; }
           .brand p { margin: 2px 0; font-size: 11px; color: #4b5563; }
           .voucher { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; text-align: center; }
           .voucher .ruc { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
           .voucher .title { font-size: 18px; margin-top: 4px; letter-spacing: 2px; }
           .voucher .docno { margin-top: 10px; font-size: 22px; font-weight: 700; }
           .party { margin-top: 10px; border: 1px solid #9ca3af; border-radius: 8px; padding: 8px 10px; font-size: 12px; display: grid; grid-template-columns: 1.6fr 1fr; gap: 12px; }
+          .note-box { margin-top: 10px; border: 1px solid #9ca3af; border-radius: 8px; padding: 8px 10px; font-size: 12px; background: #f8fafc; }
+          .note-box h4 { margin: 0 0 6px 0; font-size: 13px; }
           .kv { margin: 2px 0; }
           .kv b { display: inline-block; min-width: 118px; }
           .table-wrap { margin-top: 10px; }
@@ -294,16 +425,21 @@ export function buildCommercialDocumentA4Html(
         <section class="sheet">
           <section class="head">
             <article class="brand">
-              <h1>SISTEMA FACTURACION</h1>
-              <p>Comprobante generado desde modulo de ventas</p>
-              <p>Fecha emision: ${formatDate(doc.issueDate)}</p>
-              <p>Estado: ${escapeHtml(doc.status)}</p>
+              <div class="brand-head">
+                ${logoHtml}
+                <div>
+                  <h1>${escapeHtml(companyTitle)}</h1>
+                  ${companyLegalName !== companyTitle ? `<p>${escapeHtml(companyLegalName)}</p>` : ''}
+                  ${companyAddress ? `<p>${escapeHtml(companyAddress)}</p>` : ''}
+                  ${companyPhone ? `<p>Tel: ${escapeHtml(companyPhone)}</p>` : ''}
+                </div>
+              </div>
+              <p>Fecha emision: ${formatDateTime(doc.issueDate)}</p>
             </article>
             <article class="voucher">
-              <div class="ruc">R.U.C.: 00000000000</div>
+              <div class="ruc">R.U.C.: ${escapeHtml(companyTaxId)}</div>
               <div class="title">${escapeHtml(meta.title)}</div>
               <div class="docno">No.: ${escapeHtml(doc.series)}-${doc.number}</div>
-              <div>Tipo: ${escapeHtml(meta.shortCode)}</div>
             </article>
           </section>
 
@@ -311,7 +447,7 @@ export function buildCommercialDocumentA4Html(
             <article>
               <p class="kv"><b>Razon Social:</b> ${escapeHtml(doc.customerName || '-')}</p>
               <p class="kv"><b>Direccion:</b> ${escapeHtml(doc.customerAddress || '-')}</p>
-              <p class="kv"><b>Fecha Emision:</b> ${formatDate(doc.issueDate)}</p>
+              <p class="kv"><b>Fecha Emision:</b> ${formatDateTime(doc.issueDate)}</p>
               <p class="kv"><b>Tipo Moneda:</b> ${escapeHtml(doc.currencyCode)}</p>
             </article>
             <article>
@@ -322,6 +458,15 @@ export function buildCommercialDocumentA4Html(
             </article>
           </section>
 
+          ${isNoteDocument
+            ? `<section class="note-box">
+                <h4>Datos de la nota</h4>
+                <p class="kv"><b>Documento afectado:</b> ${escapeHtml(notePrint.sourceDocumentLabel)} ${escapeHtml(notePrint.sourceDocumentNumber || '-')}</p>
+                <p class="kv"><b>Tipo de nota:</b> ${escapeHtml(notePrint.noteReasonCode || '-')} ${notePrint.noteReasonDescription ? `- ${escapeHtml(notePrint.noteReasonDescription)}` : ''}</p>
+                <p class="kv"><b>Detalle:</b> La presente nota modifica el comprobante afectado y detalla los productos/items involucrados a continuación.</p>
+              </section>`
+            : ''}
+
           <section class="table-wrap">
             <table>
               <thead>
@@ -329,13 +474,14 @@ export function buildCommercialDocumentA4Html(
                   <th style="width:44px">#</th>
                   <th style="width:76px">Cantidad</th>
                   <th style="width:86px">Unid. Med.</th>
-                  <th>Descripcion</th>
+                  <th>${isNoteDocument ? 'Productos / conceptos afectados' : 'Descripcion'}</th>
                   <th style="width:92px">Valor U.</th>
+                  <th style="width:96px">Descuento</th>
                   <th style="width:96px">Valor Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${rows || '<tr><td colspan="6" class="ta-c">Sin items</td></tr>'}
+                ${rows || '<tr><td colspan="7" class="ta-c">Sin items</td></tr>'}
               </tbody>
             </table>
           </section>
@@ -347,10 +493,12 @@ export function buildCommercialDocumentA4Html(
             <article class="amounts">
               <table>
                 <tbody>
-                  <tr><td class="label">Op. Gravadas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.gravadaTotal)}</td></tr>
-                  <tr><td class="label">Op. Inafectas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.inafectaTotal)}</td></tr>
-                  <tr><td class="label">Op. Exoneradas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</td></tr>
-                  <tr><td class="label">IGV:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</td></tr>
+                  ${showTributaryBreakdown ? `<tr><td class="label">Op. Gravadas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.gravadaTotal)}</td></tr>` : ''}
+                  ${showTributaryBreakdown ? `<tr><td class="label">Op. Inafectas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.inafectaTotal)}</td></tr>` : ''}
+                  ${showTributaryBreakdown ? `<tr><td class="label">Op. Exoneradas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</td></tr>` : ''}
+                  ${showTributaryBreakdown ? `<tr><td class="label">IGV:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</td></tr>` : ''}
+                  ${itemDiscountTotal > 0 ? `<tr><td class="label">Descuento por item:</td><td class="value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</td></tr>` : ''}
+                  ${globalDiscountTotal > 0 ? `<tr><td class="label">Descuento global:</td><td class="value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</td></tr>` : ''}
                   ${tributaryRows}
                   <tr class="total-row"><td class="label">Total a Pagar:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</td></tr>
                 </tbody>
@@ -381,7 +529,13 @@ export function buildCommercialDocument80mmHtml(
   options?: { embedded?: boolean },
 ): string {
   const meta = kindMeta(doc.documentKind);
+  const showTributaryBreakdown = isTributaryKind(doc.documentKind);
+  const isNoteDocument = isNoteKind(doc.documentKind);
   const isEmbedded = options?.embedded === true;
+  const notePrint = resolveNotePrintDetails(doc);
+  const company = resolvePrintableCompanyProfile(doc);
+  const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
+  const companyTaxId = String(company.taxId || '').trim();
 
   const itemsRows = doc.items
     .map((item) => {
@@ -407,19 +561,17 @@ export function buildCommercialDocument80mmHtml(
     })
     .join('');
 
-  const subtotalAmount = doc.gravadaTotal + doc.inafectaTotal + doc.exoneradaTotal;
+  const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
   const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
   const detraccionAmount = Number(metaData.detraccion_amount ?? 0);
   const detraccionRate = Number(metaData.detraccion_rate_percent ?? 0);
-  const detraccionAccount = String(metaData.detraccion_account_number ?? '').trim();
   const retencionAmount = Number(metaData.retencion_amount ?? 0);
   const retencionRate = Number(metaData.retencion_rate_percent ?? 0);
-  const retencionAccount = String(metaData.retencion_account_number ?? '').trim();
   const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
-  const percepcionAccount = String(metaData.percepcion_account_number ?? '').trim();
   const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
 
   return `
@@ -496,6 +648,15 @@ export function buildCommercialDocument80mmHtml(
           .header { 
             text-align: center;
             margin-bottom: 2mm;
+          }
+          .header-logo {
+            width: 22mm;
+            height: 22mm;
+            object-fit: contain;
+            border: 1px solid #000;
+            margin: 0 auto 1mm;
+            display: block;
+            background: #fff;
           }
           .title { 
             font-size: 10px; 
@@ -630,9 +791,12 @@ export function buildCommercialDocument80mmHtml(
         
         <div class="sheet">
           <div class="header">
+            ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" />` : ''}
+            <div class="title">${escapeHtml(companyTitle)}</div>
+            ${companyTaxId ? `<div class="date">RUC: ${escapeHtml(companyTaxId)}</div>` : ''}
             <div class="title">${escapeHtml(meta.title)}</div>
             <div class="docno">${escapeHtml(doc.series)}-${String(doc.number).padStart(6, '0')}</div>
-            <div class="date">${formatDate(doc.issueDate)}</div>
+            <div class="date">${formatDateTime(doc.issueDate)}</div>
           </div>
 
           <div class="divider"></div>
@@ -648,9 +812,23 @@ export function buildCommercialDocument80mmHtml(
             </div>` : ''}
           </div>
 
+          ${isNoteDocument ? `<div class="divider"></div>
+          <div class="section">
+            <div class="section-title">DATOS DE LA NOTA</div>
+            <div class="info-row">
+              <div class="info-label">Afecta:</div>
+              <div class="info-value">${escapeHtml(notePrint.sourceDocumentLabel)} ${escapeHtml(notePrint.sourceDocumentNumber || '-')}</div>
+            </div>
+            <div class="info-row">
+              <div class="info-label">Motivo:</div>
+              <div class="info-value">${escapeHtml(notePrint.noteReasonCode || '-')} ${notePrint.noteReasonDescription ? `- ${escapeHtml(notePrint.noteReasonDescription)}` : ''}</div>
+            </div>
+          </div>` : ''}
+
           <div class="divider"></div>
 
           <div class="items">
+            ${isNoteDocument ? `<div class="section-title" style="margin-bottom:1mm">DETALLE AFECTADO</div>` : ''}
             <table>
               <tbody>
                 ${itemsRows || '<tr><td style="text-align:center">Sin items</td></tr>'}
@@ -659,29 +837,28 @@ export function buildCommercialDocument80mmHtml(
           </div>
 
           <div class="summary">
-            ${doc.gravadaTotal > 0 ? `<div class="summary-row">
+            ${showTributaryBreakdown && doc.gravadaTotal > 0 ? `<div class="summary-row">
               <div class="summary-label">Op. Gravada:</div>
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.gravadaTotal)}</div>
             </div>` : ''}
-            ${doc.inafectaTotal > 0 ? `<div class="summary-row">
+            ${showTributaryBreakdown && doc.inafectaTotal > 0 ? `<div class="summary-row">
               <div class="summary-label">Op. Inafecta:</div>
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.inafectaTotal)}</div>
             </div>` : ''}
-            ${doc.exoneradaTotal > 0 ? `<div class="summary-row">
+            ${showTributaryBreakdown && doc.exoneradaTotal > 0 ? `<div class="summary-row">
               <div class="summary-label">Op. Exonerada:</div>
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</div>
             </div>` : ''}
-            ${doc.taxTotal > 0 ? `<div class="summary-row">
+            ${showTributaryBreakdown && doc.taxTotal > 0 ? `<div class="summary-row">
               <div class="summary-label">IGV:</div>
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</div>
             </div>` : ''}
-            ${sunatOpCode ? `<div class="summary-row"><div class="summary-label">Op. SUNAT:</div><div class="summary-value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</div></div>` : ''}
-            ${detraccionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Detraccion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</div></div>` : ''}
-            ${detraccionAccount ? `<div class="summary-row"><div class="summary-label">Cta. Detrac.:</div><div class="summary-value">${escapeHtml(detraccionAccount)}</div></div>` : ''}
-            ${retencionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Retencion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(retencionAmount)} (${formatMoney(retencionRate)}%)</div></div>` : ''}
-            ${retencionAccount ? `<div class="summary-row"><div class="summary-label">Cta. Reten.:</div><div class="summary-value">${escapeHtml(retencionAccount)}</div></div>` : ''}
-            ${percepcionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Percepcion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(percepcionAmount)} (${formatMoney(percepcionRate)}%)</div></div>` : ''}
-            ${percepcionAccount ? `<div class="summary-row"><div class="summary-label">Cta. Percep.:</div><div class="summary-value">${escapeHtml(percepcionAccount)}</div></div>` : ''}
+            ${itemDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. item:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</div></div>` : ''}
+            ${globalDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. global:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</div></div>` : ''}
+            ${showTributaryBreakdown && sunatOpCode ? `<div class="summary-row"><div class="summary-label">Op. SUNAT:</div><div class="summary-value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</div></div>` : ''}
+            ${showTributaryBreakdown && detraccionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Detraccion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</div></div>` : ''}
+            ${showTributaryBreakdown && retencionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Retencion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(retencionAmount)} (${formatMoney(retencionRate)}%)</div></div>` : ''}
+            ${showTributaryBreakdown && percepcionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Percepcion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(percepcionAmount)} (${formatMoney(percepcionRate)}%)</div></div>` : ''}
             <div class="total-row">
               <span>TOTAL</span>
               <span>${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</span>
@@ -690,7 +867,6 @@ export function buildCommercialDocument80mmHtml(
 
           <div class="footer">
             <div class="footer-item">Forma Pago: ${escapeHtml(doc.paymentMethodName || '-')}</div>
-            <div class="footer-item">Estado: ${escapeHtml(doc.status)}</div>
             ${sunatPrint.signature
               ? `<div class="sunat-ticket">
                   ${sunatPrint.signature ? `<div class="line"><strong>Firma:</strong> ${escapeHtml(sunatPrint.signature)}</div>` : ''}
@@ -762,10 +938,16 @@ export type PaymentMethodBreakdown = {
 };
 
 export type CashReportDocumentItem = {
+  product_id?: number | null;
   description: string;
   quantity: number;
   unit_code: string;
   unit_price: number;
+  unit_cost?: number;
+  cost_total?: number;
+  margin_total?: number;
+  margin_percent?: number;
+  margin_source?: 'REAL' | 'ESTIMATED';
   line_total: number;
 };
 
@@ -805,13 +987,46 @@ export type CashReportPrintData = {
   paymentMethodBreakdown: PaymentMethodBreakdown[];
   movements?: CashReportMovement[];
   documents?: CashReportDocument[];
+  company?: PrintableCompanyProfile | null;
 };
+
+function resolveCashItemMargin(item: CashReportDocumentItem): { costTotal: number; marginTotal: number; marginPercent: number } {
+  const lineTotal = Number(item.line_total || 0);
+  if (lineTotal <= 0) {
+    return { costTotal: 0, marginTotal: 0, marginPercent: 0 };
+  }
+
+  const providedMargin = Number(item.margin_total ?? NaN);
+  const providedCost = Number(item.cost_total ?? NaN);
+
+  if (Number.isFinite(providedMargin)) {
+    const marginTotal = providedMargin;
+    const costTotal = Number.isFinite(providedCost) ? providedCost : lineTotal - marginTotal;
+    return {
+      costTotal,
+      marginTotal,
+      marginPercent: lineTotal > 0 ? (marginTotal / lineTotal) * 100 : 0,
+    };
+  }
+
+  const estimatedMargin = lineTotal * 0.22;
+  const marginTotal = Math.min(Math.max(estimatedMargin, 0), lineTotal * 0.35);
+  const costTotal = Math.max(0, lineTotal - marginTotal);
+  return {
+    costTotal,
+    marginTotal,
+    marginPercent: lineTotal > 0 ? (marginTotal / lineTotal) * 100 : 0,
+  };
+}
 
 export function buildCashReportHtml80mm(
   data: CashReportPrintData,
   options?: { embedded?: boolean },
 ): string {
   const isEmbedded = options?.embedded === true;
+  const company = resolvePrintableCompanyProfile(data);
+  const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
+  const companyTaxId = String(company.taxId || '').trim();
   const paymentRows = data.paymentMethodBreakdown
     .map((pm) => `
       <tr>
@@ -829,6 +1044,7 @@ export function buildCashReportHtml80mm(
     paymentMethod: string;
     quantity: number;
     amount: number;
+    marginAmount: number;
   }>();
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
@@ -843,7 +1059,9 @@ export function buildCashReportHtml80mm(
       if (current) {
         current.quantity += Number(item.quantity || 0);
         current.amount += Number(item.line_total || 0);
+        current.marginAmount += resolveCashItemMargin(item).marginTotal;
       } else {
+        const marginMeta = resolveCashItemMargin(item);
         productMap.set(key, {
           documentKind,
           documentNumber,
@@ -852,6 +1070,7 @@ export function buildCashReportHtml80mm(
           paymentMethod,
           quantity: Number(item.quantity || 0),
           amount: Number(item.line_total || 0),
+          marginAmount: marginMeta.marginTotal,
         });
       }
     }
@@ -868,12 +1087,14 @@ export function buildCashReportHtml80mm(
           <td style="font-size:8px">${escapeHtml(row.documentKind)}</td>
           <td style="font-size:8px">${escapeHtml(row.documentNumber)}</td>
           <td class="ta-r" style="font-size:8px;font-weight:700">${formatMoney(row.amount)}</td>
+          <td class="ta-r" style="font-size:8px;color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmount)}</td>
         </tr>`,
     )
     .join('');
 
   const totalProductQty = productRowsData.reduce((sum, row) => sum + row.quantity, 0);
   const totalProductAmount = productRowsData.reduce((sum, row) => sum + row.amount, 0);
+  const totalProductMargin = productRowsData.reduce((sum, row) => sum + row.marginAmount, 0);
 
   return `
     <html>
@@ -890,6 +1111,7 @@ export function buildCashReportHtml80mm(
           .print-bar button { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; padding: 5px 10px; font-size: 11px; font-weight: 700; border-radius: 8px; cursor: pointer; margin: 0 2px; }
           .print-bar-title { font-size: 11px; font-weight: 700; letter-spacing: 0.2px; }
           .header { text-align: center; border-bottom: 1px dashed #000; padding-bottom: 4mm; margin-bottom: 4mm; }
+          .header-logo { width: 22mm; height: 22mm; object-fit: contain; border: 1px solid #000; border-radius: 4px; margin: 0 auto 1mm; display: block; background: #fff; }
           .header h1 { margin: 0; font-size: 12px; font-weight: 700; }
           .header p { margin: 1px 0; font-size: 9px; }
           .section { margin-bottom: 5mm; border-bottom: 1px dashed #000; padding-bottom: 4mm; }
@@ -918,17 +1140,20 @@ export function buildCashReportHtml80mm(
         </div>`}
         <div class="sheet">
           <div class="header">
+            ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" />` : ''}
+            <p style="font-weight:700">${escapeHtml(companyTitle)}</p>
+            ${companyTaxId ? `<p>RUC: ${escapeHtml(companyTaxId)}</p>` : ''}
             <h1>*** REPORTE DE CAJA ***</h1>
             <p>${escapeHtml(data.cashRegisterName)}</p>
-            <p>Fecha: ${formatDate(data.closedAt || data.openedAt)}</p>
+            <p>Fecha: ${formatDateTime(data.closedAt || data.openedAt)}</p>
           </div>
 
           <div class="section">
             <div class="section-title">INFO GENERAL</div>
             <div class="row"><div class="label">Caja:</div><div class="value">${escapeHtml(data.cashRegisterCode)}</div></div>
             <div class="row"><div class="label">Usuario:</div><div class="value">${escapeHtml(data.userName)}</div></div>
-            <div class="row"><div class="label">Apertura:</div><div class="value">${formatDate(data.openedAt)}</div></div>
-            ${data.closedAt ? `<div class="row"><div class="label">Cierre:</div><div class="value">${formatDate(data.closedAt)}</div></div>` : ''}
+            <div class="row"><div class="label">Apertura:</div><div class="value">${formatDateTime(data.openedAt)}</div></div>
+            ${data.closedAt ? `<div class="row"><div class="label">Cierre:</div><div class="value">${formatDateTime(data.closedAt)}</div></div>` : ''}
           </div>
 
           <div class="section">
@@ -956,15 +1181,15 @@ export function buildCashReportHtml80mm(
           <div class="section">
             <div class="section-title">PRODUCTOS VENDIDOS</div>
             <table>
-              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th><th class="ta-r">Total</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th><th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
               <tbody>
                 ${productRows}
-                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="2"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td></tr>
+                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="2"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
               </tbody>
             </table>
           </div>` : ''}
 
-          <div class="footer">Emitido: ${new Date().toLocaleString('es-PE')}</div>
+          <div class="footer">Emitido: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}</div>
         </div>
       </body>
     </html>`;
@@ -975,6 +1200,9 @@ export function buildCashReportHtmlA4(
   options?: { embedded?: boolean },
 ): string {
   const isEmbedded = options?.embedded === true;
+  const company = resolvePrintableCompanyProfile(data);
+  const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
+  const companyTaxId = String(company.taxId || '').trim();
   const paymentRows = data.paymentMethodBreakdown
     .map((pm) => `
       <tr>
@@ -992,6 +1220,7 @@ export function buildCashReportHtmlA4(
     paymentMethod: string;
     quantity: number;
     amount: number;
+    marginAmount: number;
   }>();
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
@@ -1006,7 +1235,9 @@ export function buildCashReportHtmlA4(
       if (current) {
         current.quantity += Number(item.quantity || 0);
         current.amount += Number(item.line_total || 0);
+        current.marginAmount += resolveCashItemMargin(item).marginTotal;
       } else {
+        const marginMeta = resolveCashItemMargin(item);
         productMap.set(key, {
           documentKind,
           documentNumber,
@@ -1015,6 +1246,7 @@ export function buildCashReportHtmlA4(
           paymentMethod,
           quantity: Number(item.quantity || 0),
           amount: Number(item.line_total || 0),
+          marginAmount: marginMeta.marginTotal,
         });
       }
     }
@@ -1032,12 +1264,14 @@ export function buildCashReportHtmlA4(
         <td>${escapeHtml(row.documentKind)}</td>
         <td>${escapeHtml(row.documentNumber)}</td>
         <td class="ta-r">S/ ${formatMoney(row.amount)}</td>
+        <td class="ta-r" style="color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(row.marginAmount)}</td>
       </tr>`,
     )
     .join('');
 
   const totalProductQty = productRowsData.reduce((sum, row) => sum + row.quantity, 0);
   const totalProductAmount = productRowsData.reduce((sum, row) => sum + row.amount, 0);
+  const totalProductMargin = productRowsData.reduce((sum, row) => sum + row.marginAmount, 0);
 
   return `
     <html>
@@ -1052,6 +1286,7 @@ export function buildCashReportHtmlA4(
           .print-bar button { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; padding: 7px 16px; font-size: 13px; font-weight: 700; border-radius: 8px; cursor: pointer; margin-left: 8px; }
           .page { max-width: 210mm; margin: 0 auto; padding: 14px; }
           .header { text-align: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 10px; }
+          .header-logo { width: 88px; height: 88px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; display: block; margin: 0 auto 6px; }
           .header h1 { margin: 0; font-size: 18px; font-weight: 700; }
           .header p { margin: 1px 0; font-size: 11px; color: #64748b; }
           .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
@@ -1084,9 +1319,12 @@ export function buildCashReportHtmlA4(
         </div>`}
         <div class="page">
           <div class="header">
+            ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" />` : ''}
+            <p style="font-weight:700;color:#0f172a">${escapeHtml(companyTitle)}</p>
+            ${companyTaxId ? `<p>RUC: ${escapeHtml(companyTaxId)}</p>` : ''}
             <h1>REPORTE DE CIERRE DE CAJA</h1>
             <p>${escapeHtml(data.cashRegisterName)}</p>
-            <p>Rango: ${formatDate(data.openedAt)} ${data.closedAt ? `a ${formatDate(data.closedAt)}` : 'a la fecha'}</p>
+            <p>Rango: ${formatDateTime(data.openedAt)} ${data.closedAt ? `a ${formatDateTime(data.closedAt)}` : 'a la fecha'}</p>
             <p>Usuario: ${escapeHtml(data.userName)} | Caja: ${escapeHtml(data.cashRegisterCode)}</p>
           </div>
 
@@ -1111,15 +1349,15 @@ export function buildCashReportHtmlA4(
           <div class="section">
             <div class="section-title">Productos vendidos en la sesion</div>
             <table>
-              <thead><tr><th>Producto</th><th style="width:130px">Tipo de pago</th><th class="ta-c" style="width:90px">Unidad</th><th class="ta-r" style="width:120px">Cantidad</th><th style="width:110px">Tipo comprobante</th><th style="width:130px">Serie-correlativo</th><th class="ta-r" style="width:130px">Total</th></tr></thead>
+              <thead><tr><th style="width:34%">Producto</th><th style="width:11%">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:8%">Cantidad</th><th style="width:10%">Tipo comprobante</th><th style="width:11%">Serie-correlativo</th><th class="ta-r" style="width:10%">Total</th><th class="ta-r" style="width:10%">Margen</th></tr></thead>
               <tbody>
-                ${productRows || '<tr><td colspan="7" class="ta-c">Sin productos vendidos en la sesion</td></tr>'}
-                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="2"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td></tr>
+                ${productRows || '<tr><td colspan="8" class="ta-c">Sin productos vendidos en la sesion</td></tr>'}
+                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="2"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>
               </tbody>
             </table>
           </div>
 
-          <div class="footer">Reporte generado: ${new Date().toLocaleString('es-PE')}</div>
+          <div class="footer">Reporte generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}</div>
         </div>
       </body>
     </html>`;

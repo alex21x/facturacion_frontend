@@ -4,6 +4,7 @@ import type {
   InventoryProduct,
   InventoryStockRow,
   KardexRow,
+  KardexMeta,
   InventoryProDashboardResponse,
   InventoryProDailySnapshotResponse,
   InventoryProLotExpiryResponse,
@@ -21,7 +22,7 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchInventoryProducts(
   accessToken: string,
-  params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number }
+  params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number; autocomplete?: boolean }
 ): Promise<InventoryProduct[]> {
   const query = new URLSearchParams();
   query.set('limit', String(params?.limit ?? 50));
@@ -34,6 +35,9 @@ export async function fetchInventoryProducts(
   }
   if (params?.status === 0 || params?.status === 1) {
     query.set('status', String(params.status));
+  }
+  if (params?.autocomplete) {
+    query.set('autocomplete', 'true');
   }
 
   const response = await apiClient.request<{ data: InventoryProduct[] }>(`/api/inventory/products?${query.toString()}`, {
@@ -91,9 +95,10 @@ export async function fetchKardex(
     warehouseId?: number | null;
     dateFrom?: string;
     dateTo?: string;
-    limit?: number;
+    page?: number;
+    perPage?: number;
   }
-): Promise<KardexRow[]> {
+): Promise<{ data: KardexRow[]; meta: KardexMeta }> {
   const query = new URLSearchParams();
 
   if (params?.productId) {
@@ -108,18 +113,19 @@ export async function fetchKardex(
   if (params?.dateTo) {
     query.set('date_to', params.dateTo);
   }
-  if (params?.limit) {
-    query.set('limit', String(params.limit));
+  if (params?.page) {
+    query.set('page', String(params.page));
+  }
+  if (params?.perPage) {
+    query.set('per_page', String(params.perPage));
   }
 
   const path = query.toString() ? `/api/inventory/kardex?${query.toString()}` : '/api/inventory/kardex';
 
-  const response = await apiClient.request<{ data: KardexRow[] }>(path, {
+  return apiClient.request<{ data: KardexRow[]; meta: KardexMeta }>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
-
-  return response.data;
 }
 
 export async function fetchInventoryProDashboard(
@@ -266,4 +272,125 @@ export async function fetchInventoryProReportRequest(
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+}
+
+export type InventoryBulkImportRow = {
+  id?: number;
+  sku?: string;
+  barcode?: string;
+  name?: string;
+  product_nature?: string;
+  sale_price?: number | string;
+  cost_price?: number | string;
+  unit_code?: string;
+  sunat_code?: string;
+  is_stockable?: boolean | number | string;
+  lot_tracking?: boolean | number | string;
+  has_expiration?: boolean | number | string;
+  status?: boolean | number | string;
+  initial_qty?: number | string;
+  initial_cost?: number | string;
+  warehouse_code?: string;
+};
+
+export type InventoryBulkImportResponse = {
+  message: string;
+  batch_id: number;
+  summary: {
+    total: number;
+    created: number;
+    updated: number;
+    skipped: number;
+    errors: number;
+    stock_applied?: number;
+    stock_skipped?: number;
+  };
+  errors: Array<{ row: number; message: string }>;
+};
+
+export type InventoryProductImportBatch = {
+  id: number;
+  company_id: number;
+  imported_by: number;
+  imported_by_name: string | null;
+  imported_by_username: string | null;
+  filename: string | null;
+  total_rows: number;
+  created_count: number;
+  updated_count: number;
+  skipped_count: number;
+  error_count: number;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  created_at: string;
+};
+
+export type InventoryProductImportBatchItem = {
+  id: number;
+  batch_id: number;
+  row_number: number;
+  action_status: 'CREATED' | 'UPDATED' | 'SKIPPED' | string;
+  product_id: number | null;
+  sku: string | null;
+  barcode: string | null;
+  name: string | null;
+  message: string | null;
+  created_at: string;
+};
+
+export type InventoryProductImportBatchDetail = {
+  batch: InventoryProductImportBatch;
+  items: InventoryProductImportBatchItem[];
+  errors: Array<{ row: number; message: string }>;
+};
+
+export async function importInventoryProductsBulk(
+  accessToken: string,
+  rows: InventoryBulkImportRow[],
+  filename?: string
+): Promise<InventoryBulkImportResponse> {
+  return apiClient.request<InventoryBulkImportResponse>('/api/inventory/products/bulk-import', {
+    method: 'POST',
+    headers: {
+      ...authHeaders(accessToken),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ rows, filename: filename ?? null }),
+  });
+}
+
+export async function fetchInventoryProductImportBatches(
+  accessToken: string,
+  limit = 30
+): Promise<InventoryProductImportBatch[]> {
+  const query = new URLSearchParams();
+  query.set('limit', String(limit));
+
+  const response = await apiClient.request<{ data: InventoryProductImportBatch[] }>(
+    `/api/inventory/products/import-batches?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response.data;
+}
+
+export async function fetchInventoryProductImportBatchDetail(
+  accessToken: string,
+  batchId: number,
+  itemsLimit = 500
+): Promise<InventoryProductImportBatchDetail> {
+  const query = new URLSearchParams();
+  query.set('items_limit', String(itemsLimit));
+
+  return apiClient.request<InventoryProductImportBatchDetail>(
+    `/api/inventory/products/import-batches/${batchId}?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
 }

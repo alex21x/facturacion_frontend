@@ -8,6 +8,7 @@ import type {
   CompanyVerticalSettingsResponse,
   CommerceSettingsResponse,
   FeatureToggleRow,
+  HomeMetricsSummaryResponse,
   IgvSettingsResponse,
   ModuleRow,
   OperationalContextResponse,
@@ -16,6 +17,9 @@ import type {
   ResetAdminPasswordResponse,
   UpdateCommerceSettingsPayload,
   UpdateOperationalLimitsPayload,
+  CompanyCommerceAdminMatrixResponse,
+  CompanyInventorySettingsAdminMatrixResponse,
+  InventorySettingsRecord,
 } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -69,6 +73,35 @@ export async function fetchOperationalContext(
   const path = suffix ? `/api/appcfg/operational-context?${suffix}` : '/api/appcfg/operational-context';
 
   return apiClient.request<OperationalContextResponse>(path, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function fetchHomeMetricsSummary(
+  accessToken: string,
+  params?: {
+    range?: 'DAY' | 'MONTH' | 'YEAR';
+    branchId?: number | null;
+    warehouseId?: number | null;
+  }
+): Promise<HomeMetricsSummaryResponse> {
+  const query = new URLSearchParams();
+
+  if (params?.range) {
+    query.set('range', params.range);
+  }
+  if (params?.branchId) {
+    query.set('branch_id', String(params.branchId));
+  }
+  if (params?.warehouseId) {
+    query.set('warehouse_id', String(params.warehouseId));
+  }
+
+  const suffix = query.toString();
+  const path = suffix ? `/api/appcfg/home-metrics-summary?${suffix}` : '/api/appcfg/home-metrics-summary';
+
+  return apiClient.request<HomeMetricsSummaryResponse>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
@@ -312,5 +345,47 @@ export async function updateCompanyOperationalLimitMatrixBulk(
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchCompanyCommerceAdminMatrix(
+  accessToken: string
+): Promise<CompanyCommerceAdminMatrixResponse> {
+  return apiClient.request<CompanyCommerceAdminMatrixResponse>('/api/appcfg/company-commerce-admin-matrix', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function updateCompanyCommerceAdminMatrix(
+  accessToken: string,
+  companyId: number,
+  features: Record<string, boolean>
+): Promise<CompanyCommerceAdminMatrixResponse> {
+  return apiClient.request<CompanyCommerceAdminMatrixResponse>('/api/appcfg/company-commerce-admin-matrix', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ company_id: companyId, features }),
+  });
+}
+
+export async function fetchCompanyInventorySettingsAdminMatrix(
+  accessToken: string
+): Promise<CompanyInventorySettingsAdminMatrixResponse> {
+  return apiClient.request<CompanyInventorySettingsAdminMatrixResponse>('/api/appcfg/company-inventory-settings-admin-matrix', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function updateCompanyInventorySettingsAdminMatrix(
+  accessToken: string,
+  companyId: number,
+  settings: Partial<InventorySettingsRecord>
+): Promise<CompanyInventorySettingsAdminMatrixResponse> {
+  return apiClient.request<CompanyInventorySettingsAdminMatrixResponse>('/api/appcfg/company-inventory-settings-admin-matrix', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ company_id: companyId, ...settings }),
   });
 }

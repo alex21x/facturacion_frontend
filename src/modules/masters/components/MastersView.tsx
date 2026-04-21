@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { todayLima } from '../../../shared/utils/lima';
 import {
   createRole,
   createUser,
   createCashRegister,
+  createDocumentKind,
   fetchAccessControl,
   fetchCommerceSettings,
   createLot,
@@ -14,7 +16,7 @@ import {
   fetchMastersDashboard,
   updateCommerceSettings,
   updateCashRegister,
-  updateDocumentKinds,
+  updateDocumentKind,
   updateInventorySettings,
   updatePaymentMethod,
   updatePriceTier,
@@ -47,48 +49,65 @@ type MastersViewProps = {
   branchId: number | null;
   warehouseId: number | null;
   currentUserRoleCode: string | null;
+  activeVerticalCode: string | null;
 };
 
 type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'price-tier' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
+type CommerceCategoryTab = 'all' | 'documentos' | 'restaurante' | 'inventario' | 'ventas' | 'compras' | 'otros';
 
-const DOC_KIND_OPTIONS: Array<SeriesRow['document_kind']> = [
-  'QUOTATION',
-  'SALES_ORDER',
-  'INVOICE',
-  'RECEIPT',
-  'CREDIT_NOTE',
-  'DEBIT_NOTE',
+const COMMERCE_CATEGORY_TABS_ALL: Array<{ id: CommerceCategoryTab; label: string }> = [
+  { id: 'all', label: 'Todas' },
+  { id: 'ventas', label: 'Ventas' },
+  { id: 'compras', label: 'Compras' },
+  { id: 'inventario', label: 'Inventario' },
+  { id: 'documentos', label: 'Documentos' },
+  { id: 'restaurante', label: 'Restaurante' },
+  { id: 'otros', label: 'Otros' },
 ];
 
-const DOC_KIND_LABELS: Record<SeriesRow['document_kind'], string> = {
-  QUOTATION: 'Cotizacion',
-  SALES_ORDER: 'Pedido de venta',
-  INVOICE: 'Factura',
-  RECEIPT: 'Boleta',
-  CREDIT_NOTE: 'Nota de credito',
-  DEBIT_NOTE: 'Nota de debito',
-};
-
-function documentKindLabel(code: SeriesRow['document_kind']): string {
-  return DOC_KIND_LABELS[code] ?? code;
+function commerceCategoryByCode(code: string): CommerceCategoryTab {
+  const key = String(code ?? '').toUpperCase();
+  if (key.startsWith('SALES_')) return 'ventas';
+  if (key.startsWith('PURCHASES_')) return 'compras';
+  if (key.startsWith('PRODUCT_') || key.startsWith('INVENTORY_')) return 'inventario';
+  if (key.startsWith('DOC_KIND_')) return 'documentos';
+  if (key.startsWith('RESTAURANT_')) return 'restaurante';
+  return 'otros';
 }
 
 const COMMERCE_FEATURE_LABELS: Record<string, string> = {
-  PRODUCT_MULTI_UOM: 'Unidades multiples por producto',
-  PRODUCT_UOM_CONVERSIONS: 'Conversion entre unidades de producto',
+  // Documentos
+  DOC_KIND_CREDIT_NOTE: 'Notas de crédito',
+  DOC_KIND_DEBIT_NOTE: 'Notas de débito',
+  // Restaurante
+  RESTAURANT_MENU_IGV_INCLUDED: 'Restaurante: Menú con IGV incluido',
+  // Productos e inventario
+  PRODUCT_MULTI_UOM: 'Unidades múltiples por producto',
+  PRODUCT_UOM_CONVERSIONS: 'Conversión entre unidades de producto',
   PRODUCT_WHOLESALE_PRICING: 'Precios mayoristas por volumen',
   INVENTORY_PRODUCTS_BY_PROFILE: 'Permisos por perfil para guardar productos',
   INVENTORY_PRODUCT_MASTERS_BY_PROFILE: 'Permisos por perfil para maestros de producto',
-  SALES_CUSTOMER_PRICE_PROFILE: 'Precios por cliente',
-  SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja independiente',
+  // Ventas
+  SALES_CUSTOMER_PRICE_PROFILE: 'Ventas: Precios por cliente',
+  SALES_SELLER_TO_CASHIER: 'Ventas: Flujo vendedor a caja independiente',
   SALES_ANTICIPO_ENABLED: 'Ventas: Permitir anticipos',
-  SALES_DETRACCION_ENABLED: 'Ventas: Sujeto a detraccion (SUNAT)',
-  SALES_RETENCION_ENABLED: 'Ventas: Sujeto a retencion (SUNAT)',
-  SALES_PERCEPCION_ENABLED: 'Ventas: Sujeto a percepcion (SUNAT)',
-  PURCHASES_DETRACCION_ENABLED: 'Compras: Detraccion del proveedor',
-  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Compras: Retencion al comprador (nosotros retenemos)',
-  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Compras: Retencion del proveedor (nos retienen)',
-  PURCHASES_PERCEPCION_ENABLED: 'Compras: Sujeto a percepcion (SUNAT)',
+  SALES_GLOBAL_DISCOUNT_ENABLED: 'Ventas: Descuento global en ventas',
+  SALES_ITEM_DISCOUNT_ENABLED: 'Ventas: Descuento por item en ventas',
+  SALES_FREE_ITEMS_ENABLED: 'Ventas: Operaciones gratuitas en ventas',
+  SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL: 'Ventas: Editar comprobante antes de respuesta SUNAT',
+  SALES_TAX_BRIDGE: 'Ventas: Envío a SUNAT (puente tributario)',
+  SALES_TAX_BRIDGE_DEBUG_VIEW: 'Ventas: Visor de diagnóstico SUNAT',
+  SALES_DETRACCION_ENABLED: 'Ventas: Sujeto a detracción (SUNAT)',
+  SALES_RETENCION_ENABLED: 'Ventas: Sujeto a retención (SUNAT)',
+  SALES_PERCEPCION_ENABLED: 'Ventas: Sujeto a percepción (SUNAT)',
+  // Compras
+  PURCHASES_GLOBAL_DISCOUNT_ENABLED: 'Compras: Descuento global en compras',
+  PURCHASES_ITEM_DISCOUNT_ENABLED: 'Compras: Descuento por item en compras',
+  PURCHASES_FREE_ITEMS_ENABLED: 'Compras: Operaciones gratuitas en compras',
+  PURCHASES_DETRACCION_ENABLED: 'Compras: Detracción del proveedor',
+  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Compras: Retención al comprador (nosotros retenemos)',
+  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Compras: Retención del proveedor (nos retienen)',
+  PURCHASES_PERCEPCION_ENABLED: 'Compras: Sujeto a percepción (SUNAT)',
 };
 
 function commerceFeatureLabel(code: string): string {
@@ -175,22 +194,36 @@ function parseTaxTypesText(value: string): Array<{ code: string; name: string; r
 }
 
 function defaultOperationTypesText(): string {
-  return '0101:Venta interna:NONE | 1001:Operacion sujeta a detraccion:DETRACCION | 2001:Operacion sujeta a retencion:RETENCION | 3001:Operacion sujeta a percepcion:PERCEPCION';
+  return '0101:Venta interna:NONE | 1001:Operación sujeta a detracción:DETRACCION | 2001:Operación sujeta a retención:RETENCION | 3001:Operación sujeta a percepción:PERCEPCION';
 }
 
 function defaultTaxTypesText(featureCode: string): string {
   if (featureCode === 'SALES_RETENCION_ENABLED' || featureCode === 'PURCHASES_RETENCION_COMPRADOR_ENABLED' || featureCode === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED') {
-    return 'RET_IGV_3:Retencion IGV:3';
+    return 'RET_IGV_3:Retención IGV:3';
   }
 
   if (featureCode === 'SALES_PERCEPCION_ENABLED' || featureCode === 'PURCHASES_PERCEPCION_ENABLED') {
-    return 'PERC_IGV_2:Percepcion IGV:2';
+    return 'PERC_IGV_2:Percepción IGV:2';
   }
 
   return '';
 }
 
-export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode }: MastersViewProps) {
+function isMasterAdvancedCommerceFeature(featureCode: string): boolean {
+  return [
+    'SALES_DETRACCION_ENABLED',
+    'SALES_RETENCION_ENABLED',
+    'SALES_PERCEPCION_ENABLED',
+    'PURCHASES_DETRACCION_ENABLED',
+    'PURCHASES_RETENCION_COMPRADOR_ENABLED',
+    'PURCHASES_RETENCION_PROVEEDOR_ENABLED',
+    'PURCHASES_PERCEPCION_ENABLED',
+    'INVENTORY_PRODUCT_MASTERS_BY_PROFILE',
+    'INVENTORY_PRODUCTS_BY_PROFILE',
+  ].includes(String(featureCode ?? '').toUpperCase());
+}
+
+export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode, activeVerticalCode }: MastersViewProps) {
   const [options, setOptions] = useState<MasterOptionsResponse | null>(null);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [cashRegisters, setCashRegisters] = useState<CashRegisterRow[]>([]);
@@ -214,6 +247,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<MasterSection>('warehouse');
+  const [activeCommerceTab, setActiveCommerceTab] = useState<CommerceCategoryTab>('all');
   const [sectionSearch, setSectionSearch] = useState('');
 
   const warehouseFormRef = useRef<HTMLFormElement | null>(null);
@@ -222,6 +256,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const seriesFormRef = useRef<HTMLFormElement | null>(null);
   const lotFormRef = useRef<HTMLFormElement | null>(null);
   const settingsFormRef = useRef<HTMLFormElement | null>(null);
+  const documentKindFormRef = useRef<HTMLFormElement | null>(null);
   const accessRoleFormRef = useRef<HTMLFormElement | null>(null);
   const accessUserFormRef = useRef<HTMLFormElement | null>(null);
 
@@ -231,6 +266,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     name: '',
     address: '',
   });
+  const [warehouseEditingId, setWarehouseEditingId] = useState<number | null>(null);
 
   const [cashForm, setCashForm] = useState({
     branch_id: branchId,
@@ -246,10 +282,11 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [seriesForm, setSeriesForm] = useState({
     branch_id: branchId,
     warehouse_id: warehouseId,
-    document_kind: 'RECEIPT' as SeriesRow['document_kind'],
+    document_kind: '' as SeriesRow['document_kind'],
     series: '',
     current_number: 0,
   });
+  const [seriesEditingId, setSeriesEditingId] = useState<number | null>(null);
 
   const [priceTierForm, setPriceTierForm] = useState({
     code: '',
@@ -286,6 +323,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     phone: '',
     role_id: 0,
   });
+
+  const [documentKindForm, setDocumentKindForm] = useState({
+    code: '',
+    label: '',
+    is_enabled: true,
+  });
+  const [documentKindEditingId, setDocumentKindEditingId] = useState<number | null>(null);
 
   const normalizedSearch = useMemo(() => sectionSearch.trim().toLowerCase(), [sectionSearch]);
 
@@ -327,6 +371,28 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     [seriesRows, normalizedSearch]
   );
 
+  const seriesDocumentKindOptions = useMemo(() => {
+    return (documentKinds ?? []).map((row) => ({ code: row.code, label: row.label }));
+  }, [documentKinds]);
+
+  const defaultSeriesDocumentKind = useMemo(() => {
+    return seriesDocumentKindOptions[0]?.code ?? 'RECEIPT';
+  }, [seriesDocumentKindOptions]);
+
+  function documentKindLabel(code: string): string {
+    const normalized = String(code ?? '').trim().toUpperCase();
+    const found = seriesDocumentKindOptions.find((row) => row.code.trim().toUpperCase() === normalized);
+    return found?.label ?? code;
+  }
+
+  const availableSeriesWarehouses = useMemo(
+    () =>
+      (options?.warehouses ?? []).filter(
+        (row) => seriesForm.branch_id == null || row.branch_id == null || row.branch_id === seriesForm.branch_id
+      ),
+    [options?.warehouses, seriesForm.branch_id]
+  );
+
   const filteredPriceTiers = useMemo(
     () =>
       priceTiers.filter(
@@ -363,6 +429,23 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     () => documentKinds.filter((row) => includesSearch(row.code) || includesSearch(row.label)),
     [documentKinds, normalizedSearch]
   );
+
+  const filteredCommerceFeatures = useMemo(() => {
+    return commerceFeatures.filter((row) => {
+      const matchesSearch = includesSearch(row.feature_code) || includesSearch(commerceFeatureLabel(row.feature_code));
+      if (!matchesSearch) {
+        return false;
+      }
+      if (activeCommerceTab === 'all') {
+        return true;
+      }
+      return commerceCategoryByCode(row.feature_code) === activeCommerceTab;
+    });
+  }, [commerceFeatures, includesSearch, activeCommerceTab]);
+
+  const masterAdvancedCommerceFeatures = useMemo(() => {
+    return filteredCommerceFeatures.filter((row) => isMasterAdvancedCommerceFeature(row.feature_code));
+  }, [filteredCommerceFeatures]);
 
   const accessModuleMap = useMemo(
     () => Object.fromEntries(accessModules.map((m) => [m.code, m.name])),
@@ -401,6 +484,16 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
 
+  const isRetailVertical = useMemo(
+    () => String(activeVerticalCode ?? '').trim().toUpperCase() === 'RETAIL',
+    [activeVerticalCode]
+  );
+
+  const COMMERCE_CATEGORY_TABS = useMemo(
+    () => COMMERCE_CATEGORY_TABS_ALL.filter((tab) => !(isRetailVertical && tab.id === 'restaurante')),
+    [isRetailVertical]
+  );
+
   const canManagePriceTiers = isAdminUser;
 
   const availableSections = useMemo<MasterSection[]>(() => {
@@ -429,7 +522,8 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     activeSection === 'payment' ||
     activeSection === 'series' ||
     (activeSection === 'price-tier' && canManagePriceTiers) ||
-    activeSection === 'lot';
+    activeSection === 'lot' ||
+    activeSection === 'doc-kinds';
 
   function focusFirstField(formRef: React.RefObject<HTMLFormElement | null>) {
     formRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -448,7 +542,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   }
 
   function exportSectionData() {
-    const dateTag = new Date().toISOString().slice(0, 10);
+    const dateTag = todayLima();
     let fileName = `masters-${activeSection}-${dateTag}.csv`;
     let lines: string[] = [];
 
@@ -628,7 +722,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       setSeriesForm({
         branch_id: branchId,
         warehouse_id: warehouseId,
-        document_kind: 'RECEIPT',
+        document_kind: defaultSeriesDocumentKind,
         series: '',
         current_number: 0,
       });
@@ -654,6 +748,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         unit_cost: 0,
       });
       focusFirstField(lotFormRef);
+      return;
+    }
+
+    if (activeSection === 'doc-kinds') {
+      setDocumentKindForm({ code: '', label: '', is_enabled: true });
+      setDocumentKindEditingId(null);
+      focusFirstField(documentKindFormRef);
       return;
     }
   }
@@ -690,7 +791,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     }
 
     if (activeSection === 'settings') {
-      settingsFormRef.current?.requestSubmit();
+      // Inventory settings are read-only; managed from Admin portal per company
       return;
     }
 
@@ -700,7 +801,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     }
 
     if (activeSection === 'doc-kinds') {
-      void saveDocumentKinds();
+      documentKindFormRef.current?.requestSubmit();
       return;
     }
 
@@ -751,7 +852,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeSection, canCreateInSection, sectionSearch, inventorySettings, documentKinds, units, commerceFeatures]);
+  }, [activeSection, canCreateInSection, sectionSearch, inventorySettings, documentKinds, units, commerceFeatures, defaultSeriesDocumentKind]);
 
   async function loadAll() {
     setLoading(true);
@@ -769,7 +870,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       setLots(dashboard.lots);
       setUnits(dashboard.units);
       setInventorySettings(dashboard.inventory_settings);
-      setDocumentKinds(dashboard.document_kinds);
+      setDocumentKinds(dashboard.document_kinds ?? []);
       setStats(dashboard.stats);
 
       if (isAdminUser) {
@@ -826,10 +927,28 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   useEffect(() => {
     setWarehouseForm((prev) => ({ ...prev, branch_id: branchId }));
     setCashForm((prev) => ({ ...prev, branch_id: branchId }));
-    setSeriesForm((prev) => ({ ...prev, branch_id: branchId, warehouse_id: warehouseId }));
+    setSeriesForm((prev) => (seriesEditingId === null ? { ...prev, branch_id: branchId, warehouse_id: warehouseId } : prev));
     setLotForm((prev) => ({ ...prev, warehouse_id: warehouseId ?? prev.warehouse_id }));
     setAccessUserForm((prev) => ({ ...prev, branch_id: branchId }));
-  }, [branchId, warehouseId]);
+  }, [branchId, warehouseId, seriesEditingId]);
+
+  useEffect(() => {
+    if (seriesEditingId !== null) {
+      return;
+    }
+
+    setSeriesForm((prev) => {
+      const hasCurrent = seriesDocumentKindOptions.some((row) => row.code === prev.document_kind);
+      if (hasCurrent) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        document_kind: defaultSeriesDocumentKind,
+      };
+    });
+  }, [seriesDocumentKindOptions, defaultSeriesDocumentKind, seriesEditingId]);
 
   useEffect(() => {
     setSectionSearch('');
@@ -844,13 +963,37 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   async function saveWarehouse(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await createWarehouse(accessToken, warehouseForm);
-      setMessage('Almacen creado.');
+      if (warehouseEditingId) {
+        await updateWarehouse(accessToken, warehouseEditingId, warehouseForm);
+        setMessage('Almacen actualizado.');
+      } else {
+        await createWarehouse(accessToken, warehouseForm);
+        setMessage('Almacen creado.');
+      }
+      setWarehouseEditingId(null);
       setWarehouseForm({ branch_id: branchId, code: '', name: '', address: '' });
       await loadAll();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo crear almacen');
     }
+  }
+
+  function editWarehouse(row: WarehouseRow) {
+    setWarehouseEditingId(row.id);
+    setWarehouseForm({
+      branch_id: row.branch_id,
+      code: row.code,
+      name: row.name,
+      address: row.address ?? '',
+    });
+    setMessage(`Editando almacen ${row.code}.`);
+    setError('');
+    focusFirstField(warehouseFormRef);
+  }
+
+  function cancelWarehouseEdit() {
+    setWarehouseEditingId(null);
+    setWarehouseForm({ branch_id: branchId, code: '', name: '', address: '' });
   }
 
   async function saveCash(event: React.FormEvent<HTMLFormElement>) {
@@ -880,13 +1023,49 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   async function saveSeries(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await createSeries(accessToken, seriesForm);
-      setMessage('Serie creada.');
-      setSeriesForm((prev) => ({ ...prev, series: '', current_number: 0 }));
+      if (seriesEditingId) {
+        await updateSeries(accessToken, seriesEditingId, seriesForm);
+        setMessage('Serie actualizada.');
+      } else {
+        await createSeries(accessToken, seriesForm);
+        setMessage('Serie creada.');
+      }
+      setSeriesEditingId(null);
+      setSeriesForm({
+        branch_id: branchId,
+        warehouse_id: warehouseId,
+        document_kind: defaultSeriesDocumentKind,
+        series: '',
+        current_number: 0,
+      });
       await loadAll();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'No se pudo crear serie');
+      setError(error instanceof Error ? error.message : 'No se pudo guardar serie');
     }
+  }
+
+  function editSeries(row: SeriesRow) {
+    setSeriesEditingId(row.id);
+    setSeriesForm({
+      branch_id: row.branch_id,
+      warehouse_id: row.warehouse_id,
+      document_kind: row.document_kind,
+      series: row.series,
+      current_number: Number(row.current_number) || 0,
+    });
+    setMessage(`Editando serie ${row.series}.`);
+    setError('');
+  }
+
+  function cancelSeriesEdit() {
+    setSeriesEditingId(null);
+    setSeriesForm({
+      branch_id: branchId,
+      warehouse_id: warehouseId,
+      document_kind: defaultSeriesDocumentKind,
+      series: '',
+      current_number: 0,
+    });
   }
 
   async function savePriceTier() {
@@ -1024,16 +1203,53 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     }
   }
 
-  async function saveDocumentKinds() {
+  async function saveDocumentKind(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
     try {
-      await updateDocumentKinds(
-        accessToken,
-        documentKinds.map((row) => ({ code: row.code, is_enabled: row.is_enabled }))
-      );
-      setMessage('Tipos de comprobante actualizados.');
+      if (documentKindEditingId) {
+        await updateDocumentKind(accessToken, documentKindEditingId, {
+          code: documentKindForm.code.trim().toUpperCase(),
+          label: documentKindForm.label.trim(),
+          is_enabled: documentKindForm.is_enabled,
+        });
+        setMessage('Tipo de comprobante actualizado.');
+      } else {
+        await createDocumentKind(accessToken, {
+          code: documentKindForm.code.trim().toUpperCase(),
+          label: documentKindForm.label.trim(),
+          is_enabled: documentKindForm.is_enabled,
+        });
+        setMessage('Tipo de comprobante creado.');
+      }
+      setDocumentKindEditingId(null);
+      setDocumentKindForm({ code: '', label: '', is_enabled: true });
       await loadAll();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'No se pudieron actualizar tipos de comprobante');
+      setError(error instanceof Error ? error.message : 'No se pudo crear tipo de comprobante');
+    }
+  }
+
+  function editDocumentKind(row: DocumentKindRow) {
+    setDocumentKindEditingId(row.id);
+    setDocumentKindForm({
+      code: row.code,
+      label: row.label,
+      is_enabled: row.is_enabled,
+    });
+    setMessage(`Editando tipo de comprobante ${row.code}.`);
+    setError('');
+  }
+
+  async function toggleDocumentKind(row: DocumentKindRow) {
+    try {
+      await updateDocumentKind(accessToken, row.id, {
+        is_enabled: !row.is_enabled,
+      });
+      setMessage('Estado de tipo de comprobante actualizado.');
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo actualizar tipo de comprobante');
     }
   }
 
@@ -1333,7 +1549,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       {activeSection === 'warehouse' && (
         <div className="master-section-grid">
           <form ref={warehouseFormRef} className="grid-form master-card" onSubmit={saveWarehouse}>
-            <h4>Nuevo Almacen</h4>
+            <h4>{warehouseEditingId ? `Editar Almacen #${warehouseEditingId}` : 'Nuevo Almacen'}</h4>
             <label>
               Sucursal
               <select
@@ -1362,19 +1578,24 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
               Direccion
               <input value={warehouseForm.address} onChange={(e) => setWarehouseForm((prev) => ({ ...prev, address: e.target.value }))} />
             </label>
-            <button className="wide" type="submit">Crear almacen</button>
+            <button className="wide" type="submit">{warehouseEditingId ? 'Guardar cambios' : 'Crear almacen'}</button>
+            {warehouseEditingId && (
+              <button type="button" onClick={cancelWarehouseEdit}>
+                Cancelar edicion
+              </button>
+            )}
           </form>
 
           <div className="table-wrap master-card">
             <h4>Almacenes</h4>
             <table>
-              <thead><tr><th>Codigo</th><th>Nombre</th><th>Estado</th><th></th></tr></thead>
+              <thead><tr><th>Codigo</th><th>Nombre</th><th>Estado</th><th></th><th></th></tr></thead>
               <tbody>
                 {filteredWarehouses.map((row) => (
-                  <tr key={row.id}><td>{row.code}</td><td>{row.name}</td><td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td><td><button type="button" onClick={() => void toggleWarehouse(row)}>{row.status === 1 ? 'Desactivar' : 'Activar'}</button></td></tr>
+                  <tr key={row.id}><td>{row.code}</td><td>{row.name}</td><td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td><td><button type="button" onClick={() => editWarehouse(row)}>Editar</button></td><td><button type="button" onClick={() => void toggleWarehouse(row)}>{row.status === 1 ? 'Desactivar' : 'Activar'}</button></td></tr>
                 ))}
                 {filteredWarehouses.length === 0 && (
-                  <tr><td colSpan={4}>Sin resultados para la busqueda actual.</td></tr>
+                  <tr><td colSpan={5}>Sin resultados para la busqueda actual.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1461,7 +1682,37 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       {activeSection === 'series' && (
         <div className="master-section-grid">
           <form ref={seriesFormRef} className="grid-form master-card" onSubmit={saveSeries}>
-            <h4>Nueva Serie</h4>
+            <h4>{seriesEditingId ? `Editar Serie #${seriesEditingId}` : 'Nueva Serie'}</h4>
+            <label>
+              Sucursal
+              <select
+                value={seriesForm.branch_id ?? ''}
+                onChange={(e) =>
+                  setSeriesForm((prev) => ({
+                    ...prev,
+                    branch_id: e.target.value ? Number(e.target.value) : null,
+                    warehouse_id: null,
+                  }))
+                }
+              >
+                <option value="">Sin sucursal</option>
+                {(options?.branches ?? []).map((row) => (
+                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Almacen
+              <select
+                value={seriesForm.warehouse_id ?? ''}
+                onChange={(e) => setSeriesForm((prev) => ({ ...prev, warehouse_id: e.target.value ? Number(e.target.value) : null }))}
+              >
+                <option value="">Sin almacen</option>
+                {availableSeriesWarehouses.map((row) => (
+                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
+                ))}
+              </select>
+            </label>
             <label>
               Tipo comprobante
               <select
@@ -1470,32 +1721,37 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                   setSeriesForm((prev) => ({ ...prev, document_kind: e.target.value as SeriesRow['document_kind'] }))
                 }
               >
-                {DOC_KIND_OPTIONS.map((row) => (
-                  <option key={row} value={row}>{documentKindLabel(row)}</option>
+                {seriesDocumentKindOptions.map((row) => (
+                  <option key={row.code} value={row.code}>{row.label}</option>
                 ))}
               </select>
             </label>
             <label>
               Serie
-              <input value={seriesForm.series} onChange={(e) => setSeriesForm((prev) => ({ ...prev, series: e.target.value }))} required />
+              <input value={seriesForm.series} onChange={(e) => setSeriesForm((prev) => ({ ...prev, series: e.target.value.toUpperCase() }))} required />
             </label>
             <label>
               Correlativo actual
               <input type="number" min={0} value={seriesForm.current_number} onChange={(e) => setSeriesForm((prev) => ({ ...prev, current_number: Number(e.target.value) }))} />
             </label>
-            <button className="wide" type="submit">Crear serie</button>
+            <button className="wide" type="submit">{seriesEditingId ? 'Guardar cambios' : 'Crear serie'}</button>
+            {seriesEditingId && (
+              <button type="button" onClick={cancelSeriesEdit}>
+                Cancelar edicion
+              </button>
+            )}
           </form>
 
           <div className="table-wrap master-card">
             <h4>Series</h4>
             <table>
-              <thead><tr><th>Tipo</th><th>Serie</th><th>Correlativo</th><th>Activo</th><th></th></tr></thead>
+              <thead><tr><th>Tipo</th><th>Serie</th><th>Correlativo</th><th>Activo</th><th></th><th></th></tr></thead>
               <tbody>
                 {filteredSeriesRows.map((row) => (
-                  <tr key={row.id}><td>{documentKindLabel(row.document_kind)}</td><td>{row.series}</td><td>{row.current_number}</td><td>{row.is_enabled ? 'SI' : 'NO'}</td><td><button type="button" onClick={() => void toggleSeries(row)}>{row.is_enabled ? 'Desactivar' : 'Activar'}</button></td></tr>
+                  <tr key={row.id}><td>{documentKindLabel(row.document_kind)}</td><td>{row.series}</td><td>{row.current_number}</td><td>{row.is_enabled ? 'SI' : 'NO'}</td><td><button type="button" onClick={() => editSeries(row)}>Editar</button></td><td><button type="button" onClick={() => void toggleSeries(row)}>{row.is_enabled ? 'Desactivar' : 'Activar'}</button></td></tr>
                 ))}
                 {filteredSeriesRows.length === 0 && (
-                  <tr><td colSpan={5}>Sin resultados para la busqueda actual.</td></tr>
+                  <tr><td colSpan={6}>Sin resultados para la busqueda actual.</td></tr>
                 )}
               </tbody>
             </table>
@@ -1616,9 +1872,12 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       {activeSection === 'settings' && inventorySettings && (
         <form ref={settingsFormRef} className="grid-form master-card" onSubmit={saveInventorySettings}>
           <h4>Configuracion de Inventario</h4>
+          <p className="notice" style={{ marginTop: 0, marginBottom: '10px' }}>
+            Esta configuracion se administra desde el portal Admin por empresa. Solo lectura.
+          </p>
           <label>
             Perfil de complejidad
-            <select value={inventorySettings.complexity_mode} onChange={(e) => setInventorySettings((prev) => {
+            <select value={inventorySettings.complexity_mode} disabled onChange={(e) => setInventorySettings((prev) => {
               if (!prev) return prev;
               const nextMode = e.target.value as InventorySettings['complexity_mode'];
               if (nextMode === 'BASIC') {
@@ -1650,24 +1909,24 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
           </label>
           <label>
             Modo inventario
-            <select value={inventorySettings.inventory_mode} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, inventory_mode: e.target.value as InventorySettings['inventory_mode'] } : prev)}>
+            <select value={inventorySettings.inventory_mode} disabled onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, inventory_mode: e.target.value as InventorySettings['inventory_mode'] } : prev)}>
               <option value="KARDEX_SIMPLE">KARDEX_SIMPLE</option>
               <option value="LOT_TRACKING">LOT_TRACKING</option>
             </select>
           </label>
           <label>
             Estrategia salida lote
-            <select value={inventorySettings.lot_outflow_strategy} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, lot_outflow_strategy: e.target.value as InventorySettings['lot_outflow_strategy'] } : prev)}>
+            <select value={inventorySettings.lot_outflow_strategy} disabled onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, lot_outflow_strategy: e.target.value as InventorySettings['lot_outflow_strategy'] } : prev)}>
               <option value="MANUAL">MANUAL</option>
               <option value="FIFO">FIFO</option>
               <option value="FEFO">FEFO</option>
             </select>
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_inventory_pro} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_inventory_pro: e.target.checked } : prev)} /> Habilitar Inventory Pro
+            <input type="checkbox" disabled checked={inventorySettings.enable_inventory_pro} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_inventory_pro: e.target.checked } : prev)} /> Habilitar Inventory Pro
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_lot_tracking} onChange={(e) => setInventorySettings((prev) => prev ? {
+            <input type="checkbox" disabled checked={inventorySettings.enable_lot_tracking} onChange={(e) => setInventorySettings((prev) => prev ? {
               ...prev,
               enable_lot_tracking: e.target.checked,
               inventory_mode: e.target.checked ? prev.inventory_mode : 'KARDEX_SIMPLE',
@@ -1676,13 +1935,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             } : prev)} /> Habilitar control por lotes
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_expiry_tracking} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_expiry_tracking: e.target.checked, enable_lot_tracking: e.target.checked ? true : prev.enable_lot_tracking } : prev)} /> Habilitar control de vencimiento
+            <input type="checkbox" disabled checked={inventorySettings.enable_expiry_tracking} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_expiry_tracking: e.target.checked, enable_lot_tracking: e.target.checked ? true : prev.enable_lot_tracking } : prev)} /> Habilitar control de vencimiento
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_advanced_reporting} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_advanced_reporting: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar reportes avanzados
+            <input type="checkbox" disabled checked={inventorySettings.enable_advanced_reporting} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_advanced_reporting: e.target.checked, enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro } : prev)} /> Habilitar reportes avanzados
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? {
+            <input type="checkbox" disabled checked={inventorySettings.enable_graphical_dashboard} onChange={(e) => setInventorySettings((prev) => prev ? {
               ...prev,
               enable_graphical_dashboard: e.target.checked,
               enable_inventory_pro: e.target.checked ? true : prev.enable_inventory_pro,
@@ -1690,15 +1949,14 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             } : prev)} /> Habilitar dashboard grafico
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enable_location_control} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_location_control: e.target.checked } : prev)} /> Habilitar control por ubicacion
+            <input type="checkbox" disabled checked={inventorySettings.enable_location_control} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enable_location_control: e.target.checked } : prev)} /> Habilitar control por ubicacion
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.allow_negative_stock} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, allow_negative_stock: e.target.checked } : prev)} /> Permitir stock negativo
+            <input type="checkbox" disabled checked={inventorySettings.allow_negative_stock} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, allow_negative_stock: e.target.checked } : prev)} /> Permitir stock negativo
           </label>
           <label>
-            <input type="checkbox" checked={inventorySettings.enforce_lot_for_tracked} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enforce_lot_for_tracked: e.target.checked } : prev)} /> Exigir lote para tracking
+            <input type="checkbox" disabled checked={inventorySettings.enforce_lot_for_tracked} onChange={(e) => setInventorySettings((prev) => prev ? { ...prev, enforce_lot_for_tracked: e.target.checked } : prev)} /> Exigir lote para tracking
           </label>
-          <button className="wide" type="submit">Guardar configuracion</button>
         </form>
       )}
 
@@ -1739,89 +1997,132 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       )}
 
       {activeSection === 'doc-kinds' && (
-        <div className="table-wrap master-card">
-          <h4>Tipos de Comprobante Habilitados</h4>
-          <table>
-            <thead><tr><th>Codigo</th><th>Nombre</th><th>Habilitado</th></tr></thead>
-            <tbody>
-              {filteredDocumentKinds.map((row) => {
-                const index = documentKinds.findIndex((item) => item.code === row.code);
-                return (
-                <tr key={row.code}>
-                  <td>{row.code}</td>
-                  <td>{row.label}</td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={row.is_enabled}
-                      onChange={(e) =>
-                        setDocumentKinds((prev) =>
-                          prev.map((item, i) => (i === index ? { ...item, is_enabled: e.target.checked } : item))
-                        )
-                      }
-                    />
-                  </td>
-                </tr>
-                );
-              })}
-              {filteredDocumentKinds.length === 0 && (
-                <tr><td colSpan={3}>Sin resultados para la busqueda actual.</td></tr>
-              )}
-            </tbody>
-          </table>
-          <button type="button" onClick={() => void saveDocumentKinds()}>Guardar tipos comprobante</button>
+        <div className="master-section-grid">
+          <form ref={documentKindFormRef} className="grid-form master-card" onSubmit={saveDocumentKind}>
+            <h4>{documentKindEditingId ? `Editar Tipo Comprobante #${documentKindEditingId}` : 'Nuevo Tipo de Comprobante'}</h4>
+            <label>
+              Codigo
+              <input
+                value={documentKindForm.code}
+                onChange={(e) => setDocumentKindForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))}
+                placeholder="Ej: PROFORMA"
+                maxLength={30}
+                required
+              />
+            </label>
+            <label>
+              Nombre
+              <input
+                value={documentKindForm.label}
+                onChange={(e) => setDocumentKindForm((prev) => ({ ...prev, label: e.target.value }))}
+                placeholder="Ej: Proforma"
+                maxLength={120}
+                required
+              />
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={documentKindForm.is_enabled}
+                onChange={(e) => setDocumentKindForm((prev) => ({ ...prev, is_enabled: e.target.checked }))}
+              /> Habilitado
+            </label>
+            <button className="wide" type="submit">{documentKindEditingId ? 'Guardar cambios' : 'Crear tipo comprobante'}</button>
+          </form>
+
+          <div className="table-wrap master-card">
+            <h4>Tipos de Comprobante</h4>
+            <table>
+              <thead><tr><th>Codigo</th><th>Nombre</th><th>Estado</th><th></th></tr></thead>
+              <tbody>
+                {filteredDocumentKinds.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.code}</td>
+                    <td className="master-doc-kind-label">{row.label}</td>
+                    <td>{row.is_enabled ? 'ACTIVO' : 'INACTIVO'}</td>
+                    <td>
+                      <div className="master-row-actions">
+                        <button type="button" onClick={() => editDocumentKind(row)}>Editar</button>
+                        <button type="button" onClick={() => void toggleDocumentKind(row)}>{row.is_enabled ? 'Desactivar' : 'Activar'}</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {filteredDocumentKinds.length === 0 && (
+                  <tr><td colSpan={4}>Sin resultados para la busqueda actual.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
       {activeSection === 'commerce' && (
-        <div className="table-wrap master-card">
-          <h4>Funciones Comerciales Configurables</h4>
-          <table>
-            <thead><tr><th>Funcion comercial</th><th>Habilitado</th></tr></thead>
-            <tbody>
-              {commerceFeatures
-                .filter((row) => includesSearch(row.feature_code) || includesSearch(commerceFeatureLabel(row.feature_code)))
-                .map((row) => {
-                  const index = commerceFeatures.findIndex((item) => item.feature_code === row.feature_code);
-                  const profileConfig = (row.feature_code === 'INVENTORY_PRODUCT_MASTERS_BY_PROFILE' || row.feature_code === 'INVENTORY_PRODUCTS_BY_PROFILE')
-                    ? {
-                        allow_seller: row.config?.allow_seller !== false,
-                        allow_cashier: row.config?.allow_cashier !== false,
-                        allow_admin: row.config?.allow_admin !== false,
-                      }
-                    : null;
-                  const isTaxFeature = row.feature_code === 'SALES_DETRACCION_ENABLED'
-                    || row.feature_code === 'SALES_RETENCION_ENABLED'
-                    || row.feature_code === 'SALES_PERCEPCION_ENABLED'
-                    || row.feature_code === 'PURCHASES_DETRACCION_ENABLED'
-                    || row.feature_code === 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
-                    || row.feature_code === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED'
-                    || row.feature_code === 'PURCHASES_PERCEPCION_ENABLED';
-                  const isRetencionFeature = row.feature_code === 'SALES_RETENCION_ENABLED'
-                    || row.feature_code === 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
-                    || row.feature_code === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED';
-                  const isPercepcionFeature = row.feature_code === 'SALES_PERCEPCION_ENABLED'
-                    || row.feature_code === 'PURCHASES_PERCEPCION_ENABLED';
-                  const taxConfig = isTaxFeature
-                    ? {
-                        bank_name: String((row.config?.bank_name ?? '') as string),
-                        account_number: String((row.config?.account_number ?? '') as string),
-                        account_holder: String((row.config?.account_holder ?? '') as string),
-                        min_amount: row.feature_code === 'SALES_DETRACCION_ENABLED' || row.feature_code === 'PURCHASES_DETRACCION_ENABLED'
-                          ? String((row.config?.min_amount ?? '700') as string)
+        <div className="mfunc-shell">
+          <div className="mfunc-header master-card">
+            <h4>Funciones comerciales</h4>
+            <p className="mfunc-hint">Aquí se administran parámetros avanzados (cuentas y reglas tributarias/perfiles). Los toggles generales se gestionan en Configuración &gt; Comercial.</p>
+          </div>
+
+          <div className="mfunc-tabs" role="tablist" aria-label="Categorías de funciones comerciales">
+            {COMMERCE_CATEGORY_TABS.map((tab) => (
+              <button
+                key={tab.id}
+                type="button"
+                className={`mfunc-tab ${activeCommerceTab === tab.id ? 'is-active' : ''}`}
+                onClick={() => setActiveCommerceTab(tab.id)}
+                role="tab"
+                aria-selected={activeCommerceTab === tab.id}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="mfunc-group master-card">
+            <div className="mfunc-list">
+              {masterAdvancedCommerceFeatures.map((row) => {
+                const index = commerceFeatures.findIndex((item) => item.feature_code === row.feature_code);
+                const profileConfig = (row.feature_code === 'INVENTORY_PRODUCT_MASTERS_BY_PROFILE' || row.feature_code === 'INVENTORY_PRODUCTS_BY_PROFILE')
+                  ? {
+                      allow_seller: row.config?.allow_seller !== false,
+                      allow_cashier: row.config?.allow_cashier !== false,
+                      allow_admin: row.config?.allow_admin !== false,
+                    }
+                  : null;
+                const isTaxFeature = row.feature_code === 'SALES_DETRACCION_ENABLED'
+                  || row.feature_code === 'SALES_RETENCION_ENABLED'
+                  || row.feature_code === 'SALES_PERCEPCION_ENABLED'
+                  || row.feature_code === 'PURCHASES_DETRACCION_ENABLED'
+                  || row.feature_code === 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
+                  || row.feature_code === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED'
+                  || row.feature_code === 'PURCHASES_PERCEPCION_ENABLED';
+                const isRetencionFeature = row.feature_code === 'SALES_RETENCION_ENABLED'
+                  || row.feature_code === 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
+                  || row.feature_code === 'PURCHASES_RETENCION_PROVEEDOR_ENABLED';
+                const isPercepcionFeature = row.feature_code === 'SALES_PERCEPCION_ENABLED'
+                  || row.feature_code === 'PURCHASES_PERCEPCION_ENABLED';
+                const taxConfig = isTaxFeature
+                  ? {
+                      bank_name: String((row.config?.bank_name ?? '') as string),
+                      account_number: String((row.config?.account_number ?? '') as string),
+                      account_holder: String((row.config?.account_holder ?? '') as string),
+                      min_amount: row.feature_code === 'SALES_DETRACCION_ENABLED' || row.feature_code === 'PURCHASES_DETRACCION_ENABLED'
+                        ? String((row.config?.min_amount ?? '700') as string)
+                        : '',
+                      operation_types_text: operationTypesToText(row.config?.sunat_operation_types) || defaultOperationTypesText(),
+                      tax_types_text: isRetencionFeature
+                        ? (taxTypesToText(row.config?.retencion_types) || defaultTaxTypesText(row.feature_code))
+                        : isPercepcionFeature
+                          ? (taxTypesToText(row.config?.percepcion_types) || defaultTaxTypesText(row.feature_code))
                           : '',
-                        operation_types_text: operationTypesToText(row.config?.sunat_operation_types) || defaultOperationTypesText(),
-                        tax_types_text: isRetencionFeature
-                          ? (taxTypesToText(row.config?.retencion_types) || defaultTaxTypesText(row.feature_code))
-                          : isPercepcionFeature
-                            ? (taxTypesToText(row.config?.percepcion_types) || defaultTaxTypesText(row.feature_code))
-                            : '',
-                      }
-                    : null;
-                  return (
-                    <tr key={row.feature_code}>
-                      <td>{commerceFeatureLabel(row.feature_code)}</td>
-                      <td>
+                    }
+                  : null;
+
+                return (
+                  <div key={row.feature_code} className="mfunc-item">
+                    <div className="mfunc-item-head">
+                      <label className="mfunc-toggle">
                         <input
                           type="checkbox"
                           checked={row.is_enabled}
@@ -1831,146 +2132,96 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                             )
                           }
                         />
-                        {taxConfig && (
-                          <details style={{ marginTop: '0.4rem' }}>
-                            <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Configurar</summary>
-                            <div style={{ marginTop: '0.4rem', display: 'grid', gap: '0.35rem' }}>
-                              <label style={{ display: 'grid', gap: '0.2rem' }}>
-                                Cuenta
-                                <input
-                                  value={taxConfig.account_number}
-                                  onChange={(e) =>
-                                    setCommerceFeatures((prev) =>
-                                      prev.map((item, i) => i === index
-                                        ? {
-                                            ...item,
-                                            config: {
-                                              ...(item.config ?? {}),
-                                              account_number: e.target.value,
-                                            },
-                                          }
-                                        : item)
-                                    )
-                                  }
-                                  placeholder="Ej. 00-123-456789"
-                                />
-                              </label>
-                              <label style={{ display: 'grid', gap: '0.2rem' }}>
-                                Banco
-                                <input
-                                  value={taxConfig.bank_name}
-                                  onChange={(e) =>
-                                    setCommerceFeatures((prev) =>
-                                      prev.map((item, i) => i === index
-                                        ? {
-                                            ...item,
-                                            config: {
-                                              ...(item.config ?? {}),
-                                              bank_name: e.target.value,
-                                            },
-                                          }
-                                        : item)
-                                    )
-                                  }
-                                  placeholder="Ej. Banco de la Nacion"
-                                />
-                              </label>
-                              <label style={{ display: 'grid', gap: '0.2rem' }}>
-                                Titular
-                                <input
-                                  value={taxConfig.account_holder}
-                                  onChange={(e) =>
-                                    setCommerceFeatures((prev) =>
-                                      prev.map((item, i) => i === index
-                                        ? {
-                                            ...item,
-                                            config: {
-                                              ...(item.config ?? {}),
-                                              account_holder: e.target.value,
-                                            },
-                                          }
-                                        : item)
-                                    )
-                                  }
-                                  placeholder="Titular de la cuenta"
-                                />
-                              </label>
-                              {(row.feature_code === 'SALES_DETRACCION_ENABLED' || row.feature_code === 'PURCHASES_DETRACCION_ENABLED') && (
-                                <label style={{ display: 'grid', gap: '0.2rem' }}>
-                                  Umbral monto (PEN)
-                                  <input
-                                    type="number"
-                                    min={0}
-                                    step="0.01"
-                                    value={taxConfig.min_amount}
-                                    onChange={(e) =>
-                                      setCommerceFeatures((prev) =>
-                                        prev.map((item, i) => i === index
-                                          ? {
-                                              ...item,
-                                              config: {
-                                                ...(item.config ?? {}),
-                                                min_amount: Number(e.target.value || 0),
-                                              },
-                                            }
-                                          : item)
-                                      )
-                                    }
-                                  />
-                                </label>
-                              )}
-                              <label style={{ display: 'grid', gap: '0.2rem' }}>
-                                Tipos operación SUNAT (formato: codigo:nombre:regimen)
-                                <input
-                                  value={taxConfig.operation_types_text}
-                                  onChange={(e) =>
-                                    setCommerceFeatures((prev) =>
-                                      prev.map((item, i) => i === index
-                                        ? {
-                                            ...item,
-                                            config: {
-                                              ...(item.config ?? {}),
-                                              sunat_operation_types: parseOperationTypesText(e.target.value),
-                                            },
-                                          }
-                                        : item)
-                                    )
-                                  }
-                                  placeholder="0101:Venta interna:NONE | 1001:Operacion sujeta a detraccion:DETRACCION"
-                                />
-                              </label>
-                              {(isRetencionFeature || isPercepcionFeature) && (
-                                <label style={{ display: 'grid', gap: '0.2rem' }}>
-                                  Tipos tributarios (formato: codigo:nombre:tasa | codigo:nombre:tasa)
-                                  <input
-                                    value={taxConfig.tax_types_text}
-                                    onChange={(e) =>
-                                      setCommerceFeatures((prev) =>
-                                        prev.map((item, i) => i === index
-                                          ? {
-                                              ...item,
-                                              config: {
-                                                ...(item.config ?? {}),
-                                                [isRetencionFeature ? 'retencion_types' : 'percepcion_types']:
-                                                  parseTaxTypesText(e.target.value),
-                                              },
-                                            }
-                                          : item)
-                                      )
-                                    }
-                                    placeholder="RET_IGV_3:Retencion IGV:3 | PERC_IGV_2:Percepcion IGV:2"
-                                  />
-                                </label>
-                              )}
-                            </div>
-                          </details>
-                        )}
-                        {profileConfig && (
-                          <div style={{ marginTop: '0.45rem', display: 'grid', gap: '0.25rem' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 500 }}>
+                        <span className={`mfunc-toggle-chip ${row.is_enabled ? 'is-on' : 'is-off'}`}>{row.is_enabled ? 'ON' : 'OFF'}</span>
+                        <span className="mfunc-item-label">{commerceFeatureLabel(row.feature_code)}</span>
+                      </label>
+                    </div>
+
+                    {taxConfig && (
+                      <details className="mfunc-config-panel">
+                        <summary className="mfunc-config-summary">Configurar cuenta y tipos SUNAT</summary>
+                        <div className="mfunc-config-body">
+                          <label className="mfunc-field">
+                            Número de cuenta
+                            <input
+                              value={taxConfig.account_number}
+                              onChange={(e) =>
+                                setCommerceFeatures((prev) =>
+                                  prev.map((item, i) => i === index
+                                    ? { ...item, config: { ...(item.config ?? {}), account_number: e.target.value } }
+                                    : item)
+                                )
+                              }
+                              placeholder="Ej. 00-123-456789"
+                            />
+                          </label>
+                          <label className="mfunc-field">
+                            Banco
+                            <input
+                              value={taxConfig.bank_name}
+                              onChange={(e) =>
+                                setCommerceFeatures((prev) =>
+                                  prev.map((item, i) => i === index
+                                    ? { ...item, config: { ...(item.config ?? {}), bank_name: e.target.value } }
+                                    : item)
+                                )
+                              }
+                              placeholder="Ej. Banco de la Nacion"
+                            />
+                          </label>
+                          <label className="mfunc-field">
+                            Titular de cuenta
+                            <input
+                              value={taxConfig.account_holder}
+                              onChange={(e) =>
+                                setCommerceFeatures((prev) =>
+                                  prev.map((item, i) => i === index
+                                    ? { ...item, config: { ...(item.config ?? {}), account_holder: e.target.value } }
+                                    : item)
+                                )
+                              }
+                              placeholder="Razón social o nombre"
+                            />
+                          </label>
+                          {(row.feature_code === 'SALES_DETRACCION_ENABLED' || row.feature_code === 'PURCHASES_DETRACCION_ENABLED') && (
+                            <label className="mfunc-field">
+                              Monto umbral detracción (PEN)
                               <input
-                                type="checkbox"
-                                checked={profileConfig.allow_seller}
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                value={taxConfig.min_amount}
+                                onChange={(e) =>
+                                  setCommerceFeatures((prev) =>
+                                    prev.map((item, i) => i === index
+                                      ? { ...item, config: { ...(item.config ?? {}), min_amount: Number(e.target.value || 0) } }
+                                      : item)
+                                  )
+                                }
+                              />
+                            </label>
+                          )}
+                          <label className="mfunc-field mfunc-field-wide">
+                            Tipos de operación SUNAT
+                            <small className="mfunc-field-hint">Formato: codigo:nombre:regimen | codigo:nombre:regimen</small>
+                            <input
+                              value={taxConfig.operation_types_text}
+                              onChange={(e) =>
+                                setCommerceFeatures((prev) =>
+                                  prev.map((item, i) => i === index
+                                    ? { ...item, config: { ...(item.config ?? {}), sunat_operation_types: parseOperationTypesText(e.target.value) } }
+                                    : item)
+                                )
+                              }
+                              placeholder="0101:Venta interna:NONE | 1001:Operacion sujeta a detraccion:DETRACCION"
+                            />
+                          </label>
+                          {(isRetencionFeature || isPercepcionFeature) && (
+                            <label className="mfunc-field mfunc-field-wide">
+                              Tipos tributarios
+                              <small className="mfunc-field-hint">Formato: codigo:nombre:tasa | codigo:nombre:tasa</small>
+                              <input
+                                value={taxConfig.tax_types_text}
                                 onChange={(e) =>
                                   setCommerceFeatures((prev) =>
                                     prev.map((item, i) => i === index
@@ -1978,73 +2229,80 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                                           ...item,
                                           config: {
                                             ...(item.config ?? {}),
-                                            allow_seller: e.target.checked,
-                                            allow_cashier: (item.config?.allow_cashier ?? true) !== false,
-                                            allow_admin: (item.config?.allow_admin ?? true) !== false,
+                                            [isRetencionFeature ? 'retencion_types' : 'percepcion_types']: parseTaxTypesText(e.target.value),
                                           },
                                         }
                                       : item)
                                   )
                                 }
+                                placeholder="RET_IGV_3:Retencion IGV:3 | PERC_IGV_2:Percepcion IGV:2"
                               />
-                              Permitir vendedor
                             </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 500 }}>
-                              <input
-                                type="checkbox"
-                                checked={profileConfig.allow_cashier}
-                                onChange={(e) =>
-                                  setCommerceFeatures((prev) =>
-                                    prev.map((item, i) => i === index
-                                      ? {
-                                          ...item,
-                                          config: {
-                                            ...(item.config ?? {}),
-                                            allow_seller: (item.config?.allow_seller ?? true) !== false,
-                                            allow_cashier: e.target.checked,
-                                            allow_admin: (item.config?.allow_admin ?? true) !== false,
-                                          },
-                                        }
-                                      : item)
-                                  )
-                                }
-                              />
-                              Permitir cajero
-                            </label>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 500 }}>
-                              <input
-                                type="checkbox"
-                                checked={profileConfig.allow_admin}
-                                onChange={(e) =>
-                                  setCommerceFeatures((prev) =>
-                                    prev.map((item, i) => i === index
-                                      ? {
-                                          ...item,
-                                          config: {
-                                            ...(item.config ?? {}),
-                                            allow_seller: (item.config?.allow_seller ?? true) !== false,
-                                            allow_cashier: (item.config?.allow_cashier ?? true) !== false,
-                                            allow_admin: e.target.checked,
-                                          },
-                                        }
-                                      : item)
-                                  )
-                                }
-                              />
-                              Permitir admin/general
-                            </label>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              {commerceFeatures.filter((row) => includesSearch(row.feature_code) || includesSearch(commerceFeatureLabel(row.feature_code))).length === 0 && (
-                <tr><td colSpan={2}>Sin resultados para la busqueda actual.</td></tr>
+                          )}
+                        </div>
+                      </details>
+                    )}
+
+                    {profileConfig && (
+                      <div className="mfunc-profile-group">
+                        <span className="mfunc-profile-label">Perfiles con acceso:</span>
+                        <label className="mfunc-profile-check">
+                          <input
+                            type="checkbox"
+                            checked={profileConfig.allow_seller}
+                            onChange={(e) =>
+                              setCommerceFeatures((prev) =>
+                                prev.map((item, i) => i === index
+                                  ? { ...item, config: { ...(item.config ?? {}), allow_seller: e.target.checked, allow_cashier: (item.config?.allow_cashier ?? true) !== false, allow_admin: (item.config?.allow_admin ?? true) !== false } }
+                                  : item)
+                              )
+                            }
+                          />
+                          Vendedor
+                        </label>
+                        <label className="mfunc-profile-check">
+                          <input
+                            type="checkbox"
+                            checked={profileConfig.allow_cashier}
+                            onChange={(e) =>
+                              setCommerceFeatures((prev) =>
+                                prev.map((item, i) => i === index
+                                  ? { ...item, config: { ...(item.config ?? {}), allow_seller: (item.config?.allow_seller ?? true) !== false, allow_cashier: e.target.checked, allow_admin: (item.config?.allow_admin ?? true) !== false } }
+                                  : item)
+                              )
+                            }
+                          />
+                          Cajero
+                        </label>
+                        <label className="mfunc-profile-check">
+                          <input
+                            type="checkbox"
+                            checked={profileConfig.allow_admin}
+                            onChange={(e) =>
+                              setCommerceFeatures((prev) =>
+                                prev.map((item, i) => i === index
+                                  ? { ...item, config: { ...(item.config ?? {}), allow_seller: (item.config?.allow_seller ?? true) !== false, allow_cashier: (item.config?.allow_cashier ?? true) !== false, allow_admin: e.target.checked } }
+                                  : item)
+                              )
+                            }
+                          />
+                          Admin/General
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {masterAdvancedCommerceFeatures.length === 0 && (
+                <p className="mfunc-empty">No hay configuraciones avanzadas en esta pestaña o búsqueda.</p>
               )}
-            </tbody>
-          </table>
-          <button type="button" onClick={() => void saveCommerceSettings()}>Guardar funciones comerciales</button>
+            </div>
+          </div>
+
+          <div className="mfunc-footer">
+            <button type="button" className="mfunc-save-btn" onClick={() => void saveCommerceSettings()}>Guardar funciones comerciales</button>
+          </div>
         </div>
       )}
 
@@ -2255,3 +2513,4 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     </section>
   );
 }
+

@@ -1,0 +1,55 @@
+/* Sales module styles: colocate sales-specific layout and controls here. */
+
+.sales-field-action button {
+  max-width: 168px;
+}
+
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-qty {
+  grid-column: span 2;
+}
+
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-igv {
+  grid-column: span 3;
+}
+
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-price {
+  grid-column: span 2;
+}
+
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-inline-discount,
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-inline-toggle {
+  grid-column: span 2;
+}
+
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-action {
+  grid-column: span 3;
+}
+
+.sales-grid-row-item.has-line-tools.tax-on .sales-field-product {
+  grid-column: span 4;
+}
+
+.sales-grid-row-item.has-line-tools.tax-off .sales-field-qty {
+  grid-column: span 2;
+}
+
+.sales-grid-row-item.has-line-tools.tax-off .sales-field-price {
+  grid-column: span 2;
+}
+
+.sales-grid-row-item.has-line-tools.tax-off .sales-field-inline-discount,
+.sales-grid-row-item.has-line-tools.tax-off .sales-field-inline-toggle {
+  grid-column: span 2;
+}
+
+.sales-grid-row-item.has-line-tools.tax-off .sales-field-action {
+  grid-column: span 4;
+}
+
+.sales-grid-row-item.has-line-tools.tax-off .sales-field-product {
+  grid-column: span 4;
+}
+
+.sales-concepts-shell {
+  grid-template-columns: minmax(0, 2.45fr) minmax(220px, 0.6fr);
+}

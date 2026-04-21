@@ -5,15 +5,38 @@ function authHeaders(accessToken: string): HeadersInit {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
+function toAbsoluteAssetUrl(value: string | null | undefined): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) {
+    return raw;
+  }
+
+  const base = apiClient.baseUrl.replace(/\/+$/, '');
+  if (raw.startsWith('/')) {
+    return `${base}${raw}`;
+  }
+
+  return `${base}/${raw}`;
+}
+
 export async function fetchCompanyProfile(accessToken: string, companyId?: number): Promise<CompanyProfile> {
   const query = new URLSearchParams();
   if (companyId) query.set('company_id', String(companyId));
   const path = `/api/appcfg/company-profile${query.toString() ? '?' + query.toString() : ''}`;
 
-  return apiClient.request<CompanyProfile>(path, {
+  const profile = await apiClient.request<CompanyProfile>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+
+  return {
+    ...profile,
+    logo_url: toAbsoluteAssetUrl(profile.logo_url),
+  };
 }
 
 export async function updateCompanyProfile(
@@ -46,7 +69,11 @@ export async function uploadCompanyLogo(
     throw new Error(`API ${response.status}: ${text}`);
   }
 
-  return response.json() as Promise<{ message: string; logo_url: string }>;
+  const payload = await response.json() as { message: string; logo_url: string };
+  return {
+    ...payload,
+    logo_url: toAbsoluteAssetUrl(payload.logo_url) ?? payload.logo_url,
+  };
 }
 
 export async function uploadCompanyCert(

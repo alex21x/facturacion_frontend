@@ -319,7 +319,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
         </div>
         <div className="restaurant-toolbar__actions">
           <span className="restaurant-toolbar__context" style={{ fontSize: '0.76rem', color: '#7a6f63' }}>
-            Actualizado {lastRefreshed.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
+            Actualizado {lastRefreshed.toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Lima' })}
           </span>
           <button type="button" className="restaurant-ghost-btn" onClick={() => void load()} disabled={loading}>
             {loading ? 'Actualizando...' : '↻ Refrescar'}

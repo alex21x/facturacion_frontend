@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
-import { fetchInventoryProducts } from '../../inventory/api';
+import { fetchInventoryProducts, importInventoryProductsBulk, type InventoryBulkImportRow } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
+import '../products.css';
 
 type ProductsViewProps = {
   accessToken: string;
@@ -112,8 +113,71 @@ type ProductFormState = {
   status: number;
 };
 
-type ProductUiTab = 'catalogo' | 'formulario' | 'maestros' | 'comercial';
+type ProductUiTab = 'catalogo' | 'maestros' | 'comercial';
 type ProductFormStep = 1 | 2 | 3;
+
+const PRODUCT_BULK_TEMPLATE_HEADERS = [
+  'ID',
+  'SKU',
+  'CODIGO_BARRAS',
+  'NOMBRE',
+  'TIPO',
+  'PRECIO_VENTA',
+  'PRECIO_COSTO',
+  'CODIGO_UNIDAD',
+  'CODIGO_SUNAT',
+  'AFECTO_STOCK',
+  'SEGUIMIENTO_LOTE',
+  'CON_VENCIMIENTO',
+  'ESTADO',
+  'STOCK_INICIAL',
+  'COSTO_INICIAL',
+  'ALMACEN_CODIGO',
+];
+
+function normalizeExcelHeader(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeImportRows(rawRows: Array<Record<string, unknown>>): InventoryBulkImportRow[] {
+  return rawRows
+    .map((raw) => {
+      const row = Object.entries(raw).reduce<Record<string, unknown>>((acc, [key, value]) => {
+        acc[normalizeExcelHeader(key)] = value;
+        return acc;
+      }, {});
+
+      const idRaw = String(row.ID ?? '').trim();
+      const payload: InventoryBulkImportRow = {
+        id: idRaw !== '' && Number.isFinite(Number(idRaw)) ? Number(idRaw) : undefined,
+        sku: String(row.SKU ?? '').trim() || undefined,
+        barcode: String(row.CODIGO_BARRAS ?? row.BARCODE ?? '').trim() || undefined,
+        name: String(row.NOMBRE ?? row.NAME ?? '').trim() || undefined,
+        product_nature: String(row.TIPO ?? row.NATURALEZA ?? '').trim() || undefined,
+        sale_price: String(row.PRECIO_VENTA ?? row.VENTA ?? '').trim() || undefined,
+        cost_price: String(row.PRECIO_COSTO ?? row.COSTO ?? '').trim() || undefined,
+        unit_code: String(row.CODIGO_UNIDAD ?? row.UNIDAD ?? '').trim() || 'NIU',
+        sunat_code: String(row.CODIGO_SUNAT ?? row.SUNAT_CODE ?? '').trim() || undefined,
+        is_stockable: String(row.AFECTO_STOCK ?? row.STOCKABLE ?? '').trim() || undefined,
+        lot_tracking: String(row.SEGUIMIENTO_LOTE ?? row.LOT_TRACKING ?? '').trim() || undefined,
+        has_expiration: String(row.CON_VENCIMIENTO ?? row.HAS_EXPIRATION ?? '').trim() || undefined,
+        status: String(row.ESTADO ?? row.STATUS ?? '').trim() || undefined,
+        initial_qty: String(row.STOCK_INICIAL ?? row.INITIAL_QTY ?? '').trim() || undefined,
+        initial_cost: String(row.COSTO_INICIAL ?? row.INITIAL_COST ?? '').trim() || undefined,
+        warehouse_code: String(row.ALMACEN_CODIGO ?? row.WAREHOUSE_CODE ?? '').trim() || undefined,
+      };
+
+      const hasData = Object.values(payload).some((value) => value !== undefined && String(value).trim() !== '');
+      return hasData ? payload : null;
+    })
+    .filter((row): row is InventoryBulkImportRow => row !== null);
+}
 
 const EMPTY_FORM: ProductFormState = {
   sku: '',
@@ -277,9 +341,14 @@ export function ProductsView({
   });
   const [uiTab, setUiTab] = useState<ProductUiTab>('catalogo');
   const [formStep, setFormStep] = useState<ProductFormStep>(1);
+  const [showFormModal, setShowFormModal] = useState(false);
   const [canManageProducts, setCanManageProducts] = useState(true);
   const [canManageProductMasters, setCanManageProductMasters] = useState(true);
   const [natureFilter, setNatureFilter] = useState<'ALL' | 'PRODUCT' | 'SUPPLY'>('ALL');
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [productsPage, setProductsPage] = useState(1);
+  const productsPerPage = 15;
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const resolvedProfile = uiProfile
     ?? (((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT') ? 'RESTAURANT_SUPPLIES' : 'RETAIL');
@@ -300,6 +369,21 @@ export function ProductsView({
   }, [isRestaurant, defaultNatureFilter]);
 
   const activeCount = useMemo(() => rows.filter((row) => Number(row.status) === 1).length, [rows]);
+
+  const filteredRows = useMemo(() => {
+    if (natureFilter === 'ALL') {
+      return rows;
+    }
+    return rows.filter((row) => row.product_nature === natureFilter);
+  }, [rows, natureFilter]);
+
+  const totalProductsPages = useMemo(() => Math.ceil(filteredRows.length / productsPerPage), [filteredRows.length, productsPerPage]);
+
+  const paginatedProducts = useMemo(() => {
+    const start = (productsPage - 1) * productsPerPage;
+    const end = start + productsPerPage;
+    return filteredRows.slice(start, end);
+  }, [filteredRows, productsPage, productsPerPage]);
 
   const visibleRows = useMemo(() => {
     if (natureFilter === 'ALL') {
@@ -378,17 +462,25 @@ export function ProductsView({
     setCommercialWholesale([]);
     setUnitToAdd(null);
     setFormStep(1);
+    setShowFormModal(false);
   }
 
   function startCreateWithNature(nature: 'PRODUCT' | 'SUPPLY') {
-    setUiTab('formulario');
+    setShowFormModal(true);
     setFormStep(1);
     setEditingId(null);
     setForm((prev) => ({ ...EMPTY_FORM, product_nature: nature, unit_id: prev.unit_id, category_id: prev.category_id }));
   }
 
+  function openNewProductForm() {
+    setShowFormModal(true);
+    setFormStep(1);
+    setEditingId(null);
+    setForm(EMPTY_FORM);
+  }
+
   async function startEdit(row: InventoryProduct) {
-    setUiTab('formulario');
+    setShowFormModal(true);
     setFormStep(1);
     setEditingId(row.id);
     setForm({
@@ -753,25 +845,153 @@ export function ProductsView({
     }
   }
 
+  async function downloadBulkTemplate() {
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+
+      const productsSheet = XLSX.utils.aoa_to_sheet([
+        PRODUCT_BULK_TEMPLATE_HEADERS,
+        ['', 'SKU-001', '7751234567890', 'Producto ejemplo', 'PRODUCT', '12.50', '8.00', 'NIU', '', 'SI', 'NO', 'NO', '1', '10', '8.00', 'PRINCIPAL'],
+      ]);
+      productsSheet['!cols'] = [
+        { wch: 8 },
+        { wch: 18 },
+        { wch: 18 },
+        { wch: 38 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 16 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 18 },
+        { wch: 16 },
+        { wch: 10 },
+        { wch: 14 },
+        { wch: 14 },
+        { wch: 18 },
+      ];
+
+      const instructionsSheet = XLSX.utils.aoa_to_sheet([
+        ['CAMPO', 'REGLA'],
+        ['NOMBRE', 'Obligatorio.'],
+        ['TIPO', 'PRODUCT o SUPPLY. Si va vacío, se usa PRODUCT.'],
+        ['CODIGO_UNIDAD', 'Si va vacío, se usa NIU (UNIDAD (BIENES)).'],
+        ['ESTADO', '1/SI/TRUE para activo, 0/NO/FALSE para inactivo.'],
+        ['ID', 'Opcional: si existe, actualiza ese producto.'],
+        ['SKU/CODIGO_BARRAS', 'Si coincide con uno existente, se actualiza.'],
+        ['STOCK_INICIAL', 'Opcional. Si es > 0, registra una entrada de Kardex.'],
+        ['ALMACEN_CODIGO', 'Opcional. Si va vacio y STOCK_INICIAL > 0, se aplica al almacen principal/preferente.'],
+        ['COSTO_INICIAL', 'Opcional. Si va vacio, usa PRECIO_COSTO.'],
+      ]);
+      instructionsSheet['!cols'] = [{ wch: 26 }, { wch: 78 }];
+
+      XLSX.utils.book_append_sheet(workbook, productsSheet, 'PRODUCTOS');
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'INSTRUCCIONES');
+      XLSX.writeFile(workbook, 'formato_importacion_productos.xlsx');
+      setMessage('Formato Excel descargado.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo descargar la plantilla Excel');
+    }
+  }
+
+  async function handleImportFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    if (!canManageProducts) {
+      setMessage('No tienes permiso para importar productos.');
+      return;
+    }
+
+    setBulkImporting(true);
+    setMessage('');
+
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const firstSheet = workbook.Sheets[firstSheetName];
+
+      if (!firstSheet) {
+        throw new Error('El archivo no contiene una hoja válida.');
+      }
+
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+      const rows = normalizeImportRows(rawRows);
+
+      if (rows.length === 0) {
+        throw new Error('No se encontraron filas válidas para importar.');
+      }
+
+      const response = await importInventoryProductsBulk(accessToken, rows, file.name);
+      const summary = response.summary;
+      const firstError = response.errors[0]?.message;
+      const batchRef = response.batch_id ? ` (lote #${response.batch_id})` : '';
+      const stockSummary =
+        typeof summary.stock_applied === 'number'
+          ? ` Stock aplicado: ${summary.stock_applied}${typeof summary.stock_skipped === 'number' ? `, stock omitido: ${summary.stock_skipped}` : ''}.`
+          : '';
+      setMessage(
+        `Importación procesada${batchRef}: ${summary.created} creados, ${summary.updated} actualizados, ${summary.skipped} omitidos.${stockSummary}${firstError ? ` Primer error: ${firstError}` : ''}`
+      );
+      await loadProducts();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo importar el archivo Excel');
+    } finally {
+      setBulkImporting(false);
+    }
+  }
+
   return (
-    <section className="module-panel">
-      <div className="module-header">
+    <section className="module-panel products-module">
+      <div className="module-header products-module-header">
         <h3>{isRestaurant ? 'Carta e Insumos' : 'Productos'}</h3>
         <div className="entity-actions">
-          <button type="button" onClick={() => { setUiTab('formulario'); setFormStep(1); }} disabled={!canManageProducts}>
+          <button type="button" onClick={() => void downloadBulkTemplate()} className="products-header-btn">
+            <span className="products-header-icon">📥</span>
+            Descargar formato Excel
+          </button>
+          <button
+            type="button"
+            onClick={() => importFileInputRef.current?.click()}
+            disabled={!canManageProducts || bulkImporting}
+            className="products-header-btn"
+          >
+            <span className="products-header-icon">📤</span>
+            {bulkImporting ? 'Importando...' : 'Cargar Excel'}
+          </button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={(event) => void handleImportFileChange(event)}
+            style={{ display: 'none' }}
+          />
+          <button type="button" onClick={openNewProductForm} className="products-header-btn" title="Abrir formulario para crear nuevo producto">
+            <span className="products-header-icon">➕</span>
             Nuevo producto
           </button>
           {isRestaurant && (
-            <button type="button" onClick={() => startCreateWithNature('SUPPLY')} disabled={!canManageProducts}>
+            <button type="button" onClick={() => startCreateWithNature('SUPPLY')} disabled={!canManageProducts} className="products-header-btn">
+              <span className="products-header-icon">🧂</span>
               Nuevo insumo
             </button>
           )}
           {isRestaurant && (
-            <button type="button" onClick={() => startCreateWithNature('PRODUCT')} disabled={!canManageProducts}>
+            <button type="button" onClick={() => startCreateWithNature('PRODUCT')} disabled={!canManageProducts} className="products-header-btn">
+              <span className="products-header-icon">🍽️</span>
               Nuevo plato/bebida
             </button>
           )}
-          <button type="button" onClick={() => void loadProducts()} disabled={loading}>
+          <button type="button" onClick={() => void loadProducts()} disabled={loading} className="products-header-btn">
+            <span className="products-header-icon">🔄</span>
             Refrescar
           </button>
         </div>
@@ -801,15 +1021,14 @@ export function ProductsView({
         </article>
       </div>
 
-      <nav className="sub-tabs products-subtabs">
+      <nav className="sub-tabs products-subtabs products-module-subtabs">
         <button type="button" className={uiTab === 'catalogo' ? 'active' : ''} onClick={() => setUiTab('catalogo')}>
-          Catálogo
-        </button>
-        <button type="button" className={uiTab === 'formulario' ? 'active' : ''} onClick={() => setUiTab('formulario')}>
-          Formulario
+          <span className="products-tab-icon">📦</span>
+          <span className="products-tab-label">Catálogo</span>
         </button>
         <button type="button" className={uiTab === 'maestros' ? 'active' : ''} onClick={() => setUiTab('maestros')}>
-          Maestros
+          <span className="products-tab-icon">🏷️</span>
+          <span className="products-tab-label">Maestros</span>
         </button>
         <button
           type="button"
@@ -818,7 +1037,8 @@ export function ProductsView({
           title={editingId ? 'Configuración comercial del producto en edición' : 'Selecciona un producto para editar'}
           disabled={!editingId || !canManageProducts}
         >
-          Comercial
+          <span className="products-tab-icon">💰</span>
+          <span className="products-tab-label">Comercial</span>
         </button>
       </nav>
 
@@ -862,9 +1082,9 @@ export function ProductsView({
             </div>
           </div>
 
-          <div className="table-wrap">
+          <div className="table-wrap products-table-wrap">
             <h4>{isRestaurant ? 'Catalogo de carta e insumos' : 'Catalogo de productos'}</h4>
-            <table>
+            <table className="inventory-table products-catalog-table">
               <thead>
                 <tr>
                   <th>ID</th>
@@ -877,11 +1097,11 @@ export function ProductsView({
                   <th>Precio Venta</th>
                   <th>Precio Costo</th>
                   <th>Estado</th>
-                  <th></th>
+                  <th>Acciones</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleRows.map((row) => (
+                {paginatedProducts.map((row) => (
                   <tr key={row.id}>
                     <td>{row.id}</td>
                     <td>{row.sku ?? '-'}</td>
@@ -894,125 +1114,165 @@ export function ProductsView({
                     <td>{row.cost_price}</td>
                     <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
                     <td>
-                      <button type="button" onClick={() => startEdit(row)} disabled={!canManageProducts}>Editar</button>{' '}
-                      <button type="button" onClick={() => void toggleProduct(row)} disabled={!canManageProducts}>
-                        {Number(row.status) === 1 ? 'Desactivar' : 'Activar'}
+                      <div className="products-catalog-actions">
+                      <button type="button" className="products-row-action products-row-action-edit" onClick={() => void startEdit(row)} title="Editar" aria-label="Editar producto">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 20h9"></path>
+                          <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"></path>
+                        </svg>
+                      </button>{' '}
+                      <button type="button" className={Number(row.status) === 1 ? 'products-row-action products-row-action-toggle is-danger' : 'products-row-action products-row-action-toggle is-ok'} onClick={() => void toggleProduct(row)} title={Number(row.status) === 1 ? 'Desactivar' : 'Activar'} aria-label={Number(row.status) === 1 ? 'Desactivar producto' : 'Activar producto'}>
+                        {Number(row.status) === 1 ? (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 6l12 12"></path>
+                            <path d="M18 6L6 18"></path>
+                          </svg>
+                        ) : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        )}
                       </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
-                {visibleRows.length === 0 && (
+                {paginatedProducts.length === 0 && (
                   <tr>
                     <td colSpan={11}>No hay registros para el filtro actual.</td>
                   </tr>
                 )}
               </tbody>
             </table>
+            {totalProductsPages > 1 && (
+              <div className="inventory-pagination">
+                <button
+                  type="button"
+                  onClick={() => setProductsPage((p) => Math.max(1, p - 1))}
+                  disabled={productsPage === 1}
+                >
+                  ← Anterior
+                </button>
+                <span className="pagination-info">
+                  Página {productsPage} de {totalProductsPages}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setProductsPage((p) => Math.min(totalProductsPages, p + 1))}
+                  disabled={productsPage === totalProductsPages}
+                >
+                  Siguiente →
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}
 
-      {uiTab === 'formulario' && (
-      <form className="grid-form entity-editor products-editor" onSubmit={saveProduct}>
-        <h4>{editingId ? `Editar producto #${editingId}` : 'Nuevo producto'}</h4>
-        <p className="products-form-help products-field-span-full">
-          Completa primero la información base y luego la clasificación comercial.
-        </p>
-        <div className="products-form-stepper products-field-span-full">
-          <button type="button" className={formStep === 1 ? 'active' : ''} onClick={() => setFormStep(1)}>1. Identificación</button>
-          <button type="button" className={formStep === 2 ? 'active' : ''} onClick={() => setFormStep(2)}>2. Clasificación</button>
-          <button type="button" className={formStep === 3 ? 'active' : ''} onClick={() => setFormStep(3)}>3. Precios y cierre</button>
-        </div>
-        {hasInactiveSelectedMaster && (
-          <p className="notice products-field-span-full" style={{ marginTop: '-2px' }}>
-            Este producto tiene un maestro asociado inactivo o no disponible. Se muestra como valor actual para que puedas mantenerlo o cambiarlo.
-          </p>
-        )}
-        {formStep === 1 && (
-          <>
-        <div className="products-section-title products-field-span-full">Identificación</div>
-        <label>
-          SKU
-          <input value={form.sku} onChange={(event) => setForm((prev) => ({ ...prev, sku: event.target.value }))} />
-        </label>
-        <label>
-          Codigo de barras
-          <input value={form.barcode} onChange={(event) => setForm((prev) => ({ ...prev, barcode: event.target.value }))} />
-        </label>
-        <label>
-          Nombre
-          <input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} required />
-        </label>
-          </>
-        )}
-
-        {formStep === 2 && (
-          <>
-        <div className="products-section-title products-field-span-full">Clasificación</div>
-        <label>
-          Unidad
-          <select
-            value={form.unit_id ?? ''}
-            onChange={(event) => setForm((prev) => ({ ...prev, unit_id: event.target.value ? Number(event.target.value) : null }))}
-          >
-            <option value="">Seleccionar</option>
-            {units.map((row) => (
-              <option key={row.id} value={row.id}>{(row.code ?? '').trim()} {row.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Categoria
-          <select
-            value={form.category_id ?? ''}
-            onChange={(event) => setForm((prev) => ({ ...prev, category_id: event.target.value ? Number(event.target.value) : null }))}
-          >
-            <option value="">Seleccionar</option>
-            {categories.map((row) => (
-              <option key={row.id} value={row.id}>{row.name}</option>
-            ))}
-          </select>
-        </label>
-
-        <label>
-          Tipo
-          <select
-            value={form.product_nature}
-            onChange={(event) => setForm((prev) => ({ ...prev, product_nature: event.target.value as 'PRODUCT' | 'SUPPLY' }))}
-          >
-            <option value="PRODUCT">{isRestaurant ? 'Producto de carta (plato/bebida)' : 'Producto'}</option>
-            <option value="SUPPLY">Insumo</option>
-          </select>
-        </label>
-
-        <div className="master-select-row products-master-field">
-          <label>
-            Línea
-            <select
-              value={form.line_id ?? ''}
-              onChange={(event) => setForm((prev) => ({ ...prev, line_id: event.target.value ? Number(event.target.value) : null }))}
-            >
-              <option value="">Sin línea</option>
-              {form.line_id !== null && !lines.some((r) => r.id === form.line_id && r.status === 1) && (
-                <option value={form.line_id}>Actual: {lineNameById.get(form.line_id) ?? `ID ${form.line_id}`} (inactiva)</option>
+      {showFormModal && (
+        <div className="products-form-modal-overlay" onClick={() => !loading && resetForm()}>
+          <div className="products-form-modal" onClick={(e) => e.stopPropagation()}>
+            <button type="button" className="products-form-modal-close" onClick={() => resetForm()}>✕</button>
+            <form className="grid-form entity-editor products-editor products-modal-editor" onSubmit={saveProduct}>
+              <h4>{editingId ? `Editar producto #${editingId}` : 'Nuevo producto'}</h4>
+              <p className="products-form-help products-field-span-full">
+                Completa primero la información base y luego la clasificación comercial.
+              </p>
+              <div className="products-form-stepper products-field-span-full">
+                <button type="button" className={formStep === 1 ? 'active' : ''} onClick={() => setFormStep(1)}>1. Identificación</button>
+                <button type="button" className={formStep === 2 ? 'active' : ''} onClick={() => setFormStep(2)}>2. Clasificación</button>
+                <button type="button" className={formStep === 3 ? 'active' : ''} onClick={() => setFormStep(3)}>3. Precios y cierre</button>
+              </div>
+              {hasInactiveSelectedMaster && (
+                <p className="notice products-field-span-full" style={{ marginTop: '-2px' }}>
+                  Este producto tiene un maestro asociado inactivo o no disponible. Se muestra como valor actual para que puedas mantenerlo o cambiarlo.
+                </p>
               )}
-              {lines.filter((r) => r.status === 1).map((row) => (
-                <option key={row.id} value={row.id}>{row.name}</option>
-              ))}
-            </select>
-          </label>
-          <div className="master-quick-add">
-            <input
-              placeholder="Nueva línea..."
-              value={newLineName}
-              onChange={(e) => setNewLineName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void quickCreateMaster('line', newLineName, setLines, 'line_id', () => setNewLineName('')); } }}
-            />
-            <button
-              type="button"
-              disabled={!canManageProductMasters || masterSavingKind !== null || !newLineName.trim()}
-              onClick={() => void quickCreateMaster('line', newLineName, setLines, 'line_id', () => setNewLineName(''))}
-            >
+              {formStep === 1 && (
+                <>
+              <div className="products-section-title products-field-span-full">Identificación</div>
+              <label>
+                SKU
+                <input value={form.sku} onChange={(event) => setForm((prev) => ({ ...prev, sku: event.target.value }))} />
+              </label>
+              <label>
+                Codigo de barras
+                <input value={form.barcode} onChange={(event) => setForm((prev) => ({ ...prev, barcode: event.target.value }))} />
+              </label>
+              <label>
+                Nombre
+                <input value={form.name} onChange={(event) => setForm((prev) => ({ ...prev, name: event.target.value }))} required />
+              </label>
+                </>
+              )}
+
+              {formStep === 2 && (
+                <>
+              <div className="products-section-title products-field-span-full">Clasificación</div>
+              <label>
+                Unidad
+                <select
+                  value={form.unit_id ?? ''}
+                  onChange={(event) => setForm((prev) => ({ ...prev, unit_id: event.target.value ? Number(event.target.value) : null }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {units.map((row) => (
+                    <option key={row.id} value={row.id}>{(row.code ?? '').trim()} {row.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Categoria
+                <select
+                  value={form.category_id ?? ''}
+                  onChange={(event) => setForm((prev) => ({ ...prev, category_id: event.target.value ? Number(event.target.value) : null }))}
+                >
+                  <option value="">Seleccionar</option>
+                  {categories.map((row) => (
+                    <option key={row.id} value={row.id}>{row.name}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Tipo
+                <select
+                  value={form.product_nature}
+                  onChange={(event) => setForm((prev) => ({ ...prev, product_nature: event.target.value as 'PRODUCT' | 'SUPPLY' }))}
+                >
+                  <option value="PRODUCT">{isRestaurant ? 'Producto de carta (plato/bebida)' : 'Producto'}</option>
+                  <option value="SUPPLY">Insumo</option>
+                </select>
+              </label>
+
+              <div className="master-select-row products-master-field">
+                <label>
+                  Línea
+                  <select
+                    value={form.line_id ?? ''}
+                    onChange={(event) => setForm((prev) => ({ ...prev, line_id: event.target.value ? Number(event.target.value) : null }))}
+                  >
+                    <option value="">Sin línea</option>
+                    {form.line_id !== null && !lines.some((r) => r.id === form.line_id && r.status === 1) && (
+                      <option value={form.line_id}>Actual: {lineNameById.get(form.line_id) ?? `ID ${form.line_id}`} (inactiva)</option>
+                    )}
+                    {lines.filter((r) => r.status === 1).map((row) => (
+                      <option key={row.id} value={row.id}>{row.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div className="master-quick-add">
+                  <input
+                    placeholder="Nueva línea..."
+                    value={newLineName}
+                    onChange={(e) => setNewLineName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void quickCreateMaster('line', newLineName, setLines, 'line_id', () => setNewLineName('')); } }}
+                  />
+                  <button
+                    type="button"
+                    disabled={!canManageProductMasters || masterSavingKind !== null || !newLineName.trim()}
+                    onClick={() => void quickCreateMaster('line', newLineName, setLines, 'line_id', () => setNewLineName(''))}
+                  >
               {masterSavingKind === 'line' ? 'Agregando...' : 'Agregar'}
             </button>
           </div>
@@ -1210,7 +1470,7 @@ export function ProductsView({
         </label>
           </>
         )}
-        <div className="entity-actions wide">
+        <div className="entity-actions wide products-modal-actions">
           {formStep > 1 && (
             <button type="button" onClick={() => setFormStep((prev) => (Math.max(1, prev - 1) as ProductFormStep))}>
               Anterior
@@ -1229,9 +1489,11 @@ export function ProductsView({
             <button type="submit" disabled={loading || !canManageProducts}>{editingId ? 'Guardar cambios' : 'Crear producto'}</button>
           )}
           <button type="button" onClick={() => resetForm()}>Limpiar</button>
-          <button type="button" className="danger" onClick={() => setUiTab('catalogo')}>Ir al catálogo</button>
+          <button type="button" className="danger" onClick={() => resetForm()}>Cerrar</button>
         </div>
-      </form>
+            </form>
+          </div>
+        </div>
       )}
 
       {uiTab === 'maestros' && (
@@ -1243,11 +1505,14 @@ export function ProductsView({
 
         <div className="master-admin-grid">
           <article>
-            <h5>Líneas</h5>
+            <h5>Líneas <small>{lines.length}</small></h5>
             <ul>
               {lines.map((row) => (
                 <li key={`line-${row.id}`}>
-                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <div className="master-item-main">
+                    <span className="master-item-name">{row.name}</span>
+                    <span className="master-item-status">{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</span>
+                  </div>
                   <button type="button" disabled={!canManageProductMasters} onClick={() => setEditingMaster({ kind: 'line', id: row.id, name: row.name, status: row.status })}>Editar</button>
                 </li>
               ))}
@@ -1256,11 +1521,14 @@ export function ProductsView({
           </article>
 
           <article>
-            <h5>Marcas</h5>
+            <h5>Marcas <small>{brands.length}</small></h5>
             <ul>
               {brands.map((row) => (
                 <li key={`brand-${row.id}`}>
-                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <div className="master-item-main">
+                    <span className="master-item-name">{row.name}</span>
+                    <span className="master-item-status">{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</span>
+                  </div>
                   <button type="button" disabled={!canManageProductMasters} onClick={() => setEditingMaster({ kind: 'brand', id: row.id, name: row.name, status: row.status })}>Editar</button>
                 </li>
               ))}
@@ -1269,11 +1537,14 @@ export function ProductsView({
           </article>
 
           <article>
-            <h5>Ubicaciones</h5>
+            <h5>Ubicaciones <small>{locations.length}</small></h5>
             <ul>
               {locations.map((row) => (
                 <li key={`location-${row.id}`}>
-                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <div className="master-item-main">
+                    <span className="master-item-name">{row.name}</span>
+                    <span className="master-item-status">{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</span>
+                  </div>
                   <button type="button" disabled={!canManageProductMasters} onClick={() => setEditingMaster({ kind: 'location', id: row.id, name: row.name, status: row.status })}>Editar</button>
                 </li>
               ))}
@@ -1282,11 +1553,14 @@ export function ProductsView({
           </article>
 
           <article>
-            <h5>Garantías</h5>
+            <h5>Garantías <small>{warranties.length}</small></h5>
             <ul>
               {warranties.map((row) => (
                 <li key={`warranty-${row.id}`}>
-                  <span>{row.name} ({row.status === 1 ? 'ACTIVO' : 'INACTIVO'})</span>
+                  <div className="master-item-main">
+                    <span className="master-item-name">{row.name}</span>
+                    <span className="master-item-status">{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</span>
+                  </div>
                   <button type="button" disabled={!canManageProductMasters} onClick={() => setEditingMaster({ kind: 'warranty', id: row.id, name: row.name, status: row.status })}>Editar</button>
                 </li>
               ))}

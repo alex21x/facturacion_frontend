@@ -48,6 +48,7 @@ function formatDateTime(value?: string | null): string {
   return new Intl.DateTimeFormat('es-PE', {
     dateStyle: 'short',
     timeStyle: 'short',
+    timeZone: 'America/Lima',
   }).format(date);
 }
 

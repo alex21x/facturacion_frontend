@@ -1,0 +1,18 @@
+<svg width="960" height="320" viewBox="0 0 960 320" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="960" y2="320" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F0F9FF"/>
+      <stop offset="1" stop-color="#BAE6FD"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="320" rx="28" fill="url(#bg)"/>
+  <rect x="38" y="30" width="884" height="260" rx="22" fill="#FFFFFF" stroke="#DDE5EE" stroke-width="2"/>
+  <rect x="248" y="74" width="272" height="172" rx="24" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2"/>
+  <rect x="312" y="116" width="148" height="112" rx="12" fill="#0284C7"/><rect x="332" y="138" width="20" height="20" rx="4" fill="#BAE6FD"/><rect x="360" y="138" width="20" height="20" rx="4" fill="#BAE6FD"/><rect x="388" y="138" width="20" height="20" rx="4" fill="#BAE6FD"/><rect x="416" y="138" width="20" height="20" rx="4" fill="#BAE6FD"/><rect x="372" y="180" width="28" height="48" rx="6" fill="#0EA5E9"/>
+  <rect x="548" y="96" width="274" height="22" rx="11" fill="#0284C7"/>
+  <rect x="548" y="132" width="188" height="16" rx="8" fill="#94A3B8"/>
+  <rect x="548" y="156" width="230" height="16" rx="8" fill="#CBD5E1"/>
+  <rect x="548" y="180" width="140" height="16" rx="8" fill="#E2E8F0"/>
+  <rect x="548" y="210" width="102" height="30" rx="12" fill="#0284C7"/>
+  <text x="576" y="230" font-family="Arial" font-size="14" font-weight="700" fill="white">CO</text>
+</svg>
