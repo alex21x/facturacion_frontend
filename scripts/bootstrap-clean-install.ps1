@@ -70,24 +70,24 @@ function Ensure-Repository {
 
     if ((Test-Path $TargetPath) -and (Test-Path (Join-Path $TargetPath ".git"))) {
         Write-Host "Actualizando $Name..." -ForegroundColor Cyan
-        git -C $TargetPath fetch --all --prune
+        # Forzar refspec completo para que fetch traiga TODAS las ramas remotas
+        # (repos clonados con --single-branch solo tienen refspec de una rama)
+        git -C $TargetPath config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" | Out-Null
+        git -C $TargetPath fetch --all --prune 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "No se pudo hacer fetch de $Name."
         }
 
         foreach ($branch in $normalizedCandidates) {
-            $remoteBranchRef = git -C $TargetPath ls-remote --heads origin $branch 2>$null
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
+            $remoteBranchRef = git -C $TargetPath ls-remote --heads origin $branch 2>&1
+            if ([string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
                 continue
             }
 
-            git -C $TargetPath checkout $branch | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                continue
-            }
-
-            git -C $TargetPath reset --hard "origin/$branch" | Out-Null
+            # -B crea la rama local si no existe, o la resetea si ya existe
+            git -C $TargetPath checkout -B $branch "origin/$branch" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
+                Write-Host "Rama activa: $branch" -ForegroundColor Green
                 return
             }
         }
@@ -136,22 +136,18 @@ function Ensure-FrontendDockerBranch {
         }
 
         Write-Host "Probando rama frontend '$candidate' para instalacion docker local..." -ForegroundColor Yellow
-        git -C $FrontendPath checkout $candidate | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            continue
-        }
-
-        git -C $FrontendPath reset --hard "origin/$candidate" | Out-Null
+        git -C $FrontendPath checkout -B $candidate "origin/$candidate" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             continue
         }
 
         if (Test-Path $composeLocal) {
+            Write-Host "Rama activa frontend: $candidate" -ForegroundColor Green
             return
         }
     }
 
-    throw "No se encontro docker-compose.local.yml en frontend despues de probar ramas: $($CandidateBranches -join ', ')."
+    throw "No se encontro docker-compose.local.yml en frontend despues de probar ramas: $($CandidateBranches -join ', ').";
 }
 
 function Ensure-BackendDockerBranch {
@@ -176,22 +172,18 @@ function Ensure-BackendDockerBranch {
         }
 
         Write-Host "Probando rama backend '$candidate' para instalacion docker local..." -ForegroundColor Yellow
-        git -C $BackendPath checkout $candidate | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            continue
-        }
-
-        git -C $BackendPath reset --hard "origin/$candidate" | Out-Null
+        git -C $BackendPath checkout -B $candidate "origin/$candidate" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             continue
         }
 
         if (Test-Path $backendDockerfile) {
+            Write-Host "Rama activa backend: $candidate" -ForegroundColor Green
             return
         }
     }
 
-    throw "No se encontro Dockerfile.local en backend despues de probar ramas: $($CandidateBranches -join ', ')."
+    throw "No se encontro Dockerfile.local en backend despues de probar ramas: $($CandidateBranches -join ', ').";
 }
 
 function Assert-PathExists {
