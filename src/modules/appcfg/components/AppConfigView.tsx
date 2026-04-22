@@ -470,9 +470,9 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     try {
       const payload = commerceFeatures
         .filter((row) => {
-          const cat = featureCategoryByCode(row.feature_code);
-          // Never write back sales/purchases toggles from the tenant app — admin-only
-          return cat !== 'ventas' && cat !== 'compras';
+          // Exclude only the known superadmin-managed commercial toggles.
+          // Keep SALES_TAX_BRIDGE and SALES_TAX_BRIDGE_DEBUG_VIEW writable here.
+          return !adminManagedFeatureCodes.has(row.feature_code);
         })
         .map((row) => {
         const feature_code = row.feature_code;
