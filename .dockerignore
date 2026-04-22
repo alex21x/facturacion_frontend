@@ -1,0 +1,10 @@
+.git
+.vscode
+node_modules
+dist
+dist-admin
+.env
+.env.local
+.env.*.local
+*.log
+tsconfig.tsbuildinfo
