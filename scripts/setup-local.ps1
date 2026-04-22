@@ -51,15 +51,97 @@ if (-not $resolvedBackendRoot) { throw "No se encontro backend en: $BackendRoot"
 $backendRoot = $resolvedBackendRoot.Path
 if (-not (Test-Path (Join-Path $backendRoot 'artisan'))) { throw "La ruta backend no contiene artisan: $backendRoot" }
 
-$dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
-if (-not $dockerCommand) {
-    throw "Docker no esta instalado en esta PC. Instala Docker Desktop y vuelve a ejecutar."
+function Ensure-DockerAvailable {
+    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    if ($dockerCommand) {
+        # Docker encontrado, verificar engine
+        $dockerInfo = docker info 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            return  # Todo bien
+        }
+        # Engine no responde - intentar iniciar Docker Desktop
+        Write-Host "Docker esta instalado pero el engine no esta corriendo. Intentando iniciar Docker Desktop..." -ForegroundColor Yellow
+        $dockerDesktopExe = @(
+            "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+            "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
+        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+        if ($dockerDesktopExe) {
+            Start-Process $dockerDesktopExe
+            Write-Host "Esperando que el engine Docker inicie (hasta 90 segundos)..." -ForegroundColor Yellow
+            $started = $false
+            for ($i = 1; $i -le 18; $i++) {
+                Start-Sleep -Seconds 5
+                $testInfo = docker info 2>&1
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Docker engine listo." -ForegroundColor Green
+                    $started = $true
+                    break
+                }
+                Write-Host "  Esperando... ($($i*5)s)" -ForegroundColor DarkGray
+            }
+            if (-not $started) {
+                throw "Docker Desktop se inicio pero el engine no respondio en 90s. Espera un momento y vuelve a ejecutar el instalador."
+            }
+            return
+        }
+
+        throw "Docker esta instalado pero el engine no responde. Abre Docker Desktop manualmente y vuelve a ejecutar."
+    }
+
+    # Docker no instalado - instalar automaticamente via winget
+    Write-Host "" -ForegroundColor White
+    Write-Host "============================================" -ForegroundColor Yellow
+    Write-Host " Docker no esta instalado. Instalando..." -ForegroundColor Yellow
+    Write-Host " (Descarga ~500MB, puede tardar varios minutos)" -ForegroundColor Yellow
+    Write-Host "============================================" -ForegroundColor Yellow
+    Write-Host ""
+
+    # Habilitar WSL2 (requerido por Docker Desktop en Windows 10/11)
+    Write-Host "Habilitando funcionalidad WSL2..." -ForegroundColor Cyan
+    $wslFeature = dism.exe /online /Get-FeatureInfo /FeatureName:Microsoft-Windows-Subsystem-Linux 2>&1 | Out-String
+    if ($wslFeature -notmatch "State : Enabled") {
+        dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
+    }
+    $vmFeature = dism.exe /online /Get-FeatureInfo /FeatureName:VirtualMachinePlatform 2>&1 | Out-String
+    if ($vmFeature -notmatch "State : Enabled") {
+        dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
+    }
+
+    # Intentar instalar Docker Desktop via winget
+    $wingetCommand = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $wingetCommand) {
+        throw "No se encontro winget para instalar Docker automaticamente. Descarga Docker Desktop desde https://www.docker.com/products/docker-desktop y luego vuelve a ejecutar el instalador."
+    }
+
+    Write-Host "Instalando Docker Desktop via winget..." -ForegroundColor Cyan
+    winget source update 2>&1 | Out-Null
+    winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --disable-interactivity
+    if ($LASTEXITCODE -ne 0) {
+        # Intentar sin flags de interactividad
+        winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "No se pudo instalar Docker Desktop automaticamente. Descargalo desde https://www.docker.com/products/docker-desktop e instalalo manualmente, luego vuelve a ejecutar el instalador."
+    }
+
+    Write-Host "" -ForegroundColor White
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host " Docker Desktop instalado correctamente." -ForegroundColor Green
+    Write-Host " IMPORTANTE: Debes REINICIAR la PC para" -ForegroundColor Yellow
+    Write-Host " que Docker quede activo. Despues de" -ForegroundColor Yellow
+    Write-Host " reiniciar, vuelve a ejecutar este" -ForegroundColor Yellow
+    Write-Host " instalador." -ForegroundColor Yellow
+    Write-Host "============================================" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Presiona una tecla para reiniciar ahora, o cierra esta ventana para reiniciar manualmente." -ForegroundColor Cyan
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    Restart-Computer -Force
+    exit 0
 }
 
-docker info | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    throw "Docker esta instalado pero el engine no responde. Abre Docker Desktop y vuelve a ejecutar."
-}
+Ensure-DockerAvailable
 
 $clientConfig = Join-Path $frontendRoot '.client-config.env'
 $clientConfigExample = Join-Path $frontendRoot '.client-config.example.env'
