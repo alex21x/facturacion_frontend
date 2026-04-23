@@ -255,6 +255,14 @@ $env:VITE_API_BASE_URL = $viteApiBaseUrl
 
 $composeArgs = @('-p',$composeProject,'-f',$ComposeFile)
 
+$installLog = Join-Path $frontendRoot 'install-local.log'
+
+function Append-InstallLog {
+    param([string]$Message)
+    $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    Add-Content -Path $installLog -Value ("[$timestamp] $Message")
+}
+
 $composeVersion = docker compose version 2>&1
 if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose v2 no esta disponible. Salida: $($composeVersion -join ' ')"
@@ -267,18 +275,53 @@ $composeUpOutput = docker compose @composeArgs up -d --build 2>&1
 $composeExitCode = $LASTEXITCODE
 $ErrorActionPreference = $previousErrorActionPreference
 if ($composeExitCode -ne 0) {
+    Append-InstallLog 'Primer intento de docker compose up fallo.'
+    $composeUpOutput | ForEach-Object { Append-InstallLog $_ }
+
     Write-Host 'Error al levantar el stack local. Salida de docker compose up:' -ForegroundColor Red
     $composeUpOutput | ForEach-Object { Write-Host $_ -ForegroundColor DarkYellow }
 
     Write-Host ''
-    Write-Host 'Estado actual de servicios:' -ForegroundColor Yellow
-    docker compose @composeArgs ps 2>&1 | ForEach-Object { Write-Host $_ }
+    Write-Host 'Intentando recuperacion automatica (down + segundo up)...' -ForegroundColor Yellow
+    docker compose @composeArgs down --remove-orphans 2>&1 | ForEach-Object {
+        Write-Host $_ -ForegroundColor DarkGray
+        Append-InstallLog $_
+    }
 
-    Write-Host ''
-    Write-Host 'Ultimos logs de servicios (tail 80):' -ForegroundColor Yellow
-    docker compose @composeArgs logs --tail=80 2>&1 | ForEach-Object { Write-Host $_ }
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $composeUpOutputRetry = docker compose @composeArgs up -d --build 2>&1
+    $composeExitCodeRetry = $LASTEXITCODE
+    $ErrorActionPreference = $previousErrorActionPreference
 
-    throw 'No se pudo levantar el stack local. Revisa la salida anterior para el motivo exacto.'
+    if ($composeExitCodeRetry -ne 0) {
+        Append-InstallLog 'Segundo intento de docker compose up fallo.'
+        $composeUpOutputRetry | ForEach-Object { Append-InstallLog $_ }
+
+        Write-Host 'Segundo intento fallido. Salida de docker compose up:' -ForegroundColor Red
+        $composeUpOutputRetry | ForEach-Object { Write-Host $_ -ForegroundColor DarkYellow }
+
+        Write-Host ''
+        Write-Host 'Estado actual de servicios:' -ForegroundColor Yellow
+        docker compose @composeArgs ps 2>&1 | ForEach-Object {
+            Write-Host $_
+            Append-InstallLog $_
+        }
+
+        Write-Host ''
+        Write-Host 'Ultimos logs de servicios (tail 120):' -ForegroundColor Yellow
+        docker compose @composeArgs logs --tail=120 2>&1 | ForEach-Object {
+            Write-Host $_
+            Append-InstallLog $_
+        }
+
+        throw "No se pudo levantar el stack local tras 2 intentos. Revisa el log: $installLog"
+    }
+
+    Write-Host 'Recuperacion automatica exitosa en segundo intento.' -ForegroundColor Green
+    Append-InstallLog 'Segundo intento de docker compose up exitoso.'
+} else {
+    Append-InstallLog 'docker compose up exitoso en primer intento.'
 }
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
