@@ -43,24 +43,76 @@ function Resolve-UpdateLayout {
     param([string]$ComposeFilePath)
 
     $resolvedComposeFile = Resolve-Path $ComposeFilePath -ErrorAction SilentlyContinue
-    if (-not $resolvedComposeFile) {
-        throw "No se encontro docker-compose.local.yml. Ejecuta este script desde la carpeta scripts del proyecto facturacion_frontend completo."
+    if ($resolvedComposeFile) {
+        $resolvedComposeFilePath = $resolvedComposeFile.Path
+        $resolvedFrontendRoot = Split-Path -Path $resolvedComposeFilePath -Parent
+        $backendCandidate = Join-Path (Split-Path -Path $resolvedFrontendRoot -Parent) "facturacion_backend"
+        $resolvedBackendRoot = Resolve-Path $backendCandidate -ErrorAction SilentlyContinue
+
+        if ($resolvedBackendRoot) {
+            return @{
+                ComposeFile = $resolvedComposeFilePath
+                FrontendRoot = $resolvedFrontendRoot
+                BackendRoot = $resolvedBackendRoot.Path
+            }
+        }
     }
 
-    $resolvedComposeFilePath = $resolvedComposeFile.Path
-    $resolvedFrontendRoot = Split-Path -Path $resolvedComposeFilePath -Parent
-    $backendCandidate = Join-Path (Split-Path -Path $resolvedFrontendRoot -Parent) "facturacion_backend"
-    $resolvedBackendRoot = Resolve-Path $backendCandidate -ErrorAction SilentlyContinue
+    $candidates = @(
+        (Join-Path $PSScriptRoot "..\\facturacion_frontend"),
+        (Join-Path $PSScriptRoot "..")
+    )
 
-    if (-not $resolvedBackendRoot) {
-        throw "No se encontro la carpeta backend esperada: $backendCandidate"
+    foreach ($candidate in $candidates) {
+        $resolvedCandidate = Resolve-Path $candidate -ErrorAction SilentlyContinue
+        if (-not $resolvedCandidate) {
+            continue
+        }
+
+        $candidateCompose = Join-Path $resolvedCandidate.Path "docker-compose.local.yml"
+        $backendCandidate = Join-Path (Split-Path -Path $resolvedCandidate.Path -Parent) "facturacion_backend"
+        $resolvedBackendRoot = Resolve-Path $backendCandidate -ErrorAction SilentlyContinue
+
+        if ((Test-Path $candidateCompose) -and $resolvedBackendRoot) {
+            return @{
+                ComposeFile = $candidateCompose
+                FrontendRoot = $resolvedCandidate.Path
+                BackendRoot = $resolvedBackendRoot.Path
+            }
+        }
     }
 
-    return @{
-        ComposeFile = $resolvedComposeFilePath
-        FrontendRoot = $resolvedFrontendRoot
-        BackendRoot = $resolvedBackendRoot.Path
+    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat."
+}
+
+function Ensure-DockerEngineRunning {
+    docker info | Out-Null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return
     }
+
+    $dockerDesktopExe = @(
+        "$env:ProgramFiles\\Docker\\Docker\\Docker Desktop.exe",
+        "$env:LOCALAPPDATA\\Docker\\Docker Desktop.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if (-not $dockerDesktopExe) {
+        throw "Docker no esta disponible. Instala Docker Desktop y vuelve a ejecutar."
+    }
+
+    Write-Host "Iniciando Docker Desktop..." -ForegroundColor Yellow
+    Start-Process $dockerDesktopExe -ErrorAction SilentlyContinue
+
+    for ($i = 1; $i -le 24; $i++) {
+        Start-Sleep -Seconds 5
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Docker listo." -ForegroundColor Green
+            return
+        }
+    }
+
+    throw "Docker Desktop no respondio a tiempo. Espera un momento y vuelve a intentar."
 }
 
 function Invoke-ComposePostgresScalar {
@@ -161,6 +213,8 @@ $env:BACKEND_PORT = $backendPort
 $env:FRONTEND_PORT = $frontendPort
 $env:ADMIN_PORT = $adminPort
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
+
+Ensure-DockerEngineRunning
 
 $gitCommand = Get-Command git -ErrorAction SilentlyContinue
 $gitAvailable = $null -ne $gitCommand

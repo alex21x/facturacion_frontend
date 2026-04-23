@@ -3,6 +3,70 @@ param(
     [switch]$SkipOpenBrowser
 )
 
+function Resolve-LocalLayout {
+    param([string]$ComposeFilePath)
+
+    $resolvedComposeFile = Resolve-Path $ComposeFilePath -ErrorAction SilentlyContinue
+    if ($resolvedComposeFile) {
+        return @{
+            ComposeFile = $resolvedComposeFile.Path
+            FrontendRoot = Split-Path -Path $resolvedComposeFile.Path -Parent
+        }
+    }
+
+    $candidates = @(
+        (Join-Path $PSScriptRoot "..\facturacion_frontend"),
+        (Join-Path $PSScriptRoot "..")
+    )
+
+    foreach ($candidate in $candidates) {
+        $resolvedCandidate = Resolve-Path $candidate -ErrorAction SilentlyContinue
+        if (-not $resolvedCandidate) {
+            continue
+        }
+
+        $candidateCompose = Join-Path $resolvedCandidate.Path "docker-compose.local.yml"
+        if (Test-Path $candidateCompose) {
+            return @{
+                ComposeFile = $candidateCompose
+                FrontendRoot = $resolvedCandidate.Path
+            }
+        }
+    }
+
+    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat."
+}
+
+function Ensure-DockerEngineRunning {
+    docker info | Out-Null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return
+    }
+
+    $dockerDesktopExe = @(
+        "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+        "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if (-not $dockerDesktopExe) {
+        throw "Docker no esta disponible. Instala Docker Desktop y vuelve a ejecutar."
+    }
+
+    Write-Host "Iniciando Docker Desktop..." -ForegroundColor Yellow
+    Start-Process $dockerDesktopExe -ErrorAction SilentlyContinue
+
+    for ($i = 1; $i -le 24; $i++) {
+        Start-Sleep -Seconds 5
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "Docker listo." -ForegroundColor Green
+            return
+        }
+    }
+
+    throw "Docker Desktop no respondio a tiempo. Espera un momento y vuelve a intentar."
+}
+
 function Get-ConfigValue {
     param(
         [string]$FilePath,
@@ -22,7 +86,9 @@ function Get-ConfigValue {
     return ($match -split '=', 2)[1].Trim()
 }
 
-$frontendRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$layout = Resolve-LocalLayout -ComposeFilePath $ComposeFile
+$ComposeFile = $layout.ComposeFile
+$frontendRoot = $layout.FrontendRoot
 $clientConfig = Join-Path $frontendRoot ".client-config.env"
 
 if (-not (Test-Path $clientConfig)) {
@@ -51,6 +117,7 @@ if ($dockerBindHost -eq "0.0.0.0") {
 }
 
 Write-Host "Levantando sistema local..." -ForegroundColor Cyan
+Ensure-DockerEngineRunning
 docker compose @composeArgs up -d
 
 if ($LASTEXITCODE -ne 0) {

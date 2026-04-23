@@ -2,6 +2,40 @@ param(
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.local.yml")
 )
 
+function Resolve-LocalLayout {
+    param([string]$ComposeFilePath)
+
+    $resolvedComposeFile = Resolve-Path $ComposeFilePath -ErrorAction SilentlyContinue
+    if ($resolvedComposeFile) {
+        return @{
+            ComposeFile = $resolvedComposeFile.Path
+            FrontendRoot = Split-Path -Path $resolvedComposeFile.Path -Parent
+        }
+    }
+
+    $candidates = @(
+        (Join-Path $PSScriptRoot "..\facturacion_frontend"),
+        (Join-Path $PSScriptRoot "..")
+    )
+
+    foreach ($candidate in $candidates) {
+        $resolvedCandidate = Resolve-Path $candidate -ErrorAction SilentlyContinue
+        if (-not $resolvedCandidate) {
+            continue
+        }
+
+        $candidateCompose = Join-Path $resolvedCandidate.Path "docker-compose.local.yml"
+        if (Test-Path $candidateCompose) {
+            return @{
+                ComposeFile = $candidateCompose
+                FrontendRoot = $resolvedCandidate.Path
+            }
+        }
+    }
+
+    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat."
+}
+
 function Get-ConfigValue {
     param(
         [string]$FilePath,
@@ -21,7 +55,9 @@ function Get-ConfigValue {
     return ($match -split '=', 2)[1].Trim()
 }
 
-$frontendRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$layout = Resolve-LocalLayout -ComposeFilePath $ComposeFile
+$ComposeFile = $layout.ComposeFile
+$frontendRoot = $layout.FrontendRoot
 $clientConfig = Join-Path $frontendRoot ".client-config.env"
 $composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 
