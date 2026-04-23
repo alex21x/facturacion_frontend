@@ -38,6 +38,37 @@ function New-DesktopShortcut {
     $shortcut.Save()
 }
 
+function Repair-DockerDesktopDataPath {
+    $dockerDataPath = 'C:\ProgramData\DockerDesktop'
+
+    if (-not (Test-Path $dockerDataPath)) {
+        New-Item -ItemType Directory -Path $dockerDataPath -Force | Out-Null
+    }
+
+    Write-Host "Reparando permisos de Docker Desktop..." -ForegroundColor Cyan
+    cmd /c "takeown /F \"$dockerDataPath\" /A /R /D Y >nul 2>&1"
+    cmd /c "icacls \"$dockerDataPath\" /setowner *S-1-5-32-544 /T /C >nul 2>&1"
+    cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-32-544:(OI)(CI)F /T /C >nul 2>&1"
+}
+
+function Install-DockerDesktopDirectly {
+    $installerPath = Join-Path $env:TEMP 'DockerDesktopInstaller.exe'
+    $downloadUrl = 'https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe'
+
+    Write-Host "Descargando instalador oficial de Docker Desktop..." -ForegroundColor Cyan
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath -UseBasicParsing
+
+    if (-not (Test-Path $installerPath)) {
+        throw 'No se pudo descargar el instalador oficial de Docker Desktop.'
+    }
+
+    Write-Host "Ejecutando instalador oficial de Docker Desktop..." -ForegroundColor Cyan
+    $process = Start-Process -FilePath $installerPath -ArgumentList 'install', '--accept-license', '--backend=wsl-2' -Wait -PassThru
+    if ($process.ExitCode -ne 0) {
+        throw "El instalador oficial de Docker Desktop fallo con codigo $($process.ExitCode)."
+    }
+}
+
 $resolvedComposeFile = Resolve-Path $ComposeFile -ErrorAction SilentlyContinue
 if (-not $resolvedComposeFile) { throw "No se encontro docker-compose.local.yml en la ruta recibida: $ComposeFile" }
 $ComposeFile = $resolvedComposeFile.Path
@@ -108,22 +139,26 @@ function Ensure-DockerAvailable {
         dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
     }
 
+    Repair-DockerDesktopDataPath
+
     # Intentar instalar Docker Desktop via winget
     $wingetCommand = Get-Command winget -ErrorAction SilentlyContinue
     if (-not $wingetCommand) {
-        throw "No se encontro winget para instalar Docker automaticamente. Descarga Docker Desktop desde https://www.docker.com/products/docker-desktop y luego vuelve a ejecutar el instalador."
-    }
+        Install-DockerDesktopDirectly
+    } else {
+        Write-Host "Instalando Docker Desktop via winget..." -ForegroundColor Cyan
+        winget source update 2>&1 | Out-Null
+        winget install -e --id Docker.DockerDesktop --scope machine --accept-package-agreements --accept-source-agreements --disable-interactivity
+        if ($LASTEXITCODE -ne 0) {
+            # Intentar sin --scope machine (algunos winget no lo soportan)
+            winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --disable-interactivity
+        }
 
-    Write-Host "Instalando Docker Desktop via winget..." -ForegroundColor Cyan
-    winget source update 2>&1 | Out-Null
-    winget install -e --id Docker.DockerDesktop --scope machine --accept-package-agreements --accept-source-agreements --disable-interactivity
-    if ($LASTEXITCODE -ne 0) {
-        # Intentar sin --scope machine (algunos winget no lo soportan)
-        winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --disable-interactivity
-    }
-
-    if ($LASTEXITCODE -ne 0) {
-        throw "No se pudo instalar Docker Desktop automaticamente. Descargalo desde https://www.docker.com/products/docker-desktop e instalalo manualmente, luego vuelve a ejecutar el instalador."
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Winget no pudo instalar Docker Desktop. Intentando instalador oficial..." -ForegroundColor Yellow
+            Repair-DockerDesktopDataPath
+            Install-DockerDesktopDirectly
+        }
     }
 
     Write-Host "" -ForegroundColor White
