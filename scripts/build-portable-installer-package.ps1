@@ -73,7 +73,7 @@ Set-Content -Path $launcher -Value @(
     '@echo off',
     'setlocal',
     'cd /d "%~dp0"',
-    'call "%~dp0scripts\instalar-local.bat"',
+    'PowerShell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\setup-local.ps1" -ComposeFile "%~dp0payload\facturacion_frontend\docker-compose.local.yml" -BackendRoot "%~dp0payload\facturacion_backend"',
     'exit /b %errorlevel%'
 )
 
