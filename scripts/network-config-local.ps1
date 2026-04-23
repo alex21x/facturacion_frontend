@@ -50,6 +50,67 @@ function Set-ConfigValue {
     Set-Content -Path $FilePath -Value $lines
 }
 
+function Get-ApiBaseUrlConfigValue {
+    param(
+        [string]$BindHost,
+        [string]$BackendPort
+    )
+
+    if ($BindHost -eq "0.0.0.0") {
+        return ""
+    }
+
+    return "http://127.0.0.1:$BackendPort"
+}
+
+function Get-LocalIpv4Addresses {
+    $addresses = @()
+
+    try {
+        $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object {
+                $_.IPAddress -and
+                $_.IPAddress -ne '127.0.0.1' -and
+                -not $_.IPAddress.StartsWith('169.254.')
+            } |
+            Select-Object -ExpandProperty IPAddress -Unique
+    } catch {
+        $addresses = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPEnabled -and $_.IPAddress } |
+            ForEach-Object { $_.IPAddress } |
+            Where-Object {
+                $_ -match '^(\d{1,3}\.){3}\d{1,3}$' -and
+                $_ -ne '127.0.0.1' -and
+                -not $_.StartsWith('169.254.')
+            } |
+            Select-Object -Unique
+    }
+
+    return @($addresses)
+}
+
+function Remove-FacturacionFirewallRules {
+    param([int[]]$Ports)
+
+    foreach ($port in $Ports) {
+        $ruleName = "Facturacion Local $port"
+        netsh advfirewall firewall delete rule name="$ruleName" | Out-Null
+    }
+}
+
+function Ensure-FacturacionFirewallRules {
+    param([int[]]$Ports)
+
+    foreach ($port in $Ports) {
+        $ruleName = "Facturacion Local $port"
+        netsh advfirewall firewall delete rule name="$ruleName" | Out-Null
+        netsh advfirewall firewall add rule name="$ruleName" dir=in action=allow protocol=TCP localport=$port profile=private,domain | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo abrir el puerto $port en el firewall de Windows."
+        }
+    }
+}
+
 $frontendRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $clientConfig = Join-Path $frontendRoot ".client-config.env"
 
@@ -90,7 +151,7 @@ Write-Host ""
 Write-Host "Actualizando configuracion..." -ForegroundColor Cyan
 
 Set-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST" -Value $newBindHost
-Set-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -Value "http://${newBindHost}:${backendPort}"
+Set-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -Value (Get-ApiBaseUrlConfigValue -BindHost $newBindHost -BackendPort $backendPort)
 
 Write-Host ""
 Write-Host "Deteniendo servicios actuales..." -ForegroundColor Cyan
@@ -100,7 +161,7 @@ $env:DOCKER_BIND_HOST = $newBindHost
 $env:BACKEND_PORT = $backendPort
 $env:FRONTEND_PORT = $frontendPort
 $env:ADMIN_PORT = $adminPort
-$env:VITE_API_BASE_URL = "http://${newBindHost}:${backendPort}"
+$env:VITE_API_BASE_URL = Get-ApiBaseUrlConfigValue -BindHost $newBindHost -BackendPort $backendPort
 
 docker compose @composeArgs down
 
@@ -116,6 +177,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "No se pudo reiniciar los servicios."
 }
 
+if ($newAllowNetworkAccess) {
+    Ensure-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort)
+} else {
+    Remove-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort)
+}
+
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  ✅ CONFIGURACION ACTUALIZADA" -ForegroundColor Green
@@ -123,8 +190,11 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 if ($newAllowNetworkAccess) {
     Write-Host "🌐 ACCESO REMOTO: Habilitado" -ForegroundColor Green
-    Write-Host "    Accesible desde: http://0.0.0.0:${frontendPort}" -ForegroundColor Gray
     Write-Host "    Desde esta PC:   http://127.0.0.1:${frontendPort}" -ForegroundColor Gray
+    $lanIps = Get-LocalIpv4Addresses
+    foreach ($ip in $lanIps) {
+        Write-Host "    Desde otra PC:   http://${ip}:${frontendPort}" -ForegroundColor Gray
+    }
 } else {
     Write-Host "🔒 ACCESO REMOTO: Deshabilitado" -ForegroundColor Yellow
     Write-Host "    Accesible solo desde esta PC: http://127.0.0.1:${frontendPort}" -ForegroundColor Gray

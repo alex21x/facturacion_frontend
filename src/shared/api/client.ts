@@ -1,7 +1,8 @@
+import { getApiBaseUrl } from './base-url';
 import { refresh } from '../../modules/auth/api';
 import { clearAuthSession, loadAuthSession, saveAuthSession } from '../../modules/auth/storage';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const baseUrl = getApiBaseUrl();
 
 let refreshingPromise: Promise<string | null> | null = null;
 

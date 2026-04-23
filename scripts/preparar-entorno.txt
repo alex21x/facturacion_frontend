@@ -4,8 +4,8 @@
     [switch]$EnableLanAccess,
     [string]$FrontendRepoUrl = "https://github.com/alex21x/facturacion_frontend.git",
     [string]$BackendRepoUrl = "https://github.com/alex21x/facturacion_backend.git",
-    [string]$FrontendBranch = "docker-multi-entorno",
-    [string]$BackendBranch = "docker-multi-entorno"
+    [string]$FrontendBranch = "feature/docker-multientorno",
+    [string]$BackendBranch = "feature/docker-multientorno"
 )
 
 function Get-PreferredInstallRoot {
@@ -56,6 +56,20 @@ function Ensure-GitAvailable {
     }
 }
 
+function Test-RemoteBranchExists {
+    param(
+        [string]$RepoUrl,
+        [string]$Branch
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Branch)) {
+        return $false
+    }
+
+    git ls-remote --heads $RepoUrl $Branch 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
 function Ensure-Repository {
     param(
         [string]$TargetPath,
@@ -101,6 +115,10 @@ function Ensure-Repository {
     }
 
     foreach ($branch in $normalizedCandidates) {
+        if (-not (Test-RemoteBranchExists -RepoUrl $RepoUrl -Branch $branch)) {
+            continue
+        }
+
         Write-Host "Clonando $Name en $TargetPath (rama $branch)..." -ForegroundColor Cyan
         git clone --quiet --branch $branch --single-branch $RepoUrl $TargetPath 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
@@ -232,10 +250,10 @@ Write-Host "Preparando arquitectura en: $resolvedInstallRoot" -ForegroundColor C
 New-Item -ItemType Directory -Path $resolvedInstallRoot -Force | Out-Null
 
 Ensure-GitAvailable
-Ensure-Repository -TargetPath $targetFrontendRoot -RepoUrl $FrontendRepoUrl -BranchCandidates @($FrontendBranch, "docker-multi-entorno", "feature/docker-multientorno") -Name "frontend"
-Ensure-Repository -TargetPath $targetBackendRoot -RepoUrl $BackendRepoUrl -BranchCandidates @($BackendBranch, "docker-multi-entorno", "feature/docker-multientorno") -Name "backend"
-Ensure-FrontendDockerBranch -FrontendPath $targetFrontendRoot -CandidateBranches @($FrontendBranch, "docker-multi-entorno", "feature/docker-multientorno")
-Ensure-BackendDockerBranch -BackendPath $targetBackendRoot -CandidateBranches @($BackendBranch, "docker-multi-entorno", "feature/docker-multientorno")
+Ensure-Repository -TargetPath $targetFrontendRoot -RepoUrl $FrontendRepoUrl -BranchCandidates @($FrontendBranch, "feature/docker-multientorno", "docker-multi-entorno") -Name "frontend"
+Ensure-Repository -TargetPath $targetBackendRoot -RepoUrl $BackendRepoUrl -BranchCandidates @($BackendBranch, "feature/docker-multientorno", "docker-multi-entorno") -Name "backend"
+Ensure-FrontendDockerBranch -FrontendPath $targetFrontendRoot -CandidateBranches @($FrontendBranch, "feature/docker-multientorno", "docker-multi-entorno")
+Ensure-BackendDockerBranch -BackendPath $targetBackendRoot -CandidateBranches @($BackendBranch, "feature/docker-multientorno", "docker-multi-entorno")
 
 $resolvedScriptsDir = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
     $PSScriptRoot
@@ -270,11 +288,13 @@ Assert-PathExists -Path (Join-Path $targetBackendRoot "artisan") -Message "No se
 $installParams = @{
     ComposeFile = $composeFile
     BackendRoot = $targetBackendRoot
-    NonInteractive = $true
 }
 
-if ($EnableLanAccess) {
-    $installParams.EnableLanAccess = $true
+if ($PSBoundParameters.ContainsKey('EnableLanAccess')) {
+    $installParams.NonInteractive = $true
+    if ($EnableLanAccess) {
+        $installParams.EnableLanAccess = $true
+    }
 }
 
 Write-Host "Ejecutando instalador principal..." -ForegroundColor Cyan

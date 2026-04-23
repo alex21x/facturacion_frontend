@@ -25,6 +25,99 @@ function Set-ConfigValue {
     Set-Content -Path $FilePath -Value $lines
 }
 
+function Get-ApiBaseUrlConfigValue {
+    param(
+        [string]$BindHost,
+        [string]$BackendPort
+    )
+
+    if ($BindHost -eq '0.0.0.0') {
+        return ''
+    }
+
+    return "http://127.0.0.1:$BackendPort"
+}
+
+function Get-LocalIpv4Addresses {
+    $addresses = @()
+
+    try {
+        $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object {
+                $_.IPAddress -and
+                $_.IPAddress -ne '127.0.0.1' -and
+                -not $_.IPAddress.StartsWith('169.254.')
+            } |
+            Select-Object -ExpandProperty IPAddress -Unique
+    } catch {
+        $addresses = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPEnabled -and $_.IPAddress } |
+            ForEach-Object { $_.IPAddress } |
+            Where-Object {
+                $_ -match '^(\d{1,3}\.){3}\d{1,3}$' -and
+                $_ -ne '127.0.0.1' -and
+                -not $_.StartsWith('169.254.')
+            } |
+            Select-Object -Unique
+    }
+
+    return @($addresses)
+}
+
+function Remove-FacturacionFirewallRules {
+    param([int[]]$Ports)
+
+    foreach ($port in $Ports) {
+        $ruleName = "Facturacion Local $port"
+        netsh advfirewall firewall delete rule name="$ruleName" | Out-Null
+    }
+}
+
+function Ensure-FacturacionFirewallRules {
+    param([int[]]$Ports)
+
+    foreach ($port in $Ports) {
+        $ruleName = "Facturacion Local $port"
+        netsh advfirewall firewall delete rule name="$ruleName" | Out-Null
+        netsh advfirewall firewall add rule name="$ruleName" dir=in action=allow protocol=TCP localport=$port profile=private,domain | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "No se pudo abrir el puerto $port en el firewall de Windows."
+        }
+    }
+}
+
+function Show-AccessUrls {
+    param(
+        [string]$BindHost,
+        [string]$BackendPort,
+        [string]$FrontendPort,
+        [string]$AdminPort
+    )
+
+    Write-Host ("Frontend local: http://127.0.0.1:{0}" -f $FrontendPort) -ForegroundColor Green
+    Write-Host ("Admin local: http://127.0.0.1:{0}" -f $AdminPort) -ForegroundColor Green
+    Write-Host ("Backend local: http://127.0.0.1:{0}" -f $BackendPort) -ForegroundColor Green
+
+    if ($BindHost -ne '0.0.0.0') {
+        return
+    }
+
+    $lanIps = Get-LocalIpv4Addresses
+    if ($lanIps.Count -eq 0) {
+        Write-Host 'Acceso remoto habilitado, pero no se detecto una IP LAN automaticamente.' -ForegroundColor Yellow
+        Write-Host 'Usa la IP IPv4 de esta PC dentro de la red local.' -ForegroundColor Yellow
+        return
+    }
+
+    Write-Host ''
+    Write-Host 'Acceso desde otras PCs de la red:' -ForegroundColor Cyan
+    foreach ($ip in $lanIps) {
+        Write-Host ("  Frontend: http://{0}:{1}" -f $ip, $FrontendPort) -ForegroundColor Green
+        Write-Host ("  Admin:    http://{0}:{1}" -f $ip, $AdminPort) -ForegroundColor Green
+        Write-Host ("  Backend:  http://{0}:{1}" -f $ip, $BackendPort) -ForegroundColor Green
+    }
+}
+
 function Invoke-ComposePostgresScalar {
     param(
         [string[]]$ComposeArgs,
@@ -347,9 +440,25 @@ $allowNetworkAccess = $false
 if ($NonInteractive) {
     $allowNetworkAccess = $EnableLanAccess.IsPresent
 } else {
-    Write-Host "Deseas permitir acceso desde otras PCs de la red? (s/n)" -ForegroundColor Cyan
+    Write-Host "
+" -ForegroundColor White
+    Write-Host "======================================" -ForegroundColor Yellow
+    Write-Host "  ACCESO REMOTO" -ForegroundColor Yellow
+    Write-Host "======================================" -ForegroundColor Yellow
+    Write-Host "
+" -ForegroundColor White
+    Write-Host "¿Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
+    Write-Host "
+" -ForegroundColor White
+    Write-Host "  [s] Si  - Accesible desde cualquier PC de la red" -ForegroundColor Green
+    Write-Host "          (puertos abiertos: backend 8000, frontend 5173, admin 5174)" -ForegroundColor DarkGray
+    Write-Host "
+" -ForegroundColor White
+    Write-Host "  [n] No - Solo accesible localmente en esta PC (más seguro)" -ForegroundColor Yellow
+    Write-Host "
+" -ForegroundColor White
     $choice = Read-Host "Opcion"
-    if ($choice -eq 's') { $allowNetworkAccess = $true }
+    if ($choice -eq 's' -or $choice -eq 'S') { $allowNetworkAccess = $true }
 }
 
 $bindHost = if ($allowNetworkAccess) { '0.0.0.0' } else { '127.0.0.1' }
@@ -361,7 +470,7 @@ if (-not (Test-Path $clientConfig)) {
         "BACKEND_PORT=8000",
         "FRONTEND_PORT=5173",
         "ADMIN_PORT=5174",
-        "VITE_API_BASE_URL=http://${bindHost}:8000",
+        ("VITE_API_BASE_URL={0}" -f (Get-ApiBaseUrlConfigValue -BindHost $bindHost -BackendPort '8000')),
         "POSTGRES_DB=facturacion_v2",
         "POSTGRES_USER=facturacion",
         "POSTGRES_PASSWORD=facturacion",
@@ -379,7 +488,7 @@ $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_DB' -Defaul
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_USER' -DefaultValue 'facturacion'
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_PASSWORD' -DefaultValue 'facturacion'
 $bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_export_utf8_clean_20260418_105235.sql'
-$viteApiBaseUrl = "http://{0}:{1}" -f $dockerBindHost, $backendPort
+$viteApiBaseUrl = Get-ApiBaseUrlConfigValue -BindHost $dockerBindHost -BackendPort $backendPort
 
 Set-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST' -Value $dockerBindHost
 Set-ConfigValue -FilePath $clientConfig -Key 'VITE_API_BASE_URL' -Value $viteApiBaseUrl
@@ -491,6 +600,14 @@ if ($composeExitCode -ne 0) {
     Append-InstallLog 'docker compose up exitoso en primer intento.'
 }
 
+if ($dockerBindHost -eq '0.0.0.0') {
+    Ensure-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort)
+    Append-InstallLog 'Acceso remoto habilitado: reglas de firewall aplicadas.'
+} else {
+    Remove-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort)
+    Append-InstallLog 'Acceso remoto deshabilitado: reglas de firewall removidas.'
+}
+
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
     $bootstrapRestored = Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
@@ -525,8 +642,5 @@ $uninstallShortcutPath = Join-Path $desktopPath 'Facturacion - Desinstalar.lnk'
 if (Test-Path $updateShortcutPath) { Remove-Item $updateShortcutPath -Force }
 if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Force }
 
-if ($dockerBindHost -eq '0.0.0.0') { $displayHost = '127.0.0.1' } else { $displayHost = $dockerBindHost }
 Write-Host 'Instalacion completada.' -ForegroundColor Green
-Write-Host ("Frontend: http://{0}:{1}" -f $displayHost, $frontendPort) -ForegroundColor Green
-Write-Host ("Admin: http://{0}:{1}" -f $displayHost, $adminPort) -ForegroundColor Green
-Write-Host ("Backend: http://{0}:{1}" -f $displayHost, $backendPort) -ForegroundColor Green
+Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort
