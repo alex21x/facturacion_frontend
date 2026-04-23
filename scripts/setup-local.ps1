@@ -516,8 +516,8 @@ New-Item -ItemType Directory -Path $scriptsRoot -Force | Out-Null
 Copy-Item -Path (Join-Path $PSScriptRoot '*.ps1') -Destination $scriptsRoot -Force -ErrorAction SilentlyContinue
 Copy-Item -Path (Join-Path $PSScriptRoot '*.bat') -Destination $scriptsRoot -Force -ErrorAction SilentlyContinue
 
-New-DesktopShortcut -Name 'Facturacion - Levantar' -TargetPath $cmdPath -Arguments "/c \"$scriptsRoot\levantar-local.bat\"" -WorkingDirectory $scriptsRoot
-New-DesktopShortcut -Name 'Facturacion - Apagar' -TargetPath $cmdPath -Arguments "/c \"$scriptsRoot\apagar-local.bat\"" -WorkingDirectory $scriptsRoot
+New-DesktopShortcut -Name 'Facturacion - Levantar' -TargetPath (Join-Path $scriptsRoot 'levantar-local.bat') -WorkingDirectory $scriptsRoot
+New-DesktopShortcut -Name 'Facturacion - Apagar' -TargetPath (Join-Path $scriptsRoot 'apagar-local.bat') -WorkingDirectory $scriptsRoot
 
 $desktopPath = [Environment]::GetFolderPath('Desktop')
 $updateShortcutPath = Join-Path $desktopPath 'Facturacion - Actualizar.lnk'
