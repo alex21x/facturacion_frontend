@@ -58,12 +58,54 @@ function Resolve-UpdateLayout {
         }
     }
 
-    $candidates = @(
+    # Buscar en ubicaciones absolutas estándar de instalación
+    $absoluteCandidates = @(
+        "C:\FacturacionLocal\facturacion_frontend\docker-compose.local.yml",
+        "C:\xampp\htdocs\facturacion_frontend\docker-compose.local.yml",
+        "D:\FacturacionLocal\facturacion_frontend\docker-compose.local.yml"
+    )
+
+    foreach ($candidate in $absoluteCandidates) {
+        if (Test-Path $candidate) {
+            $frontendRoot = Split-Path -Path $candidate -Parent
+            $backendCandidate = Join-Path (Split-Path -Path $frontendRoot -Parent) "facturacion_backend"
+            $resolvedBackendRoot = Resolve-Path $backendCandidate -ErrorAction SilentlyContinue
+            if ($resolvedBackendRoot) {
+                return @{
+                    ComposeFile = $candidate
+                    FrontendRoot = $frontendRoot
+                    BackendRoot = $resolvedBackendRoot.Path
+                }
+            }
+        }
+    }
+
+    # Buscar recursivamente desde el directorio del script hacia arriba
+    $currentDir = Split-Path -Path $PSScriptRoot -Parent
+    for ($i = 0; $i -lt 10; $i++) {  # Máximo 10 niveles hacia arriba
+        if (-not $currentDir) { break }
+        $candidateCompose = Join-Path $currentDir "docker-compose.local.yml"
+        if (Test-Path $candidateCompose) {
+            $backendCandidate = Join-Path (Split-Path -Path $currentDir -Parent) "facturacion_backend"
+            $resolvedBackendRoot = Resolve-Path $backendCandidate -ErrorAction SilentlyContinue
+            if ($resolvedBackendRoot) {
+                return @{
+                    ComposeFile = $candidateCompose
+                    FrontendRoot = $currentDir
+                    BackendRoot = $resolvedBackendRoot.Path
+                }
+            }
+        }
+        $currentDir = Split-Path -Path $currentDir -Parent
+    }
+
+    # Candidatos relativos (para compatibilidad)
+    $relativeCandidates = @(
         (Join-Path $PSScriptRoot "..\\facturacion_frontend"),
         (Join-Path $PSScriptRoot "..")
     )
 
-    foreach ($candidate in $candidates) {
+    foreach ($candidate in $relativeCandidates) {
         $resolvedCandidate = Resolve-Path $candidate -ErrorAction SilentlyContinue
         if (-not $resolvedCandidate) {
             continue
@@ -82,7 +124,25 @@ function Resolve-UpdateLayout {
         }
     }
 
-    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat."
+    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat o INSTALAR-FACTURACION.bat desde el paquete de instalacion."
+}
+
+function Resolve-ClientConfig {
+    param([string]$RootPath)
+
+    $candidates = @(
+        Join-Path $RootPath ".client-config.env",
+        Join-Path $RootPath "scripts\.client-config.env",
+        Join-Path (Split-Path -Path $RootPath -Parent) ".client-config.env"
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
 }
 
 function Ensure-DockerEngineRunning {
@@ -183,10 +243,10 @@ $layout = Resolve-UpdateLayout -ComposeFilePath $ComposeFile
 $ComposeFile = $layout.ComposeFile
 $frontendRoot = $layout.FrontendRoot
 $backendRoot = $layout.BackendRoot
-$clientConfig = Join-Path $frontendRoot ".client-config.env"
+$clientConfig = Resolve-ClientConfig -RootPath $frontendRoot
 
-if (-not (Test-Path $clientConfig)) {
-    throw "No existe .client-config.env. Ejecuta primero scripts/instalar-local.bat"
+if (-not $clientConfig) {
+    throw "No existe .client-config.env. Ejecuta primero scripts/instalar-local.bat o setup-local.ps1 desde la carpeta raiz del instalador."
 }
 
 $frontendBranch = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_BRANCH" -DefaultValue "main"
