@@ -17,6 +17,27 @@ $portablePayload = Join-Path $OutputRoot "payload"
 $portableFrontend = Join-Path $portablePayload "facturacion_frontend"
 $portableBackend = Join-Path $portablePayload "facturacion_backend"
 
+$trackedScripts = @(
+    'actualizar-local.bat',
+    'apagar-local.bat',
+    'append_cfg_css.ps1',
+    'build-portable-installer-package.ps1',
+    'config-red-local.bat',
+    'desinstalar-local.bat',
+    'instalar-local.bat',
+    'levantar-local.bat',
+    'network-config-local.ps1',
+    'preparar-entorno.txt',
+    'rebuild_appcfg_return.ps1',
+    'setup-local.ps1',
+    'start-local.ps1',
+    'stop-local.ps1',
+    'test-all-local.ps1',
+    'uninstall-local.ps1',
+    'update-local.ps1',
+    'validar-local.bat'
+)
+
 if (Test-Path $OutputRoot) {
     Remove-Item -Path $OutputRoot -Recurse -Force
 }
@@ -24,10 +45,16 @@ if (Test-Path $OutputRoot) {
 New-Item -ItemType Directory -Path $portableScripts -Force | Out-Null
 New-Item -ItemType Directory -Path $portablePayload -Force | Out-Null
 
-# Copy scripts folder as-is
-robocopy (Join-Path $frontendRoot.Path "scripts") $portableScripts /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP
-if ($LASTEXITCODE -ge 8) {
-    throw "Fallo copia de scripts al paquete portable."
+# Copy only the tracked/required scripts. Some historical PS1 filenames are
+# intentionally excluded because Windows Defender/ESET flag them by name even
+# though the current flow no longer depends on them.
+foreach ($scriptName in $trackedScripts) {
+    $sourceScript = Join-Path $frontendRoot.Path "scripts\$scriptName"
+    if (-not (Test-Path $sourceScript)) {
+        throw "Falta script requerido para el paquete portable: $scriptName"
+    }
+
+    Copy-Item -Path $sourceScript -Destination (Join-Path $portableScripts $scriptName) -Force
 }
 
 # Copy full frontend/backend payload (excluding heavy transient folders)

@@ -134,7 +134,7 @@ $backendRoot = $layout.BackendRoot
 $clientConfig = Join-Path $frontendRoot ".client-config.env"
 
 if (-not (Test-Path $clientConfig)) {
-    throw "No existe .client-config.env. Ejecuta primero scripts/install-local.ps1"
+    throw "No existe .client-config.env. Ejecuta primero scripts/instalar-local.bat"
 }
 
 $frontendBranch = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_BRANCH" -DefaultValue "main"
