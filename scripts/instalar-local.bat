@@ -32,13 +32,42 @@ set REPO_BRANCH=feature/docker-multientorno
 set RAW_URL=https://raw.githubusercontent.com/alex21x/facturacion_frontend/%REPO_BRANCH%/scripts/preparar-entorno.txt
 set CDN_URL=https://cdn.jsdelivr.net/gh/alex21x/facturacion_frontend@%REPO_BRANCH%/scripts/preparar-entorno.txt
 set GITHUB_URL=https://github.com/alex21x/facturacion_frontend/raw/%REPO_BRANCH%/scripts/preparar-entorno.txt
+set TEMP_BOOTSTRAP=%TEMP%\facturacion_preparar_entorno.txt
 
 echo.
 echo Iniciando instalador...
 echo (Descargando logica de instalacion desde GitHub)
 echo.
 
-PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$urls=@('%RAW_URL%','%CDN_URL%','%GITHUB_URL%');$ErrorActionPreference='Stop';try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12}catch{};function Download-InstallerContent([string]$u){try{Write-Host ('Descargando desde: '+$u) -ForegroundColor Cyan;$req=[Net.HttpWebRequest]::Create($u);$req.Method='GET';$req.Timeout=15000;$req.ReadWriteTimeout=15000;$req.UserAgent='FacturacionInstaller/1.0';$resp=$req.GetResponse();$reader=New-Object IO.StreamReader($resp.GetResponseStream());try{$text=$reader.ReadToEnd()}finally{$reader.Dispose();$resp.Dispose()};if([string]::IsNullOrWhiteSpace($text)){throw 'Respuesta vacia'};return $text}catch{Write-Host ('Fallo descarga: '+$u+' -> '+$_.Exception.Message) -ForegroundColor Yellow;return $null}};$c=$null;foreach($u in $urls){$c=Download-InstallerContent $u;if(-not [string]::IsNullOrWhiteSpace($c)){break}};if([string]::IsNullOrWhiteSpace($c)){throw 'No se pudo descargar la logica del instalador desde ninguno de los servidores publicos. Revisa DNS/Internet o acceso HTTPS a GitHub/jsDelivr.'};Write-Host 'Ejecutando...' -ForegroundColor Green;$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d;exit $LASTEXITCODE"
+if exist "%TEMP_BOOTSTRAP%" del /f /q "%TEMP_BOOTSTRAP%" >nul 2>&1
+
+echo Descargando desde: %RAW_URL%
+curl.exe -L --fail --silent --show-error --connect-timeout 10 --max-time 20 "%RAW_URL%" -o "%TEMP_BOOTSTRAP%"
+if errorlevel 1 (
+  echo Fallo descarga principal. Probando CDN...
+  curl.exe -L --fail --silent --show-error --connect-timeout 10 --max-time 20 "%CDN_URL%" -o "%TEMP_BOOTSTRAP%"
+)
+if errorlevel 1 (
+  echo Fallo CDN. Probando GitHub raw...
+  curl.exe -L --fail --silent --show-error --connect-timeout 10 --max-time 20 "%GITHUB_URL%" -o "%TEMP_BOOTSTRAP%"
+)
+if errorlevel 1 (
+  echo.
+  echo No se pudo descargar la logica del instalador desde GitHub/CDN.
+  echo Verifica antivirus, proxy, DNS o inspeccion HTTPS en esta PC.
+  pause
+  exit /b 1
+)
+
+if not exist "%TEMP_BOOTSTRAP%" (
+  echo.
+  echo La descarga termino sin crear el archivo temporal del instalador.
+  pause
+  exit /b 1
+)
+
+echo Ejecutando instalador descargado...
+PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$p='%TEMP_BOOTSTRAP%';$ErrorActionPreference='Stop';$c=[IO.File]::ReadAllText($p);if([string]::IsNullOrWhiteSpace($c)){throw 'El archivo descargado esta vacio.'};$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d;exit $LASTEXITCODE"
 
 if errorlevel 1 (
   echo.
