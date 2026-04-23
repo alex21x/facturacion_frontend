@@ -74,7 +74,7 @@ function Ensure-Repository {
         # Forzar refspec completo para que fetch traiga TODAS las ramas remotas
         # (repos clonados con --single-branch solo tienen refspec de una rama)
         git -C $TargetPath config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" | Out-Null
-        git -C $TargetPath fetch --all --prune 2>&1 | Out-Null
+        git -C $TargetPath fetch --all --prune --quiet 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw "No se pudo hacer fetch de $Name."
         }
@@ -102,7 +102,7 @@ function Ensure-Repository {
 
     foreach ($branch in $normalizedCandidates) {
         Write-Host "Clonando $Name en $TargetPath (rama $branch)..." -ForegroundColor Cyan
-        git clone --branch $branch --single-branch $RepoUrl $TargetPath | Out-Null
+        git clone --quiet --branch $branch --single-branch $RepoUrl $TargetPath 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
             return
         }
