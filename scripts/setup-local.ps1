@@ -25,6 +25,70 @@ function Set-ConfigValue {
     Set-Content -Path $FilePath -Value $lines
 }
 
+function Invoke-ComposePostgresScalar {
+    param(
+        [string[]]$ComposeArgs,
+        [string]$PostgresPassword,
+        [string]$PostgresUser,
+        [string]$PostgresDb,
+        [string]$Sql
+    )
+
+    $result = docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -tAc $Sql
+    if ($LASTEXITCODE -ne 0) {
+        throw 'No se pudo consultar PostgreSQL dentro del contenedor Docker.'
+    }
+
+    return ($result | Out-String).Trim()
+}
+
+function Initialize-DatabaseFromBootstrap {
+    param(
+        [string[]]$ComposeArgs,
+        [string]$PostgresPassword,
+        [string]$PostgresUser,
+        [string]$PostgresDb,
+        [string]$BootstrapSqlPath
+    )
+
+    $resolvedBootstrapSqlPath = Resolve-Path $BootstrapSqlPath -ErrorAction SilentlyContinue
+    if (-not $resolvedBootstrapSqlPath) {
+        throw "No se encontro el dump base para inicializar la base de datos: $BootstrapSqlPath"
+    }
+
+    $hasCompanySettings = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'core' AND table_name = 'company_settings');"
+    if ($hasCompanySettings -eq 't') {
+        return
+    }
+
+    Write-Host 'Base vacia detectada. Restaurando dump inicial...' -ForegroundColor Cyan
+
+    $postgresRoleExists = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres');"
+    if ($postgresRoleExists -ne 't') {
+        docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -c 'CREATE ROLE postgres;' | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'No se pudo preparar el rol postgres requerido por el dump base.'
+        }
+    }
+
+    $postgresContainerId = (docker compose @ComposeArgs ps -q postgres | Out-String).Trim()
+    if (-not $postgresContainerId) {
+        throw 'No se pudo identificar el contenedor de PostgreSQL.'
+    }
+
+    docker cp $resolvedBootstrapSqlPath "${postgresContainerId}:/tmp/bootstrap.sql"
+    if ($LASTEXITCODE -ne 0) {
+        throw 'No se pudo copiar el dump base al contenedor de PostgreSQL.'
+    }
+
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -f /tmp/bootstrap.sql
+    if ($LASTEXITCODE -ne 0) {
+        throw 'No se pudo restaurar el dump base dentro de PostgreSQL.'
+    }
+
+    docker compose @ComposeArgs exec -T postgres rm -f /tmp/bootstrap.sql | Out-Null
+}
+
 function New-DesktopShortcut {
     param([string]$Name,[string]$TargetPath,[string]$Arguments="",[string]$WorkingDirectory="")
     $desktopPath = [Environment]::GetFolderPath('Desktop')
@@ -299,6 +363,7 @@ if (-not (Test-Path $clientConfig)) {
         "POSTGRES_DB=facturacion_v2",
         "POSTGRES_USER=facturacion",
         "POSTGRES_PASSWORD=facturacion",
+        "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_export_utf8_clean_20260418_105235.sql",
         "RUN_MIGRATIONS=true"
     )
 }
@@ -308,6 +373,10 @@ $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key 'BACKEND_PORT' -DefaultValue '8000'
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key 'FRONTEND_PORT' -DefaultValue '5173'
 $adminPort = Get-ConfigValue -FilePath $clientConfig -Key 'ADMIN_PORT' -DefaultValue '5174'
+$postgresDb = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_DB' -DefaultValue 'facturacion_v2'
+$postgresUser = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_USER' -DefaultValue 'facturacion'
+$postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_PASSWORD' -DefaultValue 'facturacion'
+$bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_export_utf8_clean_20260418_105235.sql'
 $viteApiBaseUrl = "http://{0}:{1}" -f $dockerBindHost, $backendPort
 
 Set-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST' -Value $dockerBindHost
@@ -317,6 +386,9 @@ $env:DOCKER_BIND_HOST = $dockerBindHost
 $env:BACKEND_PORT = $backendPort
 $env:FRONTEND_PORT = $frontendPort
 $env:ADMIN_PORT = $adminPort
+$env:POSTGRES_DB = $postgresDb
+$env:POSTGRES_USER = $postgresUser
+$env:POSTGRES_PASSWORD = $postgresPassword
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
 
 $composeArgs = @('-p',$composeProject,'-f',$ComposeFile)
@@ -419,6 +491,8 @@ if ($composeExitCode -ne 0) {
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
+    Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
+
     Write-Host 'Aplicando migraciones...' -ForegroundColor Cyan
     $ok = $false
     for ($attempt=1; $attempt -le 20; $attempt++) {
