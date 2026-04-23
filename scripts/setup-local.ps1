@@ -261,8 +261,12 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host 'Levantando stack local Docker...' -ForegroundColor Cyan
+$previousErrorActionPreference = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 $composeUpOutput = docker compose @composeArgs up -d --build 2>&1
-if ($LASTEXITCODE -ne 0) {
+$composeExitCode = $LASTEXITCODE
+$ErrorActionPreference = $previousErrorActionPreference
+if ($composeExitCode -ne 0) {
     Write-Host 'Error al levantar el stack local. Salida de docker compose up:' -ForegroundColor Red
     $composeUpOutput | ForEach-Object { Write-Host $_ -ForegroundColor DarkYellow }
 
