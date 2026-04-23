@@ -177,7 +177,36 @@ Write-Host "Frontend: $frontendUrl" -ForegroundColor Green
 Write-Host "Admin: http://${displayHost}:${adminPort}" -ForegroundColor Green
 Write-Host "Backend: http://${displayHost}:${backendPort}" -ForegroundColor Green
 
+function Open-Browser {
+    param([string]$Url)
+
+    # Intentar Chrome primero
+    $chromePaths = @(
+        "${env:ProgramFiles}\Google\Chrome\Application\chrome.exe",
+        "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
+        "${env:LOCALAPPDATA}\Google\Chrome\Application\chrome.exe"
+    )
+
+    foreach ($chromePath in $chromePaths) {
+        if (Test-Path $chromePath) {
+            try {
+                Start-Process $chromePath $Url
+                return
+            } catch {
+                # Continuar si falla
+            }
+        }
+    }
+
+    # Si no hay Chrome, usar navegador predeterminado
+    try {
+        Start-Process $Url
+    } catch {
+        Write-Host "No se pudo abrir el navegador automaticamente." -ForegroundColor Yellow
+    }
+}
+
 if (-not $SkipOpenBrowser) {
     Write-Host "Abriendo navegador..." -ForegroundColor Cyan
-    Start-Process explorer.exe $frontendUrl
+    Open-Browser -Url $frontendUrl
 }
