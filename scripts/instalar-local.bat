@@ -30,7 +30,7 @@ if %errorLevel% neq 0 (
 :: antivirus (ESET, Defender, etc.) bloquee el archivo .ps1
 set FACTURA_DIR=%~dp0
 set REPO_BRANCH=feature/docker-multientorno
-set RAW_URL=https://raw.githubusercontent.com/alex21x/facturacion_frontend/%REPO_BRANCH%/scripts/preparar-entorno.ps1
+set RAW_URL=https://raw.githubusercontent.com/alex21x/facturacion_frontend/%REPO_BRANCH%/scripts/preparar-entorno.txt
 
 echo.
 echo Iniciando instalador...
