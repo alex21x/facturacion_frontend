@@ -41,14 +41,45 @@ function New-DesktopShortcut {
 function Repair-DockerDesktopDataPath {
     $dockerDataPath = 'C:\ProgramData\DockerDesktop'
 
-    if (-not (Test-Path $dockerDataPath)) {
-        New-Item -ItemType Directory -Path $dockerDataPath -Force | Out-Null
+    Write-Host "Reparando permisos de Docker Desktop..." -ForegroundColor Cyan
+
+    # Cerrar procesos de Docker para evitar archivos bloqueados.
+    Get-Process -Name 'Docker Desktop','com.docker.service','DockerCli' -ErrorAction SilentlyContinue |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+
+    # Tomar control y limpiar carpeta previa para evitar ACL corruptas heredadas.
+    if (Test-Path $dockerDataPath) {
+        cmd /c "takeown /F \"$dockerDataPath\" /A /R /D Y >nul 2>&1"
+        cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-32-544:(OI)(CI)F /T /C >nul 2>&1"
+        Remove-Item -Path $dockerDataPath -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path $dockerDataPath) {
+            cmd /c "rmdir /S /Q \"$dockerDataPath\" >nul 2>&1"
+        }
     }
 
-    Write-Host "Reparando permisos de Docker Desktop..." -ForegroundColor Cyan
-    cmd /c "takeown /F \"$dockerDataPath\" /A /R /D Y >nul 2>&1"
-    cmd /c "icacls \"$dockerDataPath\" /setowner *S-1-5-32-544 /T /C >nul 2>&1"
+    New-Item -ItemType Directory -Path $dockerDataPath -Force | Out-Null
+
+    # Owner y ACL mínimos esperados por Docker Desktop.
+    $admins = New-Object System.Security.Principal.NTAccount('BUILTIN','Administrators')
+    $acl = Get-Acl $dockerDataPath
+    $acl.SetOwner($admins)
+    Set-Acl -Path $dockerDataPath -AclObject $acl
+
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-32-544:(OI)(CI)F /T /C >nul 2>&1"
+    cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-18:(OI)(CI)F /T /C >nul 2>&1"
+}
+
+function Assert-DockerDesktopDataPathOwner {
+    $dockerDataPath = 'C:\ProgramData\DockerDesktop'
+    if (-not (Test-Path $dockerDataPath)) {
+        throw 'No existe C:\ProgramData\DockerDesktop despues de la reparacion.'
+    }
+
+    $owner = (Get-Acl $dockerDataPath).Owner
+    Write-Host "Owner actual de DockerDesktop: $owner" -ForegroundColor DarkGray
+    if ($owner -notmatch 'Administrators|SYSTEM') {
+        throw "Owner invalido para C:\ProgramData\DockerDesktop: $owner"
+    }
 }
 
 function Install-DockerDesktopDirectly {
@@ -140,6 +171,7 @@ function Ensure-DockerAvailable {
     }
 
     Repair-DockerDesktopDataPath
+    Assert-DockerDesktopDataPathOwner
 
     # Intentar instalar Docker Desktop via winget
     $wingetCommand = Get-Command winget -ErrorAction SilentlyContinue
@@ -157,6 +189,7 @@ function Ensure-DockerAvailable {
         if ($LASTEXITCODE -ne 0) {
             Write-Host "Winget no pudo instalar Docker Desktop. Intentando instalador oficial..." -ForegroundColor Yellow
             Repair-DockerDesktopDataPath
+            Assert-DockerDesktopDataPathOwner
             Install-DockerDesktopDirectly
         }
     }
