@@ -58,7 +58,7 @@ function Initialize-DatabaseFromBootstrap {
 
     $hasCompanySettings = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'core' AND table_name = 'company_settings');"
     if ($hasCompanySettings -eq 't') {
-        return
+        return $false
     }
 
     Write-Host 'Base vacia detectada. Restaurando dump inicial...' -ForegroundColor Cyan
@@ -87,6 +87,8 @@ function Initialize-DatabaseFromBootstrap {
     }
 
     docker compose @ComposeArgs exec -T postgres rm -f /tmp/bootstrap.sql | Out-Null
+
+    return $true
 }
 
 function New-DesktopShortcut {
@@ -491,12 +493,16 @@ if ($composeExitCode -ne 0) {
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
-    Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
+    $bootstrapRestored = Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
 
     Write-Host 'Aplicando migraciones...' -ForegroundColor Cyan
     $ok = $false
     for ($attempt=1; $attempt -le 20; $attempt++) {
-        docker compose @composeArgs exec -T backend php artisan migrate --force
+        if ($bootstrapRestored) {
+            docker compose @composeArgs exec -T -e "ALLOW_CLEAN_TRANSACTIONAL_ON_INSTALL=true" backend php artisan migrate --force
+        } else {
+            docker compose @composeArgs exec -T backend php artisan migrate --force
+        }
         if ($LASTEXITCODE -eq 0) { $ok = $true; break }
         Write-Host "Esperando backend para migrar (intento $attempt/20)..." -ForegroundColor Yellow
         Start-Sleep -Seconds 3
