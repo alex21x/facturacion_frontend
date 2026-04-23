@@ -58,7 +58,7 @@ foreach ($scriptName in $trackedScripts) {
 }
 
 # Copy full frontend/backend payload (excluding heavy transient folders)
-robocopy $frontendRoot.Path $portableFrontend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git node_modules dist dist-admin
+robocopy $frontendRoot.Path $portableFrontend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git node_modules dist dist-admin scripts
 if ($LASTEXITCODE -ge 8) {
     throw "Fallo copia de frontend al paquete portable."
 }
