@@ -255,9 +255,27 @@ $env:VITE_API_BASE_URL = $viteApiBaseUrl
 
 $composeArgs = @('-p',$composeProject,'-f',$ComposeFile)
 
+$composeVersion = docker compose version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker Compose v2 no esta disponible. Salida: $($composeVersion -join ' ')"
+}
+
 Write-Host 'Levantando stack local Docker...' -ForegroundColor Cyan
-docker compose @composeArgs up -d --build
-if ($LASTEXITCODE -ne 0) { throw 'No se pudo levantar el stack local.' }
+$composeUpOutput = docker compose @composeArgs up -d --build 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'Error al levantar el stack local. Salida de docker compose up:' -ForegroundColor Red
+    $composeUpOutput | ForEach-Object { Write-Host $_ -ForegroundColor DarkYellow }
+
+    Write-Host ''
+    Write-Host 'Estado actual de servicios:' -ForegroundColor Yellow
+    docker compose @composeArgs ps 2>&1 | ForEach-Object { Write-Host $_ }
+
+    Write-Host ''
+    Write-Host 'Ultimos logs de servicios (tail 80):' -ForegroundColor Yellow
+    docker compose @composeArgs logs --tail=80 2>&1 | ForEach-Object { Write-Host $_ }
+
+    throw 'No se pudo levantar el stack local. Revisa la salida anterior para el motivo exacto.'
+}
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
