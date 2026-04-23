@@ -9,7 +9,6 @@ if %errorLevel% neq 0 (
   echo  =====================================================
   echo   PASO NECESARIO: Ejecutar como Administrador
   echo  =====================================================
-  PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$u='%RAW_URL%';$ErrorActionPreference='Stop';try{Write-Host 'Descargando...';$c=(New-Object Net.WebClient).DownloadString($u);Write-Host 'Ejecutando...';$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d;Write-Host 'Exito!';exit 0}catch{Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;Write-Host '';Read-Host 'Presiona Enter para cerrar';exit 1}"
   echo  Este instalador necesita permisos de Administrador
   echo  para instalar Docker y crear la arquitectura local.
   echo.
@@ -31,13 +30,15 @@ if %errorLevel% neq 0 (
 set FACTURA_DIR=%~dp0
 set REPO_BRANCH=feature/docker-multientorno
 set RAW_URL=https://raw.githubusercontent.com/alex21x/facturacion_frontend/%REPO_BRANCH%/scripts/preparar-entorno.txt
+set CDN_URL=https://cdn.jsdelivr.net/gh/alex21x/facturacion_frontend@%REPO_BRANCH%/scripts/preparar-entorno.txt
+set GITHUB_URL=https://github.com/alex21x/facturacion_frontend/raw/%REPO_BRANCH%/scripts/preparar-entorno.txt
 
 echo.
 echo Iniciando instalador...
 echo (Descargando logica de instalacion desde GitHub)
 echo.
 
-PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$u='%RAW_URL%';try{$c=(New-Object Net.WebClient).DownloadString($u);$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d}catch{Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;Write-Host '';Read-Host 'Presiona Enter para cerrar'}"
+PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$urls=@('%RAW_URL%','%CDN_URL%','%GITHUB_URL%');$ErrorActionPreference='Stop';$c=$null;foreach($u in $urls){try{Write-Host ('Descargando desde: '+$u);$c=(New-Object Net.WebClient).DownloadString($u);if(-not [string]::IsNullOrWhiteSpace($c)){break}}catch{Write-Host ('Fallo descarga: '+$u) -ForegroundColor Yellow}};if([string]::IsNullOrWhiteSpace($c)){throw 'No se pudo descargar la logica del instalador desde ninguno de los servidores publicos. Revisa DNS/Internet o raw.githubusercontent.com.'};Write-Host 'Ejecutando...';$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d;exit $LASTEXITCODE"
 
 if errorlevel 1 (
   echo.
