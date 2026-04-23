@@ -86,7 +86,7 @@ function Ensure-Repository {
             }
 
             # -B crea la rama local si no existe, o la resetea si ya existe
-            git -C $TargetPath checkout -B $branch "origin/$branch" 2>&1 | Out-Null
+            git -C $TargetPath checkout -q -B $branch "origin/$branch" 2>&1 | Out-Null
             if ($LASTEXITCODE -eq 0) {
                 Write-Host "Rama activa: $branch" -ForegroundColor Green
                 return
@@ -137,7 +137,7 @@ function Ensure-FrontendDockerBranch {
         }
 
         Write-Host "Probando rama frontend '$candidate' para instalacion docker local..." -ForegroundColor Yellow
-        git -C $FrontendPath checkout -B $candidate "origin/$candidate" 2>&1 | Out-Null
+        git -C $FrontendPath checkout -q -B $candidate "origin/$candidate" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             continue
         }
@@ -173,7 +173,7 @@ function Ensure-BackendDockerBranch {
         }
 
         Write-Host "Probando rama backend '$candidate' para instalacion docker local..." -ForegroundColor Yellow
-        git -C $BackendPath checkout -B $candidate "origin/$candidate" 2>&1 | Out-Null
+        git -C $BackendPath checkout -q -B $candidate "origin/$candidate" 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
             continue
         }
