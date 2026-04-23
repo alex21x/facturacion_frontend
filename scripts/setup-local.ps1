@@ -59,12 +59,8 @@ function Repair-DockerDesktopDataPath {
 
     New-Item -ItemType Directory -Path $dockerDataPath -Force | Out-Null
 
-    # Owner y ACL mínimos esperados por Docker Desktop.
-    $admins = New-Object System.Security.Principal.NTAccount('BUILTIN','Administrators')
-    $acl = Get-Acl $dockerDataPath
-    $acl.SetOwner($admins)
-    Set-Acl -Path $dockerDataPath -AclObject $acl
-
+    # Owner y ACL mínimos esperados por Docker Desktop (via SID, independiente del idioma del SO).
+    cmd /c "icacls \"$dockerDataPath\" /setowner *S-1-5-32-544 /T /C >nul 2>&1"
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-32-544:(OI)(CI)F /T /C >nul 2>&1"
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-18:(OI)(CI)F /T /C >nul 2>&1"
 }
@@ -77,7 +73,7 @@ function Assert-DockerDesktopDataPathOwner {
 
     $owner = (Get-Acl $dockerDataPath).Owner
     Write-Host "Owner actual de DockerDesktop: $owner" -ForegroundColor DarkGray
-    if ($owner -notmatch 'Administrators|SYSTEM') {
+    if ($owner -notmatch 'Administrators|Administradores|SYSTEM|Sistema') {
         throw "Owner invalido para C:\ProgramData\DockerDesktop: $owner"
     }
 }
