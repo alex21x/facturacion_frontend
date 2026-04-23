@@ -96,6 +96,72 @@ function Install-DockerDesktopDirectly {
     }
 }
 
+function Test-DockerRegistryDns {
+    try {
+        $addresses = [System.Net.Dns]::GetHostAddresses('registry-1.docker.io')
+        return ($addresses -and $addresses.Count -gt 0)
+    } catch {
+        return $false
+    }
+}
+
+function Repair-DockerDnsResolution {
+    Write-Host "Intentando reparar DNS de Docker (registry-1.docker.io)..." -ForegroundColor Yellow
+
+    $dockerConfigDir = 'C:\ProgramData\Docker\config'
+    $daemonJsonPath = Join-Path $dockerConfigDir 'daemon.json'
+    New-Item -ItemType Directory -Path $dockerConfigDir -Force | Out-Null
+
+    $daemonConfig = @{}
+    if (Test-Path $daemonJsonPath) {
+        try {
+            $existing = Get-Content $daemonJsonPath -Raw -ErrorAction SilentlyContinue
+            if (-not [string]::IsNullOrWhiteSpace($existing)) {
+                $parsed = $existing | ConvertFrom-Json -Depth 20
+                if ($parsed) {
+                    $daemonConfig = @{}
+                    foreach ($prop in $parsed.PSObject.Properties) {
+                        $daemonConfig[$prop.Name] = $prop.Value
+                    }
+                }
+            }
+        } catch {
+            $daemonConfig = @{}
+        }
+    }
+
+    $dnsValues = @('1.1.1.1','8.8.8.8','8.8.4.4')
+    if ($daemonConfig.ContainsKey('dns') -and $daemonConfig['dns']) {
+        $dnsValues = @($daemonConfig['dns']) + $dnsValues
+    }
+    $daemonConfig['dns'] = @($dnsValues | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+
+    ($daemonConfig | ConvertTo-Json -Depth 20) | Set-Content -Path $daemonJsonPath -Encoding UTF8
+
+    try {
+        Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop
+    } catch {
+        Write-Host "No se pudo reiniciar com.docker.service directamente. Intentando abrir Docker Desktop..." -ForegroundColor DarkYellow
+    }
+
+    $dockerDesktopExe = @(
+        "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
+        "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    if ($dockerDesktopExe) {
+        Start-Process $dockerDesktopExe -ErrorAction SilentlyContinue
+    }
+
+    for ($i = 1; $i -le 18; $i++) {
+        Start-Sleep -Seconds 5
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            break
+        }
+    }
+}
+
 $resolvedComposeFile = Resolve-Path $ComposeFile -ErrorAction SilentlyContinue
 if (-not $resolvedComposeFile) { throw "No se encontro docker-compose.local.yml en la ruta recibida: $ComposeFile" }
 $ComposeFile = $resolvedComposeFile.Path
@@ -268,6 +334,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose v2 no esta disponible. Salida: $($composeVersion -join ' ')"
 }
 
+# Always ensure daemon.json has explicit DNS servers so Docker builds can reach apt/pypi/etc.
+# Repair-DockerDnsResolution is idempotent; it merges existing config without overwriting.
+Repair-DockerDnsResolution
+Append-InstallLog 'DNS de Docker verificado/reparado antes del primer compose up.'
+
 Write-Host 'Levantando stack local Docker...' -ForegroundColor Cyan
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
@@ -278,6 +349,17 @@ if ($composeExitCode -ne 0) {
     Append-InstallLog 'Primer intento de docker compose up fallo.'
     $composeUpOutput | ForEach-Object { Append-InstallLog $_ }
 
+    $composeOutputText = ($composeUpOutput | Out-String)
+    $dnsFailure     = ($composeOutputText -match 'registry-1\.docker\.io|no such host|lookup.*docker') 
+    $aptFailure     = ($composeOutputText -match 'apt-get|exit code 100|E: Unable to fetch|E: Failed to fetch')
+    $entrypointBad  = ($composeOutputText -match 'docker-entrypoint\.sh.*no such file|no such file.*docker-entrypoint|exec.*entrypoint.*no such file')
+
+    if ($dnsFailure -or $aptFailure) {
+        Write-Host 'Detectado fallo DNS/red en build Docker. Reparando DNS y reintentando...' -ForegroundColor Yellow
+        Append-InstallLog 'Fallo DNS/apt detectado. Ejecutando Repair-DockerDnsResolution.'
+        Repair-DockerDnsResolution
+    }
+
     Write-Host 'Error al levantar el stack local. Salida de docker compose up:' -ForegroundColor Red
     $composeUpOutput | ForEach-Object { Write-Host $_ -ForegroundColor DarkYellow }
 
@@ -286,6 +368,17 @@ if ($composeExitCode -ne 0) {
     docker compose @composeArgs down --remove-orphans 2>&1 | ForEach-Object {
         Write-Host $_ -ForegroundColor DarkGray
         Append-InstallLog $_
+    }
+
+    if ($entrypointBad -or $aptFailure) {
+        Write-Host 'Reconstruyendo imagen backend sin cache (imagen obsoleta o fallo de red en build)...' -ForegroundColor Yellow
+        Append-InstallLog 'Reconstruyendo backend con --no-cache por imagen obsoleta o fallo apt.'
+        $ErrorActionPreference = 'Continue'
+        docker compose @composeArgs build --no-cache backend 2>&1 | ForEach-Object {
+            Write-Host $_ -ForegroundColor DarkGray
+            Append-InstallLog $_
+        }
+        $ErrorActionPreference = $previousErrorActionPreference
     }
 
     $previousErrorActionPreference = $ErrorActionPreference
