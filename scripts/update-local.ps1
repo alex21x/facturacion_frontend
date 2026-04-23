@@ -130,11 +130,10 @@ function Resolve-UpdateLayout {
 function Resolve-ClientConfig {
     param([string]$RootPath)
 
-    $candidates = @(
-        Join-Path $RootPath ".client-config.env",
-        Join-Path $RootPath "scripts\.client-config.env",
-        Join-Path (Split-Path -Path $RootPath -Parent) ".client-config.env"
-    )
+    $candidates = @()
+    $candidates += Join-Path $RootPath ".client-config.env"
+    $candidates += Join-Path $RootPath "scripts\.client-config.env"
+    $candidates += Join-Path (Split-Path -Path $RootPath -Parent) ".client-config.env"
 
     foreach ($candidate in $candidates) {
         if (Test-Path $candidate) {

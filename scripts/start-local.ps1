@@ -71,15 +71,15 @@ function Resolve-LocalLayout {
 function Resolve-ClientConfig {
     param([string]$RootPath)
 
-    $envPath = Join-Path $RootPath ".client-config.env"
-    if (Test-Path $envPath) {
-        return $envPath
-    }
+    $candidates = @()
+    $candidates += Join-Path $RootPath ".client-config.env"
+    $candidates += Join-Path $RootPath "scripts\.client-config.env"
+    $candidates += Join-Path (Split-Path -Path $RootPath -Parent) ".client-config.env"
 
-    $possibleRoot = Join-Path $RootPath "scripts"
-    $envPath = Join-Path $possibleRoot ".client-config.env"
-    if (Test-Path $envPath) {
-        return $envPath
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
     }
 
     return $null
