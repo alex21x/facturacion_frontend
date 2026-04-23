@@ -9,7 +9,7 @@ if %errorLevel% neq 0 (
   echo  =====================================================
   echo   PASO NECESARIO: Ejecutar como Administrador
   echo  =====================================================
-  echo.
+  PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$u='%RAW_URL%';$ErrorActionPreference='Stop';try{Write-Host 'Descargando...';$c=(New-Object Net.WebClient).DownloadString($u);Write-Host 'Ejecutando...';$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d;Write-Host 'Exito!';exit 0}catch{Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;Write-Host '';Read-Host 'Presiona Enter para cerrar';exit 1}"
   echo  Este instalador necesita permisos de Administrador
   echo  para instalar Docker y crear la arquitectura local.
   echo.
