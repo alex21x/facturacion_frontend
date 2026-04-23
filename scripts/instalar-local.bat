@@ -1,21 +1,52 @@
 @echo off
 setlocal
 
-:: Elevar a Administrador via VBScript (maneja rutas con espacios y parentesis)
+:: Verificar si tenemos permisos de Administrador
 net session >nul 2>&1
 if %errorLevel% neq 0 (
-  echo Solicitando permisos de Administrador...
-  echo Set oShell = CreateObject("Shell.Application") > "%temp%\elev_factura.vbs"
-  echo oShell.ShellExecute "cmd.exe", "/c cd /d ""%~dp0"" && ""%~f0""", "", "runas", 1 >> "%temp%\elev_factura.vbs"
-  cscript //nologo "%temp%\elev_factura.vbs"
-  del "%temp%\elev_factura.vbs" >nul 2>&1
-  exit /b
+  cls
+  echo.
+  echo  =====================================================
+  echo   PASO NECESARIO: Ejecutar como Administrador
+  echo  =====================================================
+  echo.
+  echo  Este instalador necesita permisos de Administrador
+  echo  para instalar Docker y crear la arquitectura local.
+  echo.
+  echo  Instrucciones:
+  echo  1. CIERRA esta ventana
+  echo  2. Haz CLIC DERECHO en el archivo instalar-local.bat
+  echo  3. Selecciona "Ejecutar como administrador"
+  echo  4. Acepta el aviso de seguridad que aparece
+  echo.
+  echo  =====================================================
+  echo.
+  pause
+  exit /b 1
 )
 
-:: Ya somos Admin - excluir esta carpeta de Windows Defender para que no borre los scripts
-PowerShell -NoProfile -ExecutionPolicy Bypass -Command "Add-MpPreference -ExclusionPath '%~dp0' -ErrorAction SilentlyContinue"
+:: Ya somos Administrador
+:: Ejecutamos el script desde GitHub en memoria para evitar que el
+:: antivirus (ESET, Defender, etc.) bloquee el archivo .ps1
+set FACTURA_DIR=%~dp0
+set REPO_BRANCH=feature/docker-multientorno
+set RAW_URL=https://raw.githubusercontent.com/alex21x/facturacion_frontend/%REPO_BRANCH%/scripts/preparar-entorno.ps1
 
-PowerShell -NoProfile -ExecutionPolicy Bypass -File "%~dp0preparar-entorno.ps1"
+echo.
+echo Iniciando instalador...
+echo (Descargando logica de instalacion desde GitHub)
+echo.
+
+PowerShell -NoProfile -ExecutionPolicy Bypass -Command ^^
+  "$d=$env:FACTURA_DIR; $u=$env:RAW_URL;" ^^
+  "try {" ^^
+  "  $c=(New-Object Net.WebClient).DownloadString($u);" ^^
+  "  & ([scriptblock]::Create($c)) -ScriptsDir $d" ^^
+  "} catch {" ^^
+  "  Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;" ^^
+  "  Write-Host '' ; Read-Host 'Presiona Enter para cerrar'" ^^
+  "}"
+
 if errorlevel 1 (
   echo.
   echo La instalacion fallo. Revisa el mensaje anterior.
