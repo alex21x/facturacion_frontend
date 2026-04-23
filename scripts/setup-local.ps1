@@ -116,10 +116,10 @@ function Ensure-DockerAvailable {
 
     Write-Host "Instalando Docker Desktop via winget..." -ForegroundColor Cyan
     winget source update 2>&1 | Out-Null
-    winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --disable-interactivity
+    winget install -e --id Docker.DockerDesktop --scope machine --accept-package-agreements --accept-source-agreements --disable-interactivity
     if ($LASTEXITCODE -ne 0) {
-        # Intentar sin flags de interactividad
-        winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements
+        # Intentar sin --scope machine (algunos winget no lo soportan)
+        winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --disable-interactivity
     }
 
     if ($LASTEXITCODE -ne 0) {
