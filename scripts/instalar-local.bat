@@ -37,15 +37,7 @@ echo Iniciando instalador...
 echo (Descargando logica de instalacion desde GitHub)
 echo.
 
-PowerShell -NoProfile -ExecutionPolicy Bypass -Command ^^
-  "$d=$env:FACTURA_DIR; $u=$env:RAW_URL;" ^^
-  "try {" ^^
-  "  $c=(New-Object Net.WebClient).DownloadString($u);" ^^
-  "  & ([scriptblock]::Create($c)) -ScriptsDir $d" ^^
-  "} catch {" ^^
-  "  Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;" ^^
-  "  Write-Host '' ; Read-Host 'Presiona Enter para cerrar'" ^^
-  "}"
+PowerShell -NoProfile -ExecutionPolicy Bypass -Command "$d='%FACTURA_DIR%';$u='%RAW_URL%';try{$c=(New-Object Net.WebClient).DownloadString($u);$sb=[scriptblock]::Create($c);& $sb -ScriptsDir $d}catch{Write-Host ('ERROR: '+$_.Exception.Message) -ForegroundColor Red;Write-Host '';Read-Host 'Presiona Enter para cerrar'}"
 
 if errorlevel 1 (
   echo.
