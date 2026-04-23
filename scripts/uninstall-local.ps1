@@ -13,12 +13,40 @@ function Resolve-LocalLayout {
         }
     }
 
-    $candidates = @(
+    $absoluteCandidates = @(
+        "C:\FacturacionLocal\facturacion_frontend\docker-compose.local.yml",
+        "C:\xampp\htdocs\facturacion_frontend\docker-compose.local.yml",
+        "D:\FacturacionLocal\facturacion_frontend\docker-compose.local.yml"
+    )
+
+    foreach ($candidate in $absoluteCandidates) {
+        if (Test-Path $candidate) {
+            return @{
+                ComposeFile = $candidate
+                FrontendRoot = Split-Path -Path $candidate -Parent
+            }
+        }
+    }
+
+    $currentDir = Split-Path -Path $PSScriptRoot -Parent
+    for ($i = 0; $i -lt 10; $i++) {
+        if (-not $currentDir) { break }
+        $candidateCompose = Join-Path $currentDir "docker-compose.local.yml"
+        if (Test-Path $candidateCompose) {
+            return @{
+                ComposeFile = $candidateCompose
+                FrontendRoot = $currentDir
+            }
+        }
+        $currentDir = Split-Path -Path $currentDir -Parent
+    }
+
+    $relativeCandidates = @(
         (Join-Path $PSScriptRoot "..\facturacion_frontend"),
         (Join-Path $PSScriptRoot "..")
     )
 
-    foreach ($candidate in $candidates) {
+    foreach ($candidate in $relativeCandidates) {
         $resolvedCandidate = Resolve-Path $candidate -ErrorAction SilentlyContinue
         if (-not $resolvedCandidate) {
             continue
@@ -33,7 +61,7 @@ function Resolve-LocalLayout {
         }
     }
 
-    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat."
+    throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat o INSTALAR-FACTURACION.bat desde el paquete de instalacion."
 }
 
 function Get-ConfigValue {
