@@ -487,7 +487,7 @@ $adminPort = Get-ConfigValue -FilePath $clientConfig -Key 'ADMIN_PORT' -DefaultV
 $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_DB' -DefaultValue 'facturacion_v2'
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_USER' -DefaultValue 'facturacion'
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_PASSWORD' -DefaultValue 'facturacion'
-$bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_export_utf8_clean_20260418_105235.sql'
+$bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql'
 $viteApiBaseUrl = Get-ApiBaseUrlConfigValue -BindHost $dockerBindHost -BackendPort $backendPort
 
 Set-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST' -Value $dockerBindHost
