@@ -48,6 +48,7 @@ services:
       dockerfile: Dockerfile.local
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8000}
+      VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
       VITE_HOST: 0.0.0.0
       VITE_PORT: 5173
     ports:
@@ -61,6 +62,7 @@ services:
       dockerfile: Dockerfile.admin.local
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://127.0.0.1:8000}
+      VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
       VITE_HOST: 0.0.0.0
       VITE_ADMIN_HOST: 0.0.0.0
       VITE_ADMIN_PORT: 5174

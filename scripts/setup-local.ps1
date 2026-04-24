@@ -471,10 +471,11 @@ if (-not (Test-Path $clientConfig)) {
         "FRONTEND_PORT=5173",
         "ADMIN_PORT=5174",
         ("VITE_API_BASE_URL={0}" -f (Get-ApiBaseUrlConfigValue -BindHost $bindHost -BackendPort '8000')),
+        "VITE_BACKEND_PORT=8000",
         "POSTGRES_DB=facturacion_v2",
         "POSTGRES_USER=facturacion",
         "POSTGRES_PASSWORD=facturacion",
-        "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_export_utf8_clean_20260418_105235.sql",
+        "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql",
         "RUN_MIGRATIONS=true"
     )
 }
@@ -492,6 +493,7 @@ $viteApiBaseUrl = Get-ApiBaseUrlConfigValue -BindHost $dockerBindHost -BackendPo
 
 Set-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST' -Value $dockerBindHost
 Set-ConfigValue -FilePath $clientConfig -Key 'VITE_API_BASE_URL' -Value $viteApiBaseUrl
+Set-ConfigValue -FilePath $clientConfig -Key 'VITE_BACKEND_PORT' -Value $backendPort
 
 $env:DOCKER_BIND_HOST = $dockerBindHost
 $env:BACKEND_PORT = $backendPort
@@ -501,6 +503,7 @@ $env:POSTGRES_DB = $postgresDb
 $env:POSTGRES_USER = $postgresUser
 $env:POSTGRES_PASSWORD = $postgresPassword
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
+$env:VITE_BACKEND_PORT = $backendPort
 
 $composeArgs = @('-p',$composeProject,'-f',$ComposeFile)
 
