@@ -57,8 +57,9 @@ foreach ($scriptName in $trackedScripts) {
     Copy-Item -Path $sourceScript -Destination (Join-Path $portableScripts $scriptName) -Force
 }
 
-# Copy full frontend/backend payload (excluding heavy transient folders)
-robocopy $frontendRoot.Path $portableFrontend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git node_modules dist dist-admin scripts
+# Copy full frontend/backend payload (excluding heavy transient folders and
+# generated installer artifacts to avoid recursive packaging).
+robocopy $frontendRoot.Path $portableFrontend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git node_modules dist dist-admin scripts INSTALADOR_COMPLETO_PC_LIMPIA INSTALADOR_COMPLETO_PC_LIMPIA_ACTUALIZADO_20260423 INSTALADOR_COMPLETO_PC_LIMPIA_ACTUALIZADO_20260423_v2 INSTALADOR_COMPLETO_PC_LIMPIA_ACTUALIZADO_20260423_v3 /XF INSTALADOR_COMPLETO_PC_LIMPIA.zip INSTALADOR_COMPLETO_PC_LIMPIA_ACTUALIZADO_20260423.zip INSTALADOR_COMPLETO_PC_LIMPIA_ACTUALIZADO_20260423_v2.zip INSTALADOR_COMPLETO_PC_LIMPIA_ACTUALIZADO_20260423_v3.zip
 if ($LASTEXITCODE -ge 8) {
     throw "Fallo copia de frontend al paquete portable."
 }
