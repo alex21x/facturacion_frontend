@@ -5,12 +5,11 @@ param(
 function Resolve-LocalLayout {
     param([string]$ComposeFilePath)
 
+    $composeCandidates = New-Object System.Collections.Generic.List[string]
+
     $resolvedComposeFile = Resolve-Path $ComposeFilePath -ErrorAction SilentlyContinue
     if ($resolvedComposeFile) {
-        return @{
-            ComposeFile = $resolvedComposeFile.Path
-            FrontendRoot = Split-Path -Path $resolvedComposeFile.Path -Parent
-        }
+        [void]$composeCandidates.Add($resolvedComposeFile.Path)
     }
 
     $absoluteCandidates = @(
@@ -21,10 +20,7 @@ function Resolve-LocalLayout {
 
     foreach ($candidate in $absoluteCandidates) {
         if (Test-Path $candidate) {
-            return @{
-                ComposeFile = $candidate
-                FrontendRoot = Split-Path -Path $candidate -Parent
-            }
+            [void]$composeCandidates.Add($candidate)
         }
     }
 
@@ -33,10 +29,7 @@ function Resolve-LocalLayout {
         if (-not $currentDir) { break }
         $candidateCompose = Join-Path $currentDir "docker-compose.local.yml"
         if (Test-Path $candidateCompose) {
-            return @{
-                ComposeFile = $candidateCompose
-                FrontendRoot = $currentDir
-            }
+            [void]$composeCandidates.Add($candidateCompose)
         }
         $currentDir = Split-Path -Path $currentDir -Parent
     }
@@ -54,11 +47,38 @@ function Resolve-LocalLayout {
 
         $candidateCompose = Join-Path $resolvedCandidate.Path "docker-compose.local.yml"
         if (Test-Path $candidateCompose) {
-            return @{
-                ComposeFile = $candidateCompose
-                FrontendRoot = $resolvedCandidate.Path
+            [void]$composeCandidates.Add($candidateCompose)
+        }
+    }
+
+    $selected = $null
+    $fallback = $null
+    foreach ($candidate in ($composeCandidates | Select-Object -Unique)) {
+        $candidateRoot = Split-Path -Path $candidate -Parent
+        $candidateConfig = Join-Path $candidateRoot ".client-config.env"
+
+        if (-not $fallback) {
+            $fallback = @{
+                ComposeFile = $candidate
+                FrontendRoot = $candidateRoot
             }
         }
+
+        if (Test-Path $candidateConfig) {
+            $selected = @{
+                ComposeFile = $candidate
+                FrontendRoot = $candidateRoot
+            }
+            break
+        }
+    }
+
+    if ($selected) {
+        return $selected
+    }
+
+    if ($fallback) {
+        return $fallback
     }
 
     throw "No se encontro docker-compose.local.yml. Ejecuta primero scripts/instalar-local.bat o INSTALAR-FACTURACION.bat desde el paquete de instalacion."
@@ -112,13 +132,13 @@ if ($confirm -ne "DESINSTALAR") {
     exit 0
 }
 
+$composeProject = "facturacion_local"
 if (-not (Test-Path $clientConfig)) {
     Write-Host ""
-    Write-Host "No existe .client-config.env. Nada que desinstalar." -ForegroundColor Yellow
-    exit 0
+    Write-Host "No existe .client-config.env. Se usara COMPOSE_PROJECT_NAME=facturacion_local por defecto." -ForegroundColor Yellow
+} else {
+    $composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 }
-
-$composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 $composeArgs = @("-p", $composeProject, "-f", $ComposeFile)
 
 Write-Host ""
