@@ -269,7 +269,7 @@ function Invoke-ComposePostgresSqlFile {
         throw 'No se pudo copiar el script SQL al contenedor de PostgreSQL.'
     }
 
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -f /tmp/runtime-script.sql
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -v ON_ERROR_STOP=1 -f /tmp/runtime-script.sql
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo ejecutar el script SQL en PostgreSQL.'
     }
@@ -728,8 +728,13 @@ if ($runMigrations -eq 'true') {
 
     if ($bootstrapRestored -and $cleanTransactionalOnRestore -eq 'true') {
         Write-Host 'Limpiando tablas operacionales/transaccionales del dump base...' -ForegroundColor Cyan
-        Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath (Join-Path $frontendRoot $transactionalCleanupSqlPath)
-        Append-InstallLog 'Limpieza transaccional aplicada sobre dump restaurado.'
+        try {
+            Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath (Join-Path $frontendRoot $transactionalCleanupSqlPath)
+            Append-InstallLog 'Limpieza transaccional aplicada sobre dump restaurado.'
+        } catch {
+            Write-Host "ADVERTENCIA: Limpieza transaccional no critica fallo: $_" -ForegroundColor Yellow
+            Append-InstallLog "ADVERTENCIA limpieza transaccional: $_"
+        }
     }
 
     Write-Host 'Aplicando migraciones...' -ForegroundColor Cyan

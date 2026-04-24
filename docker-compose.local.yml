@@ -19,11 +19,15 @@ services:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@facturacion.local}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-Admin123!}
       PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
     ports:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
     depends_on:
       postgres:
         condition: service_healthy
+    restart: unless-stopped
 
   backend:
     build:
@@ -89,3 +93,4 @@ volumes:
   postgres_data:
   backend_storage_app:
   backend_storage_logs:
+  pgadmin_data:
