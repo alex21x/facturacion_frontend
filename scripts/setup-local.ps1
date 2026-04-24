@@ -25,6 +25,16 @@ function Set-ConfigValue {
     Set-Content -Path $FilePath -Value $lines
 }
 
+function Test-ValidEmail {
+    param([string]$Email)
+
+    if ([string]::IsNullOrWhiteSpace($Email)) {
+        return $false
+    }
+
+    return ($Email -match '^[^@\s]+@[^@\s]+\.[^@\s]+$')
+}
+
 function Get-ApiBaseUrlConfigValue {
     param(
         [string]$BindHost,
@@ -156,6 +166,15 @@ function Initialize-DatabaseFromBootstrap {
         throw "No se encontro el dump base para inicializar la base de datos: $BootstrapSqlPath"
     }
 
+    $existingUserTables = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql @"
+SELECT COUNT(*)
+FROM information_schema.tables
+WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
+  AND table_type = 'BASE TABLE';
+"@
+    $existingUserTablesCount = 0
+    [void][int]::TryParse($existingUserTables, [ref]$existingUserTablesCount)
+
     $requiredTables = @(
         "core.company_settings",
         "core.companies",
@@ -208,8 +227,12 @@ function Initialize-DatabaseFromBootstrap {
         Write-Host ("Tablas sin data minima: " + ($missingData -join ', ')) -ForegroundColor Yellow
     }
 
-    Write-Host "Base incompleta o vacia detectada. Restaurando dump inicial..." -ForegroundColor Cyan
-    Write-Host ("Tablas faltantes: " + ($missingTables -join ', ')) -ForegroundColor Yellow
+    if ($existingUserTablesCount -eq 0) {
+        Write-Host "Base vacia detectada. Restaurando dump inicial..." -ForegroundColor Cyan
+    } else {
+        Write-Host "Base incompleta detectada. Restaurando dump inicial..." -ForegroundColor Cyan
+        Write-Host ("Tablas faltantes: " + ($missingTables -join ', ')) -ForegroundColor Yellow
+    }
 
     $postgresRoleExists = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres');"
     if ($postgresRoleExists -ne 't') {
@@ -225,7 +248,7 @@ function Initialize-DatabaseFromBootstrap {
     }
 
     # If schemas are partially present, clean them first to avoid restore conflicts.
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -c "DROP SCHEMA IF EXISTS appcfg,auth,billing,core,inventory,master,ops,restaurant,sales CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;"
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -q -v ON_ERROR_STOP=1 -U $PostgresUser -d $PostgresDb -c "SET client_min_messages TO warning; DROP SCHEMA IF EXISTS appcfg,auth,billing,core,inventory,master,ops,restaurant,sales CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;"
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo limpiar esquemas existentes antes de restaurar el dump base.'
     }
@@ -235,7 +258,7 @@ function Initialize-DatabaseFromBootstrap {
         throw 'No se pudo copiar el dump base al contenedor de PostgreSQL.'
     }
 
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -f /tmp/bootstrap.sql
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -q -v ON_ERROR_STOP=1 -U $PostgresUser -d $PostgresDb -f /tmp/bootstrap.sql
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo restaurar el dump base dentro de PostgreSQL.'
     }
@@ -269,7 +292,7 @@ function Invoke-ComposePostgresSqlFile {
         throw 'No se pudo copiar el script SQL al contenedor de PostgreSQL.'
     }
 
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -v ON_ERROR_STOP=1 -f /tmp/runtime-script.sql
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -q -U $PostgresUser -d $PostgresDb -v ON_ERROR_STOP=1 -f /tmp/runtime-script.sql
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo ejecutar el script SQL en PostgreSQL.'
     }
@@ -569,7 +592,7 @@ if (-not (Test-Path $clientConfig)) {
         "POSTGRES_DB=facturacion_v2",
         "POSTGRES_USER=facturacion",
         "POSTGRES_PASSWORD=facturacion",
-        "PGADMIN_DEFAULT_EMAIL=admin@facturacion.local",
+        "PGADMIN_DEFAULT_EMAIL=admin@example.com",
         "PGADMIN_DEFAULT_PASSWORD=Admin123!",
         "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql",
         "TRANSACTIONAL_CLEANUP_SQL_PATH=..\facturacion_backend\database\sql\clean_transactional_operational.sql",
@@ -587,7 +610,12 @@ $pgadminPort = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_PORT' -Defa
 $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_DB' -DefaultValue 'facturacion_v2'
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_USER' -DefaultValue 'facturacion'
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_PASSWORD' -DefaultValue 'facturacion'
-$pgadminEmail = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_EMAIL' -DefaultValue 'admin@facturacion.local'
+$pgadminEmail = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_EMAIL' -DefaultValue 'admin@example.com'
+$fallbackPgadminEmail = 'admin@example.com'
+if (-not (Test-ValidEmail -Email $pgadminEmail)) {
+    Write-Host ("PGADMIN_DEFAULT_EMAIL invalido ('$pgadminEmail'). Se usara '$fallbackPgadminEmail'.") -ForegroundColor Yellow
+    $pgadminEmail = $fallbackPgadminEmail
+}
 $pgadminPassword = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_PASSWORD' -DefaultValue 'Admin123!'
 $bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql'
 $transactionalCleanupSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -DefaultValue '..\facturacion_backend\database\sql\clean_transactional_operational.sql'

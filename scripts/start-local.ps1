@@ -134,6 +134,45 @@ function Get-ConfigValue {
     return ($match -split '=', 2)[1].Trim()
 }
 
+function Set-ConfigValue {
+    param(
+        [string]$FilePath,
+        [string]$Key,
+        [string]$Value
+    )
+
+    if (-not (Test-Path $FilePath)) {
+        Set-Content -Path $FilePath -Value "$Key=$Value"
+        return
+    }
+
+    $lines = Get-Content $FilePath
+    $updated = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match "^$Key=") {
+            $lines[$i] = "$Key=$Value"
+            $updated = $true
+            break
+        }
+    }
+
+    if (-not $updated) {
+        $lines += "$Key=$Value"
+    }
+
+    Set-Content -Path $FilePath -Value $lines
+}
+
+function Test-ValidEmail {
+    param([string]$Email)
+
+    if ([string]::IsNullOrWhiteSpace($Email)) {
+        return $false
+    }
+
+    return ($Email -match '^[^@\s]+@[^@\s]+\.[^@\s]+$')
+}
+
 $layout = Resolve-LocalLayout -ComposeFilePath $ComposeFile
 $ComposeFile = $layout.ComposeFile
 $frontendRoot = $layout.FrontendRoot
@@ -149,6 +188,13 @@ $backendPort = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_PORT" -Defa
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_PORT" -DefaultValue "5173"
 $adminPort = Get-ConfigValue -FilePath $clientConfig -Key "ADMIN_PORT" -DefaultValue "5174"
 $pgadminPort = Get-ConfigValue -FilePath $clientConfig -Key "PGADMIN_PORT" -DefaultValue "5050"
+$pgadminEmail = Get-ConfigValue -FilePath $clientConfig -Key "PGADMIN_DEFAULT_EMAIL" -DefaultValue "admin@example.com"
+$fallbackPgadminEmail = "admin@example.com"
+if (-not (Test-ValidEmail -Email $pgadminEmail)) {
+    Write-Host "PGADMIN_DEFAULT_EMAIL invalido en .client-config.env. Corrigiendo a $fallbackPgadminEmail..." -ForegroundColor Yellow
+    $pgadminEmail = $fallbackPgadminEmail
+    Set-ConfigValue -FilePath $clientConfig -Key "PGADMIN_DEFAULT_EMAIL" -Value $pgadminEmail
+}
 $defaultViteApiBaseUrl = if ($dockerBindHost -eq "0.0.0.0") { "" } else { "http://127.0.0.1:$backendPort" }
 $viteApiBaseUrl = Get-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -DefaultValue $defaultViteApiBaseUrl
 
@@ -157,6 +203,7 @@ $env:BACKEND_PORT = $backendPort
 $env:FRONTEND_PORT = $frontendPort
 $env:ADMIN_PORT = $adminPort
 $env:PGADMIN_PORT = $pgadminPort
+$env:PGADMIN_DEFAULT_EMAIL = $pgadminEmail
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
 
 $composeArgs = @("-p", $composeProject, "-f", $ComposeFile)
@@ -180,6 +227,14 @@ Write-Host "Frontend: $frontendUrl" -ForegroundColor Green
 Write-Host "Admin: http://${displayHost}:${adminPort}" -ForegroundColor Green
 Write-Host "Backend: http://${displayHost}:${backendPort}" -ForegroundColor Green
 Write-Host "pgAdmin: http://${displayHost}:${pgadminPort}" -ForegroundColor Green
+
+$pgadminState = (docker compose @composeArgs ps --format json pgadmin | ConvertFrom-Json -ErrorAction SilentlyContinue)
+if ($pgadminState -and $pgadminState.Count -gt 0) {
+    $stateText = $pgadminState[0].State
+    if ($stateText -ne 'running') {
+        Write-Host "ADVERTENCIA: pgAdmin no quedo en estado running. Revisa logs con: docker compose @composeArgs logs pgadmin" -ForegroundColor Yellow
+    }
+}
 
 function Open-Browser {
     param([string]$Url)
