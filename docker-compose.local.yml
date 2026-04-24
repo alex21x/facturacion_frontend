@@ -13,6 +13,18 @@ services:
       timeout: 5s
       retries: 5
 
+  pgadmin:
+    image: dpage/pgadmin4:8
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@facturacion.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-Admin123!}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   backend:
     build:
       context: ../facturacion_backend

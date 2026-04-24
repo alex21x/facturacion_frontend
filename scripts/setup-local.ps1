@@ -91,12 +91,18 @@ function Show-AccessUrls {
         [string]$BindHost,
         [string]$BackendPort,
         [string]$FrontendPort,
-        [string]$AdminPort
+        [string]$AdminPort,
+        [string]$PgAdminPort,
+        [string]$PgAdminEmail,
+        [string]$PgAdminPassword
     )
 
     Write-Host ("Frontend local: http://127.0.0.1:{0}" -f $FrontendPort) -ForegroundColor Green
     Write-Host ("Admin local: http://127.0.0.1:{0}" -f $AdminPort) -ForegroundColor Green
     Write-Host ("Backend local: http://127.0.0.1:{0}" -f $BackendPort) -ForegroundColor Green
+    Write-Host ("pgAdmin local: http://127.0.0.1:{0}" -f $PgAdminPort) -ForegroundColor Green
+    Write-Host ("pgAdmin usuario: {0}" -f $PgAdminEmail) -ForegroundColor Green
+    Write-Host ("pgAdmin clave:   {0}" -f $PgAdminPassword) -ForegroundColor Green
 
     if ($BindHost -ne '0.0.0.0') {
         return
@@ -115,6 +121,7 @@ function Show-AccessUrls {
         Write-Host ("  Frontend: http://{0}:{1}" -f $ip, $FrontendPort) -ForegroundColor Green
         Write-Host ("  Admin:    http://{0}:{1}" -f $ip, $AdminPort) -ForegroundColor Green
         Write-Host ("  Backend:  http://{0}:{1}" -f $ip, $BackendPort) -ForegroundColor Green
+        Write-Host ("  pgAdmin:  http://{0}:{1}" -f $ip, $PgAdminPort) -ForegroundColor Green
     }
 }
 
@@ -169,7 +176,36 @@ function Initialize-DatabaseFromBootstrap {
     }
 
     if ($missingTables.Count -eq 0) {
-        return $false
+        # If core schemas exist but are empty (e.g. DB created with migrations only),
+        # still force bootstrap restore to keep master/config data available.
+        $minimumDatasetChecks = @(
+            @{ Schema = 'core'; Table = 'company_settings'; MinCount = 1 },
+            @{ Schema = 'master'; Table = 'payment_types'; MinCount = 1 },
+            @{ Schema = 'sales'; Table = 'series_numbers'; MinCount = 1 }
+        )
+
+        $missingData = @()
+        foreach ($check in $minimumDatasetChecks) {
+            $tableExists = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '$($check.Schema)' AND table_name = '$($check.Table)');"
+            if ($tableExists -ne 't') {
+                $missingData += "$($check.Schema).$($check.Table)"
+                continue
+            }
+
+            $rowCount = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT COUNT(*) FROM $($check.Schema).$($check.Table);"
+            $countInt = 0
+            [void][int]::TryParse($rowCount, [ref]$countInt)
+            if ($countInt -lt [int]$check.MinCount) {
+                $missingData += "$($check.Schema).$($check.Table)"
+            }
+        }
+
+        if ($missingData.Count -eq 0) {
+            return $false
+        }
+
+        Write-Host "Base detectada sin maestros/configuracion base. Restaurando dump inicial..." -ForegroundColor Cyan
+        Write-Host ("Tablas sin data minima: " + ($missingData -join ', ')) -ForegroundColor Yellow
     }
 
     Write-Host "Base incompleta o vacia detectada. Restaurando dump inicial..." -ForegroundColor Cyan
@@ -207,6 +243,38 @@ function Initialize-DatabaseFromBootstrap {
     docker compose @ComposeArgs exec -T postgres rm -f /tmp/bootstrap.sql | Out-Null
 
     return $true
+}
+
+function Invoke-ComposePostgresSqlFile {
+    param(
+        [string[]]$ComposeArgs,
+        [string]$PostgresPassword,
+        [string]$PostgresUser,
+        [string]$PostgresDb,
+        [string]$SqlFilePath
+    )
+
+    $resolvedSqlFilePath = Resolve-Path $SqlFilePath -ErrorAction SilentlyContinue
+    if (-not $resolvedSqlFilePath) {
+        throw "No se encontro script SQL: $SqlFilePath"
+    }
+
+    $postgresContainerId = (docker compose @ComposeArgs ps -q postgres | Out-String).Trim()
+    if (-not $postgresContainerId) {
+        throw 'No se pudo identificar el contenedor de PostgreSQL.'
+    }
+
+    docker cp $resolvedSqlFilePath "${postgresContainerId}:/tmp/runtime-script.sql"
+    if ($LASTEXITCODE -ne 0) {
+        throw 'No se pudo copiar el script SQL al contenedor de PostgreSQL.'
+    }
+
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -f /tmp/runtime-script.sql
+    if ($LASTEXITCODE -ne 0) {
+        throw 'No se pudo ejecutar el script SQL en PostgreSQL.'
+    }
+
+    docker compose @ComposeArgs exec -T postgres rm -f /tmp/runtime-script.sql | Out-Null
 }
 
 function New-DesktopShortcut {
@@ -495,12 +563,17 @@ if (-not (Test-Path $clientConfig)) {
         "BACKEND_PORT=8000",
         "FRONTEND_PORT=5173",
         "ADMIN_PORT=5174",
+        "PGADMIN_PORT=5050",
         ("VITE_API_BASE_URL={0}" -f (Get-ApiBaseUrlConfigValue -BindHost $bindHost -BackendPort '8000')),
         "VITE_BACKEND_PORT=8000",
         "POSTGRES_DB=facturacion_v2",
         "POSTGRES_USER=facturacion",
         "POSTGRES_PASSWORD=facturacion",
+        "PGADMIN_DEFAULT_EMAIL=admin@facturacion.local",
+        "PGADMIN_DEFAULT_PASSWORD=Admin123!",
         "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql",
+        "TRANSACTIONAL_CLEANUP_SQL_PATH=..\facturacion_backend\database\sql\clean_transactional_operational.sql",
+        "CLEAN_TRANSACTIONAL_ON_RESTORE=true",
         "RUN_MIGRATIONS=true"
     )
 }
@@ -510,23 +583,36 @@ $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key 'BACKEND_PORT' -DefaultValue '8000'
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key 'FRONTEND_PORT' -DefaultValue '5173'
 $adminPort = Get-ConfigValue -FilePath $clientConfig -Key 'ADMIN_PORT' -DefaultValue '5174'
+$pgadminPort = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_PORT' -DefaultValue '5050'
 $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_DB' -DefaultValue 'facturacion_v2'
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_USER' -DefaultValue 'facturacion'
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_PASSWORD' -DefaultValue 'facturacion'
+$pgadminEmail = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_EMAIL' -DefaultValue 'admin@facturacion.local'
+$pgadminPassword = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_PASSWORD' -DefaultValue 'Admin123!'
 $bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql'
+$transactionalCleanupSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -DefaultValue '..\facturacion_backend\database\sql\clean_transactional_operational.sql'
+$cleanTransactionalOnRestore = Get-ConfigValue -FilePath $clientConfig -Key 'CLEAN_TRANSACTIONAL_ON_RESTORE' -DefaultValue 'true'
 $viteApiBaseUrl = Get-ApiBaseUrlConfigValue -BindHost $dockerBindHost -BackendPort $backendPort
 
 Set-ConfigValue -FilePath $clientConfig -Key 'DOCKER_BIND_HOST' -Value $dockerBindHost
 Set-ConfigValue -FilePath $clientConfig -Key 'VITE_API_BASE_URL' -Value $viteApiBaseUrl
 Set-ConfigValue -FilePath $clientConfig -Key 'VITE_BACKEND_PORT' -Value $backendPort
+Set-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_PORT' -Value $pgadminPort
+Set-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_EMAIL' -Value $pgadminEmail
+Set-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_PASSWORD' -Value $pgadminPassword
+Set-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -Value $transactionalCleanupSqlPath
+Set-ConfigValue -FilePath $clientConfig -Key 'CLEAN_TRANSACTIONAL_ON_RESTORE' -Value $cleanTransactionalOnRestore
 
 $env:DOCKER_BIND_HOST = $dockerBindHost
 $env:BACKEND_PORT = $backendPort
 $env:FRONTEND_PORT = $frontendPort
 $env:ADMIN_PORT = $adminPort
+$env:PGADMIN_PORT = $pgadminPort
 $env:POSTGRES_DB = $postgresDb
 $env:POSTGRES_USER = $postgresUser
 $env:POSTGRES_PASSWORD = $postgresPassword
+$env:PGADMIN_DEFAULT_EMAIL = $pgadminEmail
+$env:PGADMIN_DEFAULT_PASSWORD = $pgadminPassword
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
 $env:VITE_BACKEND_PORT = $backendPort
 
@@ -629,10 +715,10 @@ if ($composeExitCode -ne 0) {
 }
 
 if ($dockerBindHost -eq '0.0.0.0') {
-    Ensure-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort)
+    Ensure-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort, [int]$pgadminPort)
     Append-InstallLog 'Acceso remoto habilitado: reglas de firewall aplicadas.'
 } else {
-    Remove-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort)
+    Remove-FacturacionFirewallRules -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort, [int]$pgadminPort)
     Append-InstallLog 'Acceso remoto deshabilitado: reglas de firewall removidas.'
 }
 
@@ -640,14 +726,16 @@ $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -
 if ($runMigrations -eq 'true') {
     $bootstrapRestored = Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
 
+    if ($bootstrapRestored -and $cleanTransactionalOnRestore -eq 'true') {
+        Write-Host 'Limpiando tablas operacionales/transaccionales del dump base...' -ForegroundColor Cyan
+        Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath (Join-Path $frontendRoot $transactionalCleanupSqlPath)
+        Append-InstallLog 'Limpieza transaccional aplicada sobre dump restaurado.'
+    }
+
     Write-Host 'Aplicando migraciones...' -ForegroundColor Cyan
     $ok = $false
     for ($attempt=1; $attempt -le 20; $attempt++) {
-        if ($bootstrapRestored) {
-            docker compose @composeArgs exec -T -e "ALLOW_CLEAN_TRANSACTIONAL_ON_INSTALL=true" backend php artisan migrate --force
-        } else {
-            docker compose @composeArgs exec -T backend php artisan migrate --force
-        }
+        docker compose @composeArgs exec -T backend php artisan migrate --force
         if ($LASTEXITCODE -eq 0) { $ok = $true; break }
         Write-Host "Esperando backend para migrar (intento $attempt/20)..." -ForegroundColor Yellow
         Start-Sleep -Seconds 3
@@ -663,6 +751,8 @@ Copy-Item -Path (Join-Path $PSScriptRoot '*.bat') -Destination $scriptsRoot -For
 
 New-DesktopShortcut -Name 'Facturacion - Levantar' -TargetPath (Join-Path $scriptsRoot 'levantar-local.bat') -WorkingDirectory $scriptsRoot
 New-DesktopShortcut -Name 'Facturacion - Apagar' -TargetPath (Join-Path $scriptsRoot 'apagar-local.bat') -WorkingDirectory $scriptsRoot
+New-DesktopShortcut -Name 'Facturacion - Limpiar Transacciones' -TargetPath (Join-Path $scriptsRoot 'limpiar-transaccionales-local.bat') -WorkingDirectory $scriptsRoot
+New-DesktopShortcut -Name 'Facturacion - pgAdmin' -TargetPath "$env:WINDIR\explorer.exe" -Arguments ("http://127.0.0.1:{0}" -f $pgadminPort)
 
 $desktopPath = [Environment]::GetFolderPath('Desktop')
 $updateShortcutPath = Join-Path $desktopPath 'Facturacion - Actualizar.lnk'
@@ -671,4 +761,4 @@ if (Test-Path $updateShortcutPath) { Remove-Item $updateShortcutPath -Force }
 if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Force }
 
 Write-Host 'Instalacion completada.' -ForegroundColor Green
-Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort
+Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort -PgAdminPort $pgadminPort -PgAdminEmail $pgadminEmail -PgAdminPassword $pgadminPassword

@@ -148,6 +148,7 @@ $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_PORT" -DefaultValue "8000"
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_PORT" -DefaultValue "5173"
 $adminPort = Get-ConfigValue -FilePath $clientConfig -Key "ADMIN_PORT" -DefaultValue "5174"
+$pgadminPort = Get-ConfigValue -FilePath $clientConfig -Key "PGADMIN_PORT" -DefaultValue "5050"
 $defaultViteApiBaseUrl = if ($dockerBindHost -eq "0.0.0.0") { "" } else { "http://127.0.0.1:$backendPort" }
 $viteApiBaseUrl = Get-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -DefaultValue $defaultViteApiBaseUrl
 
@@ -155,6 +156,7 @@ $env:DOCKER_BIND_HOST = $dockerBindHost
 $env:BACKEND_PORT = $backendPort
 $env:FRONTEND_PORT = $frontendPort
 $env:ADMIN_PORT = $adminPort
+$env:PGADMIN_PORT = $pgadminPort
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
 
 $composeArgs = @("-p", $composeProject, "-f", $ComposeFile)
@@ -177,6 +179,7 @@ $frontendUrl = "http://${displayHost}:${frontendPort}"
 Write-Host "Frontend: $frontendUrl" -ForegroundColor Green
 Write-Host "Admin: http://${displayHost}:${adminPort}" -ForegroundColor Green
 Write-Host "Backend: http://${displayHost}:${backendPort}" -ForegroundColor Green
+Write-Host "pgAdmin: http://${displayHost}:${pgadminPort}" -ForegroundColor Green
 
 function Open-Browser {
     param([string]$Url)
