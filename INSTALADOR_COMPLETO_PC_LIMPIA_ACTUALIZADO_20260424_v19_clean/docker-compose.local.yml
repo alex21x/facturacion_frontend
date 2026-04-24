@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-facturacion_v2}
+      POSTGRES_USER: ${POSTGRES_USER:-facturacion}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-facturacion}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-facturacion} -d ${POSTGRES_DB:-facturacion_v2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-Admin123!}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
+    ports:
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../facturacion_backend
+      dockerfile: Dockerfile.local
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      APP_URL: ${APP_URL:-http://127.0.0.1:8000}
+      APP_TIMEZONE: America/Lima
+      DB_TIMEZONE: America/Lima
+      DB_CONNECTION: pgsql
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DATABASE: ${POSTGRES_DB:-facturacion_v2}
+      DB_USERNAME: ${POSTGRES_USER:-facturacion}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-facturacion}
+      FILESYSTEM_DRIVER: local
+      FRONTEND_URL: ${FRONTEND_URL:-http://${DOCKER_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-5173}}
+      FRONTEND_APP_URL: ${FRONTEND_APP_URL:-http://${DOCKER_BIND_HOST:-127.0.0.1}:${ADMIN_PORT:-5174}}
+      PORT: 8000
+    ports:
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - backend_storage_app:/var/www/html/storage/app
+      - backend_storage_logs:/var/www/html/storage/logs
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
+      DOCKER_BIND_HOST: ${DOCKER_BIND_HOST:-127.0.0.1}
+      VITE_HOST: 0.0.0.0
+      VITE_PORT: 5173
+    ports:
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${FRONTEND_PORT:-5173}:5173"
+    depends_on:
+      - backend
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin.local
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+      VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
+      DOCKER_BIND_HOST: ${DOCKER_BIND_HOST:-127.0.0.1}
+      VITE_HOST: 0.0.0.0
+      VITE_ADMIN_HOST: 0.0.0.0
+      VITE_ADMIN_PORT: 5174
+    ports:
+      - "${DOCKER_BIND_HOST:-127.0.0.1}:${ADMIN_PORT:-5174}:5174"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  backend_storage_app:
+  backend_storage_logs:
+  pgadmin_data:
