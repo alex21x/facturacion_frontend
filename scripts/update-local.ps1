@@ -205,12 +205,31 @@ function Initialize-DatabaseFromBootstrap {
         throw "No se encontro el dump base para inicializar la base de datos: $BootstrapSqlPath"
     }
 
-    $hasCompanySettings = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'core' AND table_name = 'company_settings');"
-    if ($hasCompanySettings -eq "t") {
+    $requiredTables = @(
+        "core.company_settings",
+        "core.companies",
+        "auth.users",
+        "master.branches",
+        "sales.series_numbers"
+    )
+
+    $missingTables = @()
+    foreach ($requiredTable in $requiredTables) {
+        $parts = $requiredTable.Split('.')
+        $schema = $parts[0]
+        $table = $parts[1]
+        $exists = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '$schema' AND table_name = '$table');"
+        if ($exists -ne 't') {
+            $missingTables += $requiredTable
+        }
+    }
+
+    if ($missingTables.Count -eq 0) {
         return
     }
 
-    Write-Host "Base vacia detectada. Restaurando dump inicial..." -ForegroundColor Cyan
+    Write-Host "Base incompleta o vacia detectada. Restaurando dump inicial..." -ForegroundColor Cyan
+    Write-Host ("Tablas faltantes: " + ($missingTables -join ', ')) -ForegroundColor Yellow
 
     $postgresRoleExists = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres');"
     if ($postgresRoleExists -ne "t") {
@@ -223,6 +242,12 @@ function Initialize-DatabaseFromBootstrap {
     $postgresContainerId = (docker compose @ComposeArgs ps -q postgres | Out-String).Trim()
     if (-not $postgresContainerId) {
         throw "No se pudo identificar el contenedor de PostgreSQL."
+    }
+
+    # If schemas are partially present, clean them first to avoid restore conflicts.
+    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -c "DROP SCHEMA IF EXISTS appcfg,auth,billing,core,inventory,master,ops,restaurant,sales CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;"
+    if ($LASTEXITCODE -ne 0) {
+        throw "No se pudo limpiar esquemas existentes antes de restaurar el dump base."
     }
 
     docker cp $resolvedBootstrapSqlPath "${postgresContainerId}:/tmp/bootstrap.sql"
@@ -256,7 +281,8 @@ $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_PORT" -DefaultValue "8000"
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_PORT" -DefaultValue "5173"
 $adminPort = Get-ConfigValue -FilePath $clientConfig -Key "ADMIN_PORT" -DefaultValue "5174"
-$viteApiBaseUrl = Get-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -DefaultValue ("http://{0}:{1}" -f $dockerBindHost, $backendPort)
+$defaultViteApiBaseUrl = if ($dockerBindHost -eq "0.0.0.0") { "" } else { "http://127.0.0.1:$backendPort" }
+$viteApiBaseUrl = Get-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -DefaultValue $defaultViteApiBaseUrl
 $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key "POSTGRES_DB" -DefaultValue "facturacion_v2"
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key "POSTGRES_USER" -DefaultValue "facturacion"
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key "POSTGRES_PASSWORD" -DefaultValue "facturacion"

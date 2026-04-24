@@ -82,7 +82,8 @@ $bindHost = Get-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST" -Def
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_PORT" -DefaultValue "8000"
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_PORT" -DefaultValue "5173"
 $adminPort = Get-ConfigValue -FilePath $clientConfig -Key "ADMIN_PORT" -DefaultValue "5174"
-$viteApiBaseUrl = Get-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -DefaultValue ("http://{0}:{1}" -f $bindHost, $backendPort)
+$defaultViteApiBaseUrl = if ($bindHost -eq "0.0.0.0") { "" } else { "http://127.0.0.1:$backendPort" }
+$viteApiBaseUrl = Get-ConfigValue -FilePath $clientConfig -Key "VITE_API_BASE_URL" -DefaultValue $defaultViteApiBaseUrl
 
 Write-Host "   OK - Proyecto: $composeProject" -ForegroundColor Green
 Write-Host "   OK - Host: $bindHost" -ForegroundColor Green

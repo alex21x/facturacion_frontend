@@ -1,0 +1,14 @@
+FROM node:22-alpine
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+RUN npm run build:admin
+
+EXPOSE 4174
+
+CMD ["sh", "-lc", "npm run preview:admin -- --host 0.0.0.0 --port ${PORT:-4174}"]
