@@ -121,7 +121,8 @@ const BUSINESS_PULSE_EMPTY: BusinessPulseDataset = {
 const BUSINESS_PULSE_CACHE_KEY = 'facturacion.businessPulseCache.v1';
 const BUSINESS_PULSE_CACHE_TTL_MS = 2 * 60 * 1000;
 const SALES_FLAGS_CACHE_KEY = 'facturacion.salesFlagsCache.v1';
-const SALES_FLAGS_CACHE_TTL_MS = 5 * 60 * 1000;
+// Keep this short so admin feature flag changes propagate quickly in production.
+const SALES_FLAGS_CACHE_TTL_MS = 30 * 1000;
 const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
 
 const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
