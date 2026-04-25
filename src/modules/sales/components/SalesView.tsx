@@ -23,6 +23,7 @@ import {
   exportCommercialDocumentsJson,
   fetchCommercialDocumentDetails,
   fetchCustomerAutocomplete,
+  fetchCustomerVehicles,
   fetchReferenceDocuments,
   fetchProductCommercialConfig,
   fetchSalesBootstrap,
@@ -53,6 +54,7 @@ import type {
   CreateDocumentForm,
   PaginationMeta,
   SalesCustomerSuggestion,
+  SalesCustomerVehicle,
   SalesDraftItem,
   SalesLookups,
   SalesNoteReason,
@@ -137,6 +139,8 @@ type AutoPriceDecision = {
 
 type DocumentAdvancedFilters = {
   customer: string;
+  customerId: string;
+  customerVehicleId: string;
   issueDateFrom: string;
   issueDateTo: string;
   series: string;
@@ -154,6 +158,8 @@ const PRODUCT_AUTOCOMPLETE_MIN_CHARS = 1;
 
 const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
+  customerId: '',
+  customerVehicleId: '',
   issueDateFrom: '',
   issueDateTo: '',
   series: '',
@@ -310,6 +316,7 @@ const initialForm: CreateDocumentForm = {
   restaurantTableLabel: '',
   documentKind: 'RECEIPT',
   customerId: 0,
+  customerVehicleId: null,
   currencyId: 1,
   paymentMethodId: 0,
   productId: null,
@@ -1056,6 +1063,11 @@ function stockToneClass(stock: number): 'stock-chip--danger' | 'stock-chip--warn
   return 'stock-chip--ok';
 }
 
+function toOptionalNumber(value: unknown): number | null {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
 function resolveSalesFlowMode(features: Array<{ feature_code: string; is_enabled: boolean }>): SalesFlowMode {
   const row = features.find((item) => item.feature_code === 'SALES_SELLER_TO_CASHIER');
   return row?.is_enabled ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER';
@@ -1163,6 +1175,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [sunatSendingDocumentId, setSunatSendingDocumentId] = useState<number | null>(null);
   const [sunatBridgeDebugState, setSunatBridgeDebugState] = useState<SunatBridgeDebugState | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<SalesCustomerSuggestion | null>(null);
+  const [customerVehicles, setCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
+  const [loadingCustomerVehicles, setLoadingCustomerVehicles] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<InventoryProduct | null>(null);
   const [selectedProductCommercialConfig, setSelectedProductCommercialConfig] = useState<ProductCommercialConfig | null>(null);
   const [selectedProductUnitOptions, setSelectedProductUnitOptions] = useState<SalesLookups['units']>([]);
@@ -1222,6 +1236,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const parsed = JSON.parse(raw) as Partial<DocumentAdvancedFilters>;
       return {
         customer: typeof parsed.customer === 'string' ? parsed.customer : '',
+        customerId: typeof parsed.customerId === 'string' ? parsed.customerId : '',
+        customerVehicleId: typeof parsed.customerVehicleId === 'string' ? parsed.customerVehicleId : '',
         issueDateFrom: typeof parsed.issueDateFrom === 'string' ? parsed.issueDateFrom : '',
         issueDateTo: typeof parsed.issueDateTo === 'string' ? parsed.issueDateTo : '',
         series: typeof parsed.series === 'string' ? parsed.series : '',
@@ -1234,6 +1250,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   });
   const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(initialDocumentAdvancedFilters);
   const [exportingDocuments, setExportingDocuments] = useState(false);
+  const [reportCustomerInputFocused, setReportCustomerInputFocused] = useState(false);
+  const [reportCustomerSuggestions, setReportCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
+  const [reportCustomerVehicles, setReportCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
+  const [loadingReportCustomerVehicles, setLoadingReportCustomerVehicles] = useState(false);
 
   const documentKindLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1316,6 +1336,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const salesGlobalDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_GLOBAL_DISCOUNT_ENABLED', false);
   const salesItemDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ITEM_DISCOUNT_ENABLED', false);
   const salesFreeItemsEnabled = featureEnabled(lookups?.commerce_features, 'SALES_FREE_ITEMS_ENABLED', false);
+  const workshopMultiVehicleEnabled = featureEnabled(lookups?.commerce_features, 'SALES_WORKSHOP_MULTI_VEHICLE', false);
   const taxBridgeEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE', false);
   const taxBridgeDebugEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE_DEBUG_VIEW', false);
   const taxBridgeDebugConfig = featureConfig(lookups?.commerce_features, 'SALES_TAX_BRIDGE_DEBUG_VIEW');
@@ -1330,7 +1351,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const sellerToCashierSource = featureSource(lookups?.commerce_features, 'SALES_SELLER_TO_CASHIER');
   const taxBridgeSource = featureSource(lookups?.commerce_features, 'SALES_TAX_BRIDGE');
   const documentVoidSource = featureSource(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID');
-
   const salesFlowModeLabel = salesFlowMode === 'SELLER_TO_CASHIER'
     ? 'Vendedor -> Caja independiente'
     : 'Venta directa en punto de venta';
@@ -1413,7 +1433,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const suppressNextPinnedResetRef = useRef(false);
   const suppressNextCustomerAutocompleteRef = useRef(false);
   const suppressNextProductAutocompleteRef = useRef(false);
+  const suppressNextReportCustomerAutocompleteRef = useRef(false);
   const productAutocompleteRequestSeqRef = useRef(0);
+  const customerVehiclesRequestSeqRef = useRef(0);
+  const reportCustomerVehiclesRequestSeqRef = useRef(0);
   const lastBootstrapScopeRef = useRef('');
   const documentsRequestSeqRef = useRef(0);
   const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
@@ -2087,6 +2110,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           ),
           status: documentFiltersApplied.status || undefined,
           customer: documentFiltersApplied.customer || undefined,
+          customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+          customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+            ? Number(documentFiltersApplied.customerVehicleId)
+            : undefined,
           issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
           issueDateTo: documentFiltersApplied.issueDateTo || undefined,
           series: documentFiltersApplied.series || undefined,
@@ -2161,6 +2188,96 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     window.localStorage.setItem(SALES_REPORT_FILTERS_STORAGE_KEY, JSON.stringify(documentFiltersApplied));
   }, [documentFiltersApplied]);
+
+  useEffect(() => {
+    if (salesWorkspaceMode !== 'REPORT') {
+      setReportCustomerSuggestions([]);
+      setReportCustomerInputFocused(false);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        if (suppressNextReportCustomerAutocompleteRef.current) {
+          suppressNextReportCustomerAutocompleteRef.current = false;
+          setReportCustomerSuggestions([]);
+          return;
+        }
+
+        if (!reportCustomerInputFocused) {
+          setReportCustomerSuggestions([]);
+          return;
+        }
+
+        const queryText = documentFiltersDraft.customer.trim();
+        if (queryText.length < 2) {
+          setReportCustomerSuggestions([]);
+          return;
+        }
+
+        const rows = await fetchCustomerAutocomplete(accessToken, queryText);
+        setReportCustomerSuggestions(rows.slice(0, 12));
+      } catch {
+        setReportCustomerSuggestions([]);
+      }
+    }, 220);
+
+    return () => clearTimeout(timer);
+  }, [accessToken, documentFiltersDraft.customer, reportCustomerInputFocused, salesWorkspaceMode]);
+
+  useEffect(() => {
+    if (!workshopMultiVehicleEnabled || salesWorkspaceMode !== 'REPORT') {
+      setReportCustomerVehicles([]);
+      setLoadingReportCustomerVehicles(false);
+      return;
+    }
+
+    const customerId = Number(documentFiltersDraft.customerId || 0);
+    if (customerId <= 0) {
+      setReportCustomerVehicles([]);
+      setLoadingReportCustomerVehicles(false);
+      return;
+    }
+
+    const requestSeq = reportCustomerVehiclesRequestSeqRef.current + 1;
+    reportCustomerVehiclesRequestSeqRef.current = requestSeq;
+    setLoadingReportCustomerVehicles(true);
+
+    void fetchCustomerVehicles(accessToken, customerId)
+      .then((rows) => {
+        if (requestSeq !== reportCustomerVehiclesRequestSeqRef.current) {
+          return;
+        }
+
+        const activeRows = rows.filter((row) => Number(row.status) === 1);
+        setReportCustomerVehicles(activeRows);
+
+        setDocumentFiltersDraft((prev) => {
+          if (Number(prev.customerId || 0) !== customerId) {
+            return prev;
+          }
+
+          if (!prev.customerVehicleId) {
+            return prev;
+          }
+
+          const hasCurrent = activeRows.some((row) => String(row.id) === String(prev.customerVehicleId));
+          return hasCurrent ? prev : { ...prev, customerVehicleId: '' };
+        });
+      })
+      .catch(() => {
+        if (requestSeq !== reportCustomerVehiclesRequestSeqRef.current) {
+          return;
+        }
+
+        setReportCustomerVehicles([]);
+      })
+      .finally(() => {
+        if (requestSeq === reportCustomerVehiclesRequestSeqRef.current) {
+          setLoadingReportCustomerVehicles(false);
+        }
+      });
+  }, [accessToken, documentFiltersDraft.customerId, salesWorkspaceMode, workshopMultiVehicleEnabled]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -2472,6 +2589,62 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [isTributaryDocument, form.taxCategoryId, lookups]);
 
   useEffect(() => {
+    if (!workshopMultiVehicleEnabled || Number(form.customerId) <= 0) {
+      setCustomerVehicles([]);
+      setLoadingCustomerVehicles(false);
+      return;
+    }
+
+    const scopedCustomerId = Number(form.customerId);
+    const requestSeq = customerVehiclesRequestSeqRef.current + 1;
+    customerVehiclesRequestSeqRef.current = requestSeq;
+    setLoadingCustomerVehicles(true);
+
+    void fetchCustomerVehicles(accessToken, scopedCustomerId)
+      .then((rows) => {
+        if (requestSeq !== customerVehiclesRequestSeqRef.current) {
+          return;
+        }
+
+        const activeRows = rows.filter((row) => Number(row.status) === 1);
+        setCustomerVehicles(activeRows);
+
+        setForm((prev) => {
+          if (Number(prev.customerId) !== scopedCustomerId) {
+            return prev;
+          }
+
+          const currentVehicleId = toOptionalNumber(prev.customerVehicleId);
+          const existsCurrent = currentVehicleId !== null && activeRows.some((row) => row.id === currentVehicleId);
+          if (existsCurrent) {
+            return prev;
+          }
+
+          const defaultVehicle = activeRows.find((row) => row.is_default) ?? activeRows[0] ?? null;
+          return {
+            ...prev,
+            customerVehicleId: defaultVehicle ? defaultVehicle.id : null,
+          };
+        });
+      })
+      .catch(() => {
+        if (requestSeq !== customerVehiclesRequestSeqRef.current) {
+          return;
+        }
+
+        setCustomerVehicles([]);
+        setForm((prev) => (Number(prev.customerId) === scopedCustomerId
+          ? { ...prev, customerVehicleId: null }
+          : prev));
+      })
+      .finally(() => {
+        if (requestSeq === customerVehiclesRequestSeqRef.current) {
+          setLoadingCustomerVehicles(false);
+        }
+      });
+  }, [accessToken, form.customerId, workshopMultiVehicleEnabled]);
+
+  useEffect(() => {
     function handleShortcut(event: KeyboardEvent) {
       if (event.key === 'F2') {
         event.preventDefault();
@@ -2503,6 +2676,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setForm((prev) => ({
       ...prev,
       customerId: customer.id,
+      customerVehicleId: null,
       customerQuery: `${customer.doc_number ?? 'SIN-DOC'} - ${customer.name}`,
       customerAddress: customer.address ?? '',
       noteAffectedDocumentId: null,
@@ -3010,6 +3184,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       tradeName: lookups.company_profile.trade_name ?? null,
       address: lookups.company_profile.address ?? null,
       phone: lookups.company_profile.phone ?? null,
+      email: lookups.company_profile.email ?? null,
       logoUrl: lookups.company_profile.logo_url ?? null,
     };
   }, [lookups]);
@@ -3091,8 +3266,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
       subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
       html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(printable, { embedded: true })
-        : buildCommercialDocumentA4Html(printable, { embedded: true }),
+        ? buildCommercialDocument80mmHtml(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
+        : buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
       variant: format === '80mm' ? 'compact' : 'wide',
     });
   }
@@ -3256,8 +3431,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
         subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
         html: format === '80mm'
-          ? buildCommercialDocument80mmHtml(printable, { embedded: true })
-          : buildCommercialDocumentA4Html(printable, { embedded: true }),
+          ? buildCommercialDocument80mmHtml(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
+          : buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
         variant: format === '80mm' ? 'compact' : 'wide',
       });
     } catch (error) {
@@ -3309,14 +3484,54 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }
 
   function applyAdvancedDocumentFilters() {
+    setReportCustomerSuggestions([]);
+    setReportCustomerInputFocused(false);
     setDocumentFiltersApplied({ ...documentFiltersDraft });
     setDocumentsPage(1);
   }
 
   function clearAdvancedDocumentFilters() {
+    setReportCustomerSuggestions([]);
+    setReportCustomerVehicles([]);
+    setReportCustomerInputFocused(false);
     setDocumentFiltersDraft(initialDocumentAdvancedFilters);
     setDocumentFiltersApplied(initialDocumentAdvancedFilters);
     setDocumentsPage(1);
+  }
+
+  function formatVehicleLabel(vehicle: SalesCustomerVehicle): string {
+    const core = [vehicle.plate, vehicle.brand, vehicle.model]
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part !== '')
+      .join(' | ');
+
+    return core || `Vehiculo ${vehicle.id}`;
+  }
+
+  function formatReportDocumentVehicle(row: {
+    vehicle_plate_snapshot?: string | null;
+    vehicle_brand_snapshot?: string | null;
+    vehicle_model_snapshot?: string | null;
+  }): string {
+    const parts = [row.vehicle_plate_snapshot, row.vehicle_brand_snapshot, row.vehicle_model_snapshot]
+      .map((part) => String(part ?? '').trim())
+      .filter((part) => part !== '');
+
+    return parts.join(' | ');
+  }
+
+  function chooseReportCustomer(customer: SalesCustomerSuggestion) {
+    suppressNextReportCustomerAutocompleteRef.current = true;
+    setReportCustomerSuggestions([]);
+    setReportCustomerInputFocused(false);
+
+    const label = `${customer.doc_number ?? 'SIN-DOC'} - ${customer.name}`;
+    setDocumentFiltersDraft((prev) => ({
+      ...prev,
+      customer: label,
+      customerId: String(customer.id),
+      customerVehicleId: '',
+    }));
   }
 
   async function handleExportDocumentsExcel() {
@@ -3342,6 +3557,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         customer: documentFiltersApplied.customer || undefined,
+        customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+        customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+          ? Number(documentFiltersApplied.customerVehicleId)
+          : undefined,
         issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
         issueDateTo: documentFiltersApplied.issueDateTo || undefined,
         series: documentFiltersApplied.series || undefined,
@@ -3387,6 +3606,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         customer: documentFiltersApplied.customer || undefined,
+        customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+        customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+          ? Number(documentFiltersApplied.customerVehicleId)
+          : undefined,
         issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
         issueDateTo: documentFiltersApplied.issueDateTo || undefined,
         series: documentFiltersApplied.series || undefined,
@@ -3394,13 +3617,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         max: 20000,
       });
 
-      const sheetRows = rows.map((row) => ({
+      const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => ({
         ID: row.id,
         Documento: docKindLabelResolved(row.document_kind),
         Serie: row.series,
         Numero: row.number,
         FechaEmision: row.issue_at,
         Cliente: row.customer_name,
+        Vehiculo: formatReportDocumentVehicle(row),
         FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
         Estado: commercialStatusLabel(row.status),
         Total: Number(row.total ?? 0),
@@ -3416,6 +3640,110 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       XLSX.writeFile(workbook, fileName);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo exportar XLSX';
+      setMessage(text);
+    } finally {
+      setExportingDocuments(false);
+    }
+  }
+
+  async function handleExportDocumentsExcelByProduct() {
+    setExportingDocuments(true);
+    setMessage('');
+
+    try {
+      const filterParams = buildDocumentFilterParams(documentViewFilter, lookups?.document_kinds ?? []);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
+      const result = await exportCommercialDocumentsExcel(accessToken, {
+        branchId,
+        warehouseId,
+        cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
+        documentKind: filterParams.documentKind,
+        documentKindId: filterParams.documentKindId,
+        conversionState: filterParams.conversionState,
+        status: documentFiltersApplied.status || undefined,
+        customer: documentFiltersApplied.customer || undefined,
+        customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+        customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+          ? Number(documentFiltersApplied.customerVehicleId)
+          : undefined,
+        issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
+        issueDateTo: documentFiltersApplied.issueDateTo || undefined,
+        series: documentFiltersApplied.series || undefined,
+        number: documentFiltersApplied.number || undefined,
+        detail: 'PRODUCT',
+      });
+
+      const blobUrl = URL.createObjectURL(result.blob);
+      const anchor = document.createElement('a');
+      anchor.href = blobUrl;
+      anchor.download = result.fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo exportar detalle por producto';
+      setMessage(text);
+    } finally {
+      setExportingDocuments(false);
+    }
+  }
+
+  async function handleExportDocumentsXlsxByProduct() {
+    setExportingDocuments(true);
+    setMessage('');
+
+    try {
+      const filterParams = buildDocumentFilterParams(documentViewFilter, lookups?.document_kinds ?? []);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
+      const rows = await exportCommercialDocumentsJson(accessToken, {
+        branchId,
+        warehouseId,
+        cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
+        documentKind: filterParams.documentKind,
+        documentKindId: filterParams.documentKindId,
+        conversionState: filterParams.conversionState,
+        status: documentFiltersApplied.status || undefined,
+        customer: documentFiltersApplied.customer || undefined,
+        customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+        customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+          ? Number(documentFiltersApplied.customerVehicleId)
+          : undefined,
+        issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
+        issueDateTo: documentFiltersApplied.issueDateTo || undefined,
+        series: documentFiltersApplied.series || undefined,
+        number: documentFiltersApplied.number || undefined,
+        max: 20000,
+        detail: 'PRODUCT',
+      });
+
+      const detailRows = rows as Array<Record<string, unknown>>;
+      const sheetRows = detailRows.map((row) => ({
+        ID: Number(row.id ?? 0),
+        Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
+        Serie: String(row.series ?? ''),
+        Numero: String(row.number ?? ''),
+        FechaEmision: String(row.issue_at ?? ''),
+        Cliente: String(row.customer_name ?? ''),
+        Vehiculo: formatReportDocumentVehicle(row as CommercialDocumentProductDetailRow),
+        FormaPago: String(row.payment_method_name ?? ''),
+        Estado: String(row.status ?? ''),
+        Producto: String(row.product_description ?? ''),
+        Unidad: String(row.unit_code ?? ''),
+        Cantidad: Number(row.qty ?? 0),
+        PrecioUnitario: Number(row.unit_price ?? 0),
+        TotalLinea: Number(row.line_total ?? 0),
+      }));
+
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'VentasDetalleProducto');
+
+      const fileName = `reporte_ventas_producto_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      XLSX.writeFile(workbook, fileName);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo exportar XLSX detalle por producto';
       setMessage(text);
     } finally {
       setExportingDocuments(false);
@@ -3642,6 +3970,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           warehouse_id: warehouseId,
           cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
           customer_id: Number(form.customerId),
+          customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
           currency_id: Number(form.currencyId),
           payment_method_id: Number(form.paymentMethodId),
           due_at: form.dueDate || null,
@@ -3713,6 +4042,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         const printTotals = normalizePrintableTotals(lookups, payloadItems);
         const printableGrandTotal = Math.max(printTotals.grandTotal - globalDiscountAmount, 0);
         const selectedNoteReason = activeNoteReasons.find((row) => row.code === (form.noteReasonCode ?? '')) ?? null;
+        const selectedVehicle = workshopMultiVehicleEnabled
+          ? (customerVehicles.find((row) => row.id === Number(form.customerVehicleId ?? 0)) ?? null)
+          : null;
         const selectedReferenceDocumentNumber = selectedReferenceDocument
           ? `${selectedReferenceDocument.series}-${String(selectedReferenceDocument.number).padStart(6, '0')}`
           : '';
@@ -3777,6 +4109,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             credit_total: form.isCreditSale ? Number(creditPendingTotal.toFixed(2)) : 0,
             has_advance: advancesEnabled && cappedAdvanceAmount > 0,
             advance_amount: advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
+            customer_vehicle_id: workshopMultiVehicleEnabled ? (form.customerVehicleId ?? null) : null,
+            vehicle_plate: workshopMultiVehicleEnabled ? (selectedVehicle?.plate ?? null) : null,
+            vehicle_brand: workshopMultiVehicleEnabled ? (selectedVehicle?.brand ?? null) : null,
+            vehicle_model: workshopMultiVehicleEnabled ? (selectedVehicle?.model ?? null) : null,
             sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion)
               ? (form.sunatOperationTypeCode || selectedSunatOperationType?.code || null)
               : null,
@@ -3808,8 +4144,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           subtitle: `${issued.series}-${Number(issued.number).toString().padStart(6, '0')}`,
           html:
             salesFlowMode === 'SELLER_TO_CASHIER'
-              ? buildCommercialDocument80mmHtml(printableWithCompany, { embedded: true })
-              : buildCommercialDocumentA4Html(printableWithCompany, { embedded: true }),
+              ? buildCommercialDocument80mmHtml(printableWithCompany, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
+              : buildCommercialDocumentA4Html(printableWithCompany, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
           variant: salesFlowMode === 'SELLER_TO_CASHIER' ? 'compact' : 'wide',
         });
       }
@@ -4001,7 +4337,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         source,
         targetDocumentKind,
         details: printableDetails,
-        previewHtml: buildCommercialDocumentA4Html(printableDetails, { embedded: true }),
+        previewHtml: buildCommercialDocumentA4Html(printableDetails, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
         loading: false,
         error: '',
       });
@@ -4270,6 +4606,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     try {
       const details = await fetchCommercialDocumentDetails(accessToken, row.id) as PrintableSalesDocument & {
         customerId?: number;
+        customerVehicleId?: number | null;
         currencyId?: number;
         paymentMethodId?: number | null;
         customerDocNumber?: string;
@@ -4326,6 +4663,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         ...initialForm,
         documentKind: noteKind,
         customerId: Number(details.customerId ?? 0),
+        customerVehicleId: toOptionalNumber(details.customerVehicleId ?? details.metadata?.customer_vehicle_id),
         currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
@@ -4373,6 +4711,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     try {
       const details = await fetchCommercialDocumentDetails(accessToken, row.id) as PrintableSalesDocument & {
         customerId?: number;
+        customerVehicleId?: number | null;
         currencyId?: number;
         paymentMethodId?: number | null;
         items?: Array<{
@@ -4439,6 +4778,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         ...prev,
         documentKind: details.documentKind,
         customerId: Number(details.customerId ?? prev.customerId ?? 0),
+        customerVehicleId: toOptionalNumber(details.customerVehicleId ?? details.metadata?.customer_vehicle_id),
         currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
@@ -4522,8 +4862,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento A4',
       subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
       html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(details, { embedded: true })
-        : buildCommercialDocumentA4Html(details, { embedded: true }),
+        ? buildCommercialDocument80mmHtml(details, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
+        : buildCommercialDocumentA4Html(details, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
       variant: format === '80mm' ? 'compact' : 'wide',
     });
     setPostConvertPrintModal(null);
@@ -4807,7 +5147,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               }}
               onFocus={() => setCustomerInputFocused(true)}
               onKeyDown={handleCustomerKeyDown}
-              placeholder="Buscar por nombre, documento o placa"
+              placeholder="Buscar por nombre, documento, placa, marca o modelo"
             />
             {customerSuggestions.length > 0 && (
               <div className="suggest-box suggest-box--customer">
@@ -4828,6 +5168,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </div>
             )}
           </label>
+
+          {workshopMultiVehicleEnabled && (
+            <label className="sales-field-customer-vehicle">
+              Vehículo
+              <select
+                value={form.customerVehicleId ?? ''}
+                disabled={loadingCustomerVehicles || Number(form.customerId) <= 0 || customerVehicles.length === 0}
+                onChange={(e) => {
+                  const nextId = e.target.value ? Number(e.target.value) : null;
+                  setForm((prev) => ({ ...prev, customerVehicleId: nextId }));
+                }}
+              >
+                <option value="">
+                  {loadingCustomerVehicles
+                    ? 'Cargando vehículos...'
+                    : (Number(form.customerId) <= 0 ? 'Seleccione un cliente' : 'Sin vehículo')}
+                </option>
+                {customerVehicles.map((row) => (
+                  <option key={row.id} value={row.id}>
+                    {row.plate}{row.brand ? ` | ${row.brand}` : ''}{row.model ? ` ${row.model}` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
 
           <label className="sales-field-address">
             Dirección
@@ -5996,12 +6361,60 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <div className="report-filter-grid">
             <label>
               <span>Cliente / Documento</span>
-              <input
-                value={documentFiltersDraft.customer}
-                onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, customer: event.target.value }))}
-                placeholder="Nombre, RUC, DNI…"
-              />
+              <div className="with-suggest report-filter-customer-suggest" onBlur={() => window.setTimeout(() => setReportCustomerInputFocused(false), 120)}>
+                <input
+                  value={documentFiltersDraft.customer}
+                  onChange={(event) => {
+                    const nextValue = event.target.value;
+                    setReportCustomerInputFocused(true);
+                    setDocumentFiltersDraft((prev) => ({
+                      ...prev,
+                      customer: nextValue,
+                      customerId: '',
+                      customerVehicleId: '',
+                    }));
+                    setReportCustomerVehicles([]);
+                  }}
+                  onFocus={() => setReportCustomerInputFocused(true)}
+                  placeholder="Nombre, RUC, DNI…"
+                />
+                {reportCustomerSuggestions.length > 0 && (
+                  <div className="suggest-box report-suggest-box">
+                    {reportCustomerSuggestions.map((row) => (
+                      <button
+                        type="button"
+                        key={row.id}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => chooseReportCustomer(row)}
+                        className="suggest-item report-suggest-item"
+                      >
+                        <strong>{row.name}</strong>
+                        <span>{row.doc_number ?? 'SIN-DOC'}{row.plate ? ` | ${row.plate}` : ''}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </label>
+            {workshopMultiVehicleEnabled && (
+              <label>
+                <span>Vehículo del cliente</span>
+                <select
+                  value={documentFiltersDraft.customerVehicleId}
+                  disabled={loadingReportCustomerVehicles || Number(documentFiltersDraft.customerId || 0) <= 0 || reportCustomerVehicles.length === 0}
+                  onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, customerVehicleId: event.target.value }))}
+                >
+                  <option value="">
+                    {loadingReportCustomerVehicles
+                      ? 'Cargando vehículos...'
+                      : (Number(documentFiltersDraft.customerId || 0) <= 0 ? 'Seleccione un cliente' : 'Todos')}
+                  </option>
+                  {reportCustomerVehicles.map((row) => (
+                    <option key={row.id} value={row.id}>{formatVehicleLabel(row)}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               <span>Fecha desde</span>
               <input
@@ -6063,6 +6476,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <button type="button" className="btn-export" onClick={() => void handleExportDocumentsXlsx()} disabled={loadingDocuments || exportingDocuments}>
               {exportingDocuments ? 'Exportando…' : '⬇ XLSX'}
             </button>
+            <button type="button" className="btn-export" onClick={() => void handleExportDocumentsExcelByProduct()} disabled={loadingDocuments || exportingDocuments}>
+              {exportingDocuments ? 'Exportando…' : '⬇ CSV Detalle Productos'}
+            </button>
+            <button type="button" className="btn-export" onClick={() => void handleExportDocumentsXlsxByProduct()} disabled={loadingDocuments || exportingDocuments}>
+              {exportingDocuments ? 'Exportando…' : '⬇ XLSX Detalle Productos'}
+            </button>
           </div>
         </div>
         <table>
@@ -6072,6 +6491,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <th>Documento</th>
               <th>Fecha emision</th>
               <th>Cliente</th>
+              {workshopMultiVehicleEnabled && <th>Vehículo</th>}
               <th>Forma de pago</th>
               <th>Conversiones</th>
               <th>Estado</th>
@@ -6108,6 +6528,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 </td>
                 <td>{row.issue_at ? formatStoredDateTime(row.issue_at) : '-'}</td>
                 <td>{row.customer_name}</td>
+                {workshopMultiVehicleEnabled && <td>{formatReportDocumentVehicle(row) || '-'}</td>}
                 <td>{row.payment_method_name ?? 'Sin metodo de pago'}</td>
                 <td>
                     {(row.document_kind === 'QUOTATION' || row.document_kind === 'SALES_ORDER') ? (

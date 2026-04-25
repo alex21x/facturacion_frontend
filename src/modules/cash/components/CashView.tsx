@@ -11,6 +11,7 @@ import {
   fetchSessionDetail,
 } from '../api';
 import { buildCashReportHtml80mm, buildCashReportHtmlA4 } from '../../sales/print';
+import { fetchSalesLookups } from '../../sales/api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import { fetchCompanyProfile } from '../../company/api';
 import type { CompanyProfile } from '../../company/types';
@@ -117,6 +118,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
   }>(null);
   const [closeResponse, setCloseResponse] = useState<CloseSessionResponse | null>(null);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
+  const [workshopMultiVehicleEnabled, setWorkshopMultiVehicleEnabled] = useState(false);
 
   // Form: movimiento manual
   const [movType, setMovType] = useState<'IN' | 'OUT'>('IN');
@@ -179,7 +181,8 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const paymentMethod = (doc.payment_method_name || '').trim() || '-';
         const documentKind = (doc.document_kind_label || doc.document_kind || '').trim() || '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
-        const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}`;
+        const vehiclePlate = (doc.vehicle_plate_snapshot || '').trim() || '-';
+        const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${workshopMultiVehicleEnabled ? vehiclePlate.toLowerCase() : ''}`;
         const current = grouped.get(key);
 
         if (current) {
@@ -197,6 +200,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
             paymentMethod,
             documentKind,
             documentNumber,
+            vehiclePlate,
             quantity: Number(item.quantity || 0),
             amount: Number(item.line_total || 0),
             costAmount: Number(item.cost_total || 0),
@@ -213,7 +217,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         marginPercent: row.amount > 0 ? (row.marginAmount / row.amount) * 100 : 0,
       }))
       .sort((a, b) => b.amount - a.amount);
-  }, [sessionDetail]);
+  }, [sessionDetail, workshopMultiVehicleEnabled]);
 
   async function loadCurrentSession() {
     setLoading(true);
@@ -308,6 +312,28 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     };
   }, [accessToken]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const lookups = await fetchSalesLookups(accessToken);
+        if (!cancelled) {
+          const enabled = Boolean((lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_WORKSHOP_MULTI_VEHICLE')?.is_enabled);
+          setWorkshopMultiVehicleEnabled(enabled);
+        }
+      } catch {
+        if (!cancelled) {
+          setWorkshopMultiVehicleEnabled(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
   async function handleOpenSession() {
     if (!cashRegisterId) {
       setMessage('Selecciona una caja antes de abrir sesion');
@@ -383,6 +409,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       paymentMethodBreakdown: paymentMethods as PaymentMethodBreakdown[],
       movements: (detail?.movements ?? []) as any,
       documents: (detail?.documents ?? []) as any,
+      showVehicleInfo: workshopMultiVehicleEnabled,
       company: companyProfile
         ? {
             taxId: companyProfile.tax_id ?? null,
@@ -1096,19 +1123,21 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Cantidad</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Tipo comprobante</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Serie-correlativo</th>
+                                        {workshopMultiVehicleEnabled && <th style={{ textAlign: 'left', padding: '6px' }}>Vehículo</th>}
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Total</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Margen</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {soldProducts.map((row) => (
-                                        <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.documentKind}-${row.documentNumber}`} style={{ borderBottom: '1px solid #eee' }}>
+                                        <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.documentKind}-${row.documentNumber}-${row.vehiclePlate}`} style={{ borderBottom: '1px solid #eee' }}>
                                           <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.description}</td>
                                           <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.paymentMethod}</td>
                                           <td style={{ padding: '6px', textAlign: 'center' }}>{row.unitCode}</td>
                                           <td style={{ padding: '6px', textAlign: 'right' }}>{row.quantity.toFixed(3)}</td>
                                           <td style={{ padding: '6px' }}>{row.documentKind}</td>
                                           <td style={{ padding: '6px' }}>{row.documentNumber}</td>
+                                          {workshopMultiVehicleEnabled && <td style={{ padding: '6px' }}>{row.vehiclePlate}</td>}
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600 }}>{row.amount.toFixed(2)}</td>
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmount >= 0 ? '#0f766e' : '#b91c1c' }}>
                                             {row.marginAmount.toFixed(2)} ({row.marginPercent.toFixed(1)}%)

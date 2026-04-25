@@ -1213,6 +1213,22 @@ export function App() {
 
   return (
     <main className={`app-shell ${uiDensity === 'compact' ? 'density-compact' : ''}`}>
+      {!tenantAccessSlug && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', gap: '1rem', padding: '2rem', textAlign: 'center' }}>
+          <h1 style={{ fontSize: '1.5rem', fontWeight: 700 }}>Sistema de Facturación</h1>
+          <p style={{ color: '#555', maxWidth: '400px' }}>
+            Esta URL no corresponde a ninguna empresa.<br />
+            Accede con la URL de tu empresa, por ejemplo:<br />
+            <code style={{ background: '#f1f1f1', padding: '2px 6px', borderRadius: '4px' }}>
+              /t/emp-xxxxxxxxxxxxxxxx
+            </code>
+          </p>
+          <p style={{ color: '#888', fontSize: '0.85rem' }}>
+            Contacta al administrador del sistema para obtener tu URL de acceso.
+          </p>
+        </div>
+      )}
+      {tenantAccessSlug && (
       <section className="hero">
         <header className="workspace-head">
           <div>
@@ -1762,6 +1778,7 @@ export function App() {
           </section>
         )}
       </section>
+      )}
     </main>
   );
 }

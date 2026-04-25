@@ -8715,6 +8715,24 @@ th {
   box-shadow: 0 0 0 3px rgba(108, 136, 118, 0.13);
 }
 
+.report-filter-customer-suggest {
+  width: 100%;
+}
+
+.report-suggest-box {
+  left: 0;
+  right: 0;
+  width: auto;
+  min-width: 100%;
+  max-width: none;
+  max-height: 250px;
+}
+
+.report-suggest-item {
+  min-width: 0;
+  min-height: 36px;
+}
+
 .report-filter-actions {
   display: flex;
   align-items: center;
