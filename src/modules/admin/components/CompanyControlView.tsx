@@ -27,6 +27,7 @@ import type {
 
 const FEATURE_LABELS: Record<string, string> = {
   SALES_CUSTOMER_PRICE_PROFILE: 'Precios por cliente',
+  SALES_WORKSHOP_MULTI_VEHICLE: 'Taller: clientes con multiples vehiculos',
   SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja',
   SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL: 'Editar emitidos antes de respuesta final SUNAT',
   SALES_ANTICIPO_ENABLED: 'Cobro con anticipo',
@@ -49,6 +50,7 @@ const FEATURE_LABELS: Record<string, string> = {
 
 const REQUIRED_COMMERCE_FEATURE_CODES: string[] = [
   'SALES_CUSTOMER_PRICE_PROFILE',
+  'SALES_WORKSHOP_MULTI_VEHICLE',
   'SALES_SELLER_TO_CASHIER',
   'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
   'SALES_ANTICIPO_ENABLED',
@@ -111,11 +113,19 @@ function featureLabel(code: string): string {
   return code.replace(/_+/g, ' ').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 
-type Props = { accessToken: string };
+type Props = { accessToken: string; onUnauthorized?: () => void };
 
-export function CompanyControlView({ accessToken }: Props) {
+export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+
+  function handleApiError(err: unknown, fallback: string): string {
+    const msg = err instanceof Error ? err.message : fallback;
+    if (msg.toLowerCase().includes('expirada') || msg.toLowerCase().includes('invalida')) {
+      onUnauthorized?.();
+    }
+    return msg;
+  }
   const [isError, setIsError] = useState(false);
   const [matrix, setMatrix]   = useState<CompanyVerticalAdminMatrixResponse | null>(null);
   const [rateMatrix, setRateMatrix] = useState<CompanyRateLimitMatrixResponse | null>(null);
@@ -191,6 +201,14 @@ export function CompanyControlView({ accessToken }: Props) {
     try {
       const result = await resetAdminCompanyPassword(accessToken, companyId);
       setResetModal({ companyName, username: result.username, email: result.email, newPassword: result.new_password });
+      setMessage(`Nueva clave generada para ${companyName}: usuario ${result.username} | clave ${result.new_password}`);
+      setIsError(false);
+      try {
+        void navigator.clipboard.writeText(`Empresa: ${companyName}\nUsuario: ${result.username}\nClave: ${result.new_password}`);
+      } catch {
+        // Ignore clipboard errors; credentials are still visible on screen.
+      }
+      alert(`Nueva contraseña generada\n\nEmpresa: ${companyName}\nUsuario: ${result.username}\nClave: ${result.new_password}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'No se pudo resetear la contraseña');
       setIsError(true);
@@ -288,7 +306,7 @@ export function CompanyControlView({ accessToken }: Props) {
       setBulkOpCash(operationalResult.defaults.max_cash_registers_enabled);
       setBulkOpCashPerWarehouse(operationalResult.defaults.max_cash_registers_per_warehouse);
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : 'No se pudo cargar el control de empresas');
+      setMessage(handleApiError(err, 'No se pudo cargar el control de empresas'));
       setIsError(true);
       setMatrix(null);
       setRateMatrix(null);

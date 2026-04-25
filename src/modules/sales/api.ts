@@ -1,12 +1,14 @@
 import { apiClient } from '../../shared/api/client';
 import type {
   CommercialDocumentListItem,
+  CommercialDocumentProductDetailRow,
   ConvertCommercialDocumentPayload,
   CreateDocumentForm,
   ManualSunatConfirmPayload,
   PaginatedCommercialDocuments,
   PaginatedSunatExceptions,
   SalesCustomerSuggestion,
+  SalesCustomerVehicle,
   SunatExceptionsAuditResponse,
   SalesLookups,
   SalesReferenceDocument,
@@ -85,6 +87,9 @@ export async function fetchSalesBootstrap(
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
+    customerId?: number | null;
+    vehicle?: string;
+    customerVehicleId?: number | null;
     issueDateFrom?: string;
     issueDateTo?: string;
     series?: string;
@@ -119,6 +124,15 @@ export async function fetchSalesBootstrap(
   }
   if (context?.customer) {
     query.set('customer', context.customer);
+  }
+  if (context?.customerId) {
+    query.set('customer_id', String(context.customerId));
+  }
+  if (context?.vehicle) {
+    query.set('vehicle', context.vehicle);
+  }
+  if (context?.customerVehicleId) {
+    query.set('customer_vehicle_id', String(context.customerVehicleId));
   }
   if (context?.issueDateFrom) {
     query.set('issue_date_from', context.issueDateFrom);
@@ -164,6 +178,21 @@ export async function fetchCustomerAutocomplete(
   return response.data;
 }
 
+export async function fetchCustomerVehicles(
+  accessToken: string,
+  customerId: number
+): Promise<SalesCustomerVehicle[]> {
+  const response = await apiClient.request<{ data: SalesCustomerVehicle[] }>(
+    `/api/sales/customers/${customerId}/vehicles`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response.data;
+}
+
 export type ResolveCustomerByDocumentResponse = {
   data: SalesCustomerSuggestion;
   source: 'local' | 'reniec' | 'sunat';
@@ -198,6 +227,9 @@ export async function fetchCommercialDocuments(
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
+    customerId?: number | null;
+    vehicle?: string;
+    customerVehicleId?: number | null;
     issueDateFrom?: string;
     issueDateTo?: string;
     series?: string;
@@ -233,6 +265,15 @@ export async function fetchCommercialDocuments(
   }
   if (context?.customer && context.customer.trim() !== '') {
     query.set('customer', context.customer.trim());
+  }
+  if (context?.customerId) {
+    query.set('customer_id', String(context.customerId));
+  }
+  if (context?.vehicle && context.vehicle.trim() !== '') {
+    query.set('vehicle', context.vehicle.trim());
+  }
+  if (context?.customerVehicleId) {
+    query.set('customer_vehicle_id', String(context.customerVehicleId));
   }
   if (context?.issueDateFrom) {
     query.set('issue_date_from', context.issueDateFrom);
@@ -559,6 +600,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
       issue_at: form.issueDate,
       due_at: form.dueDate || null,
       customer_id: Number(form.customerId),
+      customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
       currency_id: Number(form.currencyId),
       payment_method_id: Number(form.paymentMethodId),
       metadata: {
@@ -638,6 +680,10 @@ export async function exportCommercialDocumentsExcel(
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
+    customerId?: number | null;
+    vehicle?: string;
+    customerVehicleId?: number | null;
+    detail?: 'SUMMARY' | 'PRODUCT';
     issueDateFrom?: string;
     issueDateTo?: string;
     series?: string;
@@ -670,6 +716,18 @@ export async function exportCommercialDocumentsExcel(
   }
   if (context?.customer && context.customer.trim() !== '') {
     query.set('customer', context.customer.trim());
+  }
+  if (context?.customerId) {
+    query.set('customer_id', String(context.customerId));
+  }
+  if (context?.vehicle && context.vehicle.trim() !== '') {
+    query.set('vehicle', context.vehicle.trim());
+  }
+  if (context?.customerVehicleId) {
+    query.set('customer_vehicle_id', String(context.customerVehicleId));
+  }
+  if (context?.detail) {
+    query.set('detail', context.detail);
   }
   if (context?.issueDateFrom) {
     query.set('issue_date_from', context.issueDateFrom);
@@ -718,13 +776,17 @@ export async function exportCommercialDocumentsJson(
     status?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
+    customerId?: number | null;
+    vehicle?: string;
+    customerVehicleId?: number | null;
+    detail?: 'SUMMARY' | 'PRODUCT';
     issueDateFrom?: string;
     issueDateTo?: string;
     series?: string;
     number?: string;
     max?: number;
   }
-): Promise<CommercialDocumentListItem[]> {
+): Promise<CommercialDocumentListItem[] | CommercialDocumentProductDetailRow[]> {
   const query = new URLSearchParams();
   query.set('format', 'json');
 
@@ -752,6 +814,18 @@ export async function exportCommercialDocumentsJson(
   if (context?.customer && context.customer.trim() !== '') {
     query.set('customer', context.customer.trim());
   }
+  if (context?.customerId) {
+    query.set('customer_id', String(context.customerId));
+  }
+  if (context?.vehicle && context.vehicle.trim() !== '') {
+    query.set('vehicle', context.vehicle.trim());
+  }
+  if (context?.customerVehicleId) {
+    query.set('customer_vehicle_id', String(context.customerVehicleId));
+  }
+  if (context?.detail) {
+    query.set('detail', context.detail);
+  }
   if (context?.issueDateFrom) {
     query.set('issue_date_from', context.issueDateFrom);
   }
@@ -768,7 +842,7 @@ export async function exportCommercialDocumentsJson(
     query.set('max', String(context.max));
   }
 
-  const response = await apiClient.request<{ data: CommercialDocumentListItem[] }>(
+  const response = await apiClient.request<{ data: CommercialDocumentListItem[] | CommercialDocumentProductDetailRow[] }>(
     `/api/sales/commercial-documents/export?${query.toString()}`,
     {
       method: 'GET',

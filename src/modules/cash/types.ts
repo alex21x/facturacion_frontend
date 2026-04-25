@@ -106,6 +106,10 @@ export type SessionDocument = {
   document_kind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER' | 'QUOTATION' | 'CREDIT_NOTE' | 'DEBIT_NOTE';
   document_kind_label?: string;
   customer_name: string;
+  customer_vehicle_id?: number | null;
+  vehicle_plate_snapshot?: string | null;
+  vehicle_brand_snapshot?: string | null;
+  vehicle_model_snapshot?: string | null;
   payment_method_name: string | null;
   total: number;
   status: string;
