@@ -21,6 +21,19 @@ export default defineConfig(({ mode }) => {
       host: env.VITE_ADMIN_HOST || env.VITE_HOST || '127.0.0.1',
       port: Number(env.VITE_ADMIN_PORT || 5174),
     },
+    server: {
+      host: env.VITE_ADMIN_HOST || env.VITE_HOST || '127.0.0.1',
+      port: Number(env.VITE_ADMIN_PORT || 5174),
+      watch: {
+        ignored: ['**/scripts/**'],
+      },
+      proxy: {
+        '/api': {
+          target: `http://${env.VITE_HOST || '127.0.0.1'}:${env.VITE_BACKEND_PORT || 8000}`,
+          changeOrigin: true,
+        },
+      },
+    },
     build: {
       outDir: 'dist-admin',
       emptyOutDir: true,

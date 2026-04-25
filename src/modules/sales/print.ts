@@ -55,6 +55,7 @@ export type PrintableCompanyProfile = {
   tradeName?: string | null;
   address?: string | null;
   phone?: string | null;
+  email?: string | null;
   logoUrl?: string | null;
 };
 
@@ -140,6 +141,13 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
     ?? metadata.phone
     ?? null
   ) as string | null;
+  const email = (
+    inputCompany.email
+    ?? inputCompany.company_email
+    ?? metadata.company_email
+    ?? metadata.email
+    ?? null
+  ) as string | null;
   const logoCandidate = (
     inputCompany.logoUrl
     ?? inputCompany.logo_url
@@ -154,8 +162,29 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
     tradeName,
     address,
     phone,
+    email,
     logoUrl: normalizePrintAssetUrl(logoCandidate),
   };
+}
+
+function resolveVehiclePrintData(metadata: Record<string, unknown>): { plate: string; brand: string; model: string } {
+  const plate = String(metadata.vehicle_plate ?? metadata.vehiclePlateSnapshot ?? '').trim();
+  const brand = String(metadata.vehicle_brand ?? metadata.vehicleBrand ?? '').trim();
+  const model = String(metadata.vehicle_model ?? metadata.vehicleModel ?? '').trim();
+
+  return { plate, brand, model };
+}
+
+function paymentBrandsFooterHtml(size: 'A4' | '80mm'): string {
+  const baseClass = size === 'A4' ? 'paybrands paybrands-a4' : 'paybrands paybrands-80';
+  const yapeLogo = '/assets/payment-logos/yape-official.png';
+  const plinLogo = '/assets/payment-logos/plin-official.png';
+  const culqiLogo = '/assets/payment-logos/culqi-official.png';
+  return `<div class="${baseClass}">
+    <div class="paybrand"><img src="${escapeHtml(yapeLogo)}" alt="Yape" /></div>
+    <div class="paybrand"><img src="${escapeHtml(plinLogo)}" alt="Plin" /></div>
+    <div class="paybrand"><img src="${escapeHtml(culqiLogo)}" alt="Culqi" /></div>
+  </div>`;
 }
 
 function baseDocumentKind(kind: string): string {
@@ -284,12 +313,13 @@ function resolveNotePrintDetails(doc: PrintableSalesDocument): {
 
 export function buildCommercialDocumentA4Html(
   doc: PrintableSalesDocument,
-  options?: { embedded?: boolean },
+  options?: { embedded?: boolean; showItemDiscount?: boolean },
 ): string {
   const meta = kindMeta(doc.documentKind);
   const showTributaryBreakdown = isTributaryKind(doc.documentKind);
   const isNoteDocument = isNoteKind(doc.documentKind);
   const isEmbedded = options?.embedded === true;
+  const showItemDiscount = options?.showItemDiscount !== false;
   const notePrint = resolveNotePrintDetails(doc);
   const company = resolvePrintableCompanyProfile(doc);
   const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
@@ -297,6 +327,7 @@ export function buildCommercialDocumentA4Html(
   const companyTaxId = String(company.taxId || '00000000000').trim() || '00000000000';
   const companyAddress = String(company.address || '').trim();
   const companyPhone = String(company.phone || '').trim();
+  const companyEmail = String(company.email || '').trim();
   const logoHtml = company.logoUrl
     ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo empresa" class="brand-logo" />`
     : `<div class="brand-logo brand-logo--placeholder">LOGO</div>`;
@@ -310,7 +341,7 @@ export function buildCommercialDocumentA4Html(
           <td class="ta-c">${escapeHtml(item.unitLabel)}</td>
           <td>${escapeHtml(item.description)}</td>
           <td class="ta-r">${doc.currencySymbol} ${formatMoney(item.unitPrice)}</td>
-          <td class="ta-r">${doc.currencySymbol} ${formatMoney(Number(item.discountTotal ?? 0))}</td>
+          ${showItemDiscount ? `<td class="ta-r">${doc.currencySymbol} ${formatMoney(Number(item.discountTotal ?? 0))}</td>` : ''}
           <td class="ta-r">${doc.currencySymbol} ${formatMoney(item.lineTotal)}</td>
         </tr>
       `;
@@ -318,6 +349,7 @@ export function buildCommercialDocumentA4Html(
     .join('');
 
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const vehiclePrint = resolveVehiclePrintData(metaData);
   const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
@@ -381,7 +413,7 @@ export function buildCommercialDocumentA4Html(
           .head { display: grid; grid-template-columns: 1.1fr 1fr; gap: 10px; align-items: stretch; }
           .brand { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; }
           .brand-head { display: flex; gap: 10px; align-items: flex-start; }
-          .brand-logo { width: 82px; height: 82px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
+          .brand-logo { width: 116px; height: 116px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
           .brand-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
           .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.4px; line-height: 1.15; }
           .brand p { margin: 2px 0; font-size: 11px; color: #4b5563; }
@@ -410,6 +442,9 @@ export function buildCommercialDocumentA4Html(
           .sunat-proof { margin-top: 10px; border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px; }
           .sunat-proof h5 { margin: 0 0 4px 0; font-size: 12px; }
           .sunat-proof p { margin: 0 0 4px 0; font-size: 11px; color: #334155; word-break: break-all; }
+          .paybrands { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 10px; }
+          .paybrand { border-radius: 8px; border: 1px solid #d1d5db; background: #fff; padding: 5px 10px; height: 40px; display: inline-flex; align-items: center; }
+          .paybrand img { height: 28px; width: auto; display: block; }
         </style>
       </head>
       <body>
@@ -432,6 +467,7 @@ export function buildCommercialDocumentA4Html(
                   ${companyLegalName !== companyTitle ? `<p>${escapeHtml(companyLegalName)}</p>` : ''}
                   ${companyAddress ? `<p>${escapeHtml(companyAddress)}</p>` : ''}
                   ${companyPhone ? `<p>Tel: ${escapeHtml(companyPhone)}</p>` : ''}
+                  ${companyEmail ? `<p>Email: ${escapeHtml(companyEmail)}</p>` : ''}
                 </div>
               </div>
               <p>Fecha emision: ${formatDateTime(doc.issueDate)}</p>
@@ -447,6 +483,7 @@ export function buildCommercialDocumentA4Html(
             <article>
               <p class="kv"><b>Razon Social:</b> ${escapeHtml(doc.customerName || '-')}</p>
               <p class="kv"><b>Direccion:</b> ${escapeHtml(doc.customerAddress || '-')}</p>
+              ${vehiclePrint.plate ? `<p class="kv"><b>Vehiculo:</b> ${escapeHtml(vehiclePrint.plate)}${vehiclePrint.brand || vehiclePrint.model ? ` (${escapeHtml([vehiclePrint.brand, vehiclePrint.model].filter((x) => x !== '').join(' '))})` : ''}</p>` : ''}
               <p class="kv"><b>Fecha Emision:</b> ${formatDateTime(doc.issueDate)}</p>
               <p class="kv"><b>Tipo Moneda:</b> ${escapeHtml(doc.currencyCode)}</p>
             </article>
@@ -476,12 +513,12 @@ export function buildCommercialDocumentA4Html(
                   <th style="width:86px">Unid. Med.</th>
                   <th>${isNoteDocument ? 'Productos / conceptos afectados' : 'Descripcion'}</th>
                   <th style="width:92px">Valor U.</th>
-                  <th style="width:96px">Descuento</th>
+                  ${showItemDiscount ? '<th style="width:96px">Descuento</th>' : ''}
                   <th style="width:96px">Valor Total</th>
                 </tr>
               </thead>
               <tbody>
-                ${rows || '<tr><td colspan="7" class="ta-c">Sin items</td></tr>'}
+                ${rows || `<tr><td colspan="${showItemDiscount ? '7' : '6'}" class="ta-c">Sin items</td></tr>`}
               </tbody>
             </table>
           </section>
@@ -497,7 +534,7 @@ export function buildCommercialDocumentA4Html(
                   ${showTributaryBreakdown ? `<tr><td class="label">Op. Inafectas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.inafectaTotal)}</td></tr>` : ''}
                   ${showTributaryBreakdown ? `<tr><td class="label">Op. Exoneradas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</td></tr>` : ''}
                   ${showTributaryBreakdown ? `<tr><td class="label">IGV:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</td></tr>` : ''}
-                  ${itemDiscountTotal > 0 ? `<tr><td class="label">Descuento por item:</td><td class="value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</td></tr>` : ''}
+                  ${showItemDiscount && itemDiscountTotal > 0 ? `<tr><td class="label">Descuento por item:</td><td class="value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</td></tr>` : ''}
                   ${globalDiscountTotal > 0 ? `<tr><td class="label">Descuento global:</td><td class="value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</td></tr>` : ''}
                   ${tributaryRows}
                   <tr class="total-row"><td class="label">Total a Pagar:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</td></tr>
@@ -517,6 +554,7 @@ export function buildCommercialDocumentA4Html(
 
           <section class="obs">
             Observaciones: Documento impreso en formato A4 adaptable por tipo de comprobante.
+            ${paymentBrandsFooterHtml('A4')}
           </section>
         </section>
       </body>
@@ -526,16 +564,20 @@ export function buildCommercialDocumentA4Html(
 
 export function buildCommercialDocument80mmHtml(
   doc: PrintableSalesDocument,
-  options?: { embedded?: boolean },
+  options?: { embedded?: boolean; showItemDiscount?: boolean },
 ): string {
   const meta = kindMeta(doc.documentKind);
   const showTributaryBreakdown = isTributaryKind(doc.documentKind);
   const isNoteDocument = isNoteKind(doc.documentKind);
   const isEmbedded = options?.embedded === true;
+  const showItemDiscount = options?.showItemDiscount !== false;
   const notePrint = resolveNotePrintDetails(doc);
   const company = resolvePrintableCompanyProfile(doc);
   const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
   const companyTaxId = String(company.taxId || '').trim();
+  const companyAddress = String(company.address || '').trim();
+  const companyPhone = String(company.phone || '').trim();
+  const companyEmail = String(company.email || '').trim();
 
   const itemsRows = doc.items
     .map((item) => {
@@ -563,6 +605,7 @@ export function buildCommercialDocument80mmHtml(
 
   const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const vehiclePrint = resolveVehiclePrintData(metaData);
   const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
   const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
@@ -602,7 +645,7 @@ export function buildCommercialDocument80mmHtml(
           body { 
             font-family: 'Courier New', Courier, monospace; 
             color: #000; 
-            font-size: 9px; 
+            font-size: 10px; 
             line-height: 1.35;
             background: #fff;
             width: 80mm;
@@ -650,8 +693,8 @@ export function buildCommercialDocument80mmHtml(
             margin-bottom: 2mm;
           }
           .header-logo {
-            width: 22mm;
-            height: 22mm;
+            width: 30mm;
+            height: 30mm;
             object-fit: contain;
             border: 1px solid #000;
             margin: 0 auto 1mm;
@@ -754,6 +797,9 @@ export function buildCommercialDocument80mmHtml(
             padding-top: 1mm;
             line-height: 1.2;
           }
+          .paybrands { display: flex; gap: 3px; align-items: center; justify-content: center; margin: 1mm 0; }
+          .paybrand { border-radius: 6px; border: 1px solid #d1d5db; background: #fff; padding: 2px 5px; height: 24px; display: inline-flex; align-items: center; }
+          .paybrand img { height: 16px; width: auto; display: block; }
           .footer-item {
             margin: 0.3mm 0;
           }
@@ -794,6 +840,9 @@ export function buildCommercialDocument80mmHtml(
             ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" />` : ''}
             <div class="title">${escapeHtml(companyTitle)}</div>
             ${companyTaxId ? `<div class="date">RUC: ${escapeHtml(companyTaxId)}</div>` : ''}
+            ${companyAddress ? `<div class="date">${escapeHtml(companyAddress)}</div>` : ''}
+            ${companyPhone ? `<div class="date">Tel: ${escapeHtml(companyPhone)}</div>` : ''}
+            ${companyEmail ? `<div class="date">Email: ${escapeHtml(companyEmail)}</div>` : ''}
             <div class="title">${escapeHtml(meta.title)}</div>
             <div class="docno">${escapeHtml(doc.series)}-${String(doc.number).padStart(6, '0')}</div>
             <div class="date">${formatDateTime(doc.issueDate)}</div>
@@ -809,6 +858,10 @@ export function buildCommercialDocument80mmHtml(
             ${doc.customerDocNumber ? `<div class="info-row">
               <div class="info-label">Doc:</div>
               <div class="info-value">${escapeHtml(doc.customerDocNumber)}</div>
+            </div>` : ''}
+            ${vehiclePrint.plate ? `<div class="info-row">
+              <div class="info-label">Vehículo:</div>
+              <div class="info-value">${escapeHtml(vehiclePrint.plate)}${vehiclePrint.brand || vehiclePrint.model ? ` (${escapeHtml([vehiclePrint.brand, vehiclePrint.model].filter((x) => x !== '').join(' '))})` : ''}</div>
             </div>` : ''}
           </div>
 
@@ -853,7 +906,7 @@ export function buildCommercialDocument80mmHtml(
               <div class="summary-label">IGV:</div>
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</div>
             </div>` : ''}
-            ${itemDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. item:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</div></div>` : ''}
+            ${showItemDiscount && itemDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. item:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</div></div>` : ''}
             ${globalDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. global:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</div></div>` : ''}
             ${showTributaryBreakdown && sunatOpCode ? `<div class="summary-row"><div class="summary-label">Op. SUNAT:</div><div class="summary-value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</div></div>` : ''}
             ${showTributaryBreakdown && detraccionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Detraccion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</div></div>` : ''}
@@ -873,6 +926,7 @@ export function buildCommercialDocument80mmHtml(
                 </div>`
               : ''}
             <div class="divider" style="margin: 1mm 0"></div>
+            ${paymentBrandsFooterHtml('80mm')}
             <div class="footer-item">Gracias por su compra</div>
             <div class="footer-item">ID: ${doc.id}</div>
           </div>
@@ -956,6 +1010,10 @@ export type CashReportDocument = {
   document_number: string;
   document_kind: string;
   customer_name: string;
+  customer_vehicle_id?: number | null;
+  vehicle_plate_snapshot?: string | null;
+  vehicle_brand_snapshot?: string | null;
+  vehicle_model_snapshot?: string | null;
   payment_method_name: string | null;
   total: number;
   created_at: string;
@@ -987,6 +1045,7 @@ export type CashReportPrintData = {
   paymentMethodBreakdown: PaymentMethodBreakdown[];
   movements?: CashReportMovement[];
   documents?: CashReportDocument[];
+  showVehicleInfo?: boolean;
   company?: PrintableCompanyProfile | null;
 };
 
@@ -1019,6 +1078,13 @@ function resolveCashItemMargin(item: CashReportDocumentItem): { costTotal: numbe
   };
 }
 
+function resolveCashVehicleSnapshot(doc: CashReportDocument): { plate: string; brand: string; model: string } {
+  const plate = String(doc.vehicle_plate_snapshot ?? '').trim() || '-';
+  const brand = String(doc.vehicle_brand_snapshot ?? '').trim() || '-';
+  const model = String(doc.vehicle_model_snapshot ?? '').trim() || '-';
+  return { plate, brand, model };
+}
+
 export function buildCashReportHtml80mm(
   data: CashReportPrintData,
   options?: { embedded?: boolean },
@@ -1039,6 +1105,9 @@ export function buildCashReportHtml80mm(
   const productMap = new Map<string, {
     documentKind: string;
     documentNumber: string;
+    vehiclePlate: string;
+    vehicleBrand: string;
+    vehicleModel: string;
     description: string;
     unitCode: string;
     paymentMethod: string;
@@ -1049,11 +1118,15 @@ export function buildCashReportHtml80mm(
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
+    const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
+    const vehiclePlate = vehicleSnapshot.plate;
+    const vehicleBrand = vehicleSnapshot.brand;
+    const vehicleModel = vehicleSnapshot.model;
     const paymentMethod = (doc.payment_method_name || '').trim() || '-';
     for (const item of doc.items ?? []) {
       const description = (item.description || '').trim() || 'Producto sin descripcion';
       const unitCode = (item.unit_code || '').trim() || '-';
-      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}`;
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
       const current = productMap.get(key);
 
       if (current) {
@@ -1065,6 +1138,9 @@ export function buildCashReportHtml80mm(
         productMap.set(key, {
           documentKind,
           documentNumber,
+          vehiclePlate,
+          vehicleBrand,
+          vehicleModel,
           description,
           unitCode,
           paymentMethod,
@@ -1086,6 +1162,11 @@ export function buildCashReportHtml80mm(
           <td class="ta-r" style="font-size:8px">${row.quantity.toFixed(2)}</td>
           <td style="font-size:8px">${escapeHtml(row.documentKind)}</td>
           <td style="font-size:8px">${escapeHtml(row.documentNumber)}</td>
+          ${data.showVehicleInfo ? `<td style="font-size:8px" class="vehicle-cell">
+            <div><b>Placa:</b> ${escapeHtml(row.vehiclePlate)}</div>
+            <div><b>Marca:</b> ${escapeHtml(row.vehicleBrand)}</div>
+            <div><b>Modelo:</b> ${escapeHtml(row.vehicleModel)}</div>
+          </td>` : ''}
           <td class="ta-r" style="font-size:8px;font-weight:700">${formatMoney(row.amount)}</td>
           <td class="ta-r" style="font-size:8px;color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmount)}</td>
         </tr>`,
@@ -1120,11 +1201,14 @@ export function buildCashReportHtml80mm(
           .label { flex: 1.5; }
           .value { text-align: right; flex: 1; }
           table { width: 100%; border-collapse: collapse; margin: 1mm 0; }
+          .product-table { table-layout: fixed; }
           th { text-align: left; font-weight: 700; font-size: 8px; border-bottom: 1px solid #000; padding: 1mm 0; }
           td { padding: 0.8mm 1mm; font-size: 9px; vertical-align: top; }
           .ta-r { text-align: right; }
           .ta-c { text-align: center; }
           .total-row { font-weight: 700; border-top: 1px solid #000; }
+          .vehicle-cell b { font-weight: 700; }
+          .vehicle-cell div { line-height: 1.25; }
           .footer { text-align: center; font-size: 8px; color: #444; margin-top: 4mm; }
         </style>
       </head>
@@ -1180,11 +1264,11 @@ export function buildCashReportHtml80mm(
           ${productRows ? `
           <div class="section">
             <div class="section-title">PRODUCTOS VENDIDOS</div>
-            <table>
-              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th><th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
+            <table class="product-table">
+              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
               <tbody>
                 ${productRows}
-                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="2"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
+                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
               </tbody>
             </table>
           </div>` : ''}
@@ -1215,6 +1299,9 @@ export function buildCashReportHtmlA4(
   const productMap = new Map<string, {
     documentKind: string;
     documentNumber: string;
+    vehiclePlate: string;
+    vehicleBrand: string;
+    vehicleModel: string;
     description: string;
     unitCode: string;
     paymentMethod: string;
@@ -1225,11 +1312,15 @@ export function buildCashReportHtmlA4(
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
+    const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
+    const vehiclePlate = vehicleSnapshot.plate;
+    const vehicleBrand = vehicleSnapshot.brand;
+    const vehicleModel = vehicleSnapshot.model;
     const paymentMethod = (doc.payment_method_name || '').trim() || '-';
     for (const item of doc.items ?? []) {
       const description = (item.description || '').trim() || 'Producto sin descripcion';
       const unitCode = (item.unit_code || '').trim() || '-';
-      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}`;
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
       const current = productMap.get(key);
 
       if (current) {
@@ -1241,6 +1332,9 @@ export function buildCashReportHtmlA4(
         productMap.set(key, {
           documentKind,
           documentNumber,
+          vehiclePlate,
+          vehicleBrand,
+          vehicleModel,
           description,
           unitCode,
           paymentMethod,
@@ -1263,6 +1357,7 @@ export function buildCashReportHtmlA4(
         <td class="ta-r">${row.quantity.toFixed(3)}</td>
         <td>${escapeHtml(row.documentKind)}</td>
         <td>${escapeHtml(row.documentNumber)}</td>
+        ${data.showVehicleInfo ? `<td class="cash-vehicle-cell"><div><b>Placa:</b> ${escapeHtml(row.vehiclePlate)}</div><div><b>Marca:</b> ${escapeHtml(row.vehicleBrand)}</div><div><b>Modelo:</b> ${escapeHtml(row.vehicleModel)}</div></td>` : ''}
         <td class="ta-r">S/ ${formatMoney(row.amount)}</td>
         <td class="ta-r" style="color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(row.marginAmount)}</td>
       </tr>`,
@@ -1299,11 +1394,14 @@ export function buildCashReportHtmlA4(
           .section { border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
           .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #1e40af; border-bottom: 1px solid #dbeafe; padding-bottom: 4px; margin-bottom: 8px; }
           table { width: 100%; border-collapse: collapse; }
+          .cash-products-table { table-layout: fixed; }
           thead th { background: #1e40af; color: #fff; font-size: 10px; text-align: left; padding: 6px 7px; }
           tbody td { border-bottom: 1px solid #e5e7eb; padding: 5px 7px; font-size: 11px; vertical-align: top; }
           .ta-r { text-align: right; }
           .ta-c { text-align: center; }
           .total-row { background: #f0f4ff; font-weight: 700; }
+          .cash-vehicle-cell b { font-weight: 700; }
+          .cash-vehicle-cell div { line-height: 1.25; }
           .footer { text-align: center; font-size: 10px; color: #94a3b8; margin-top: 10px; padding-top: 8px; border-top: 1px solid #e5e7eb; }
         </style>
       </head>
@@ -1348,11 +1446,11 @@ export function buildCashReportHtmlA4(
 
           <div class="section">
             <div class="section-title">Productos vendidos en la sesion</div>
-            <table>
-              <thead><tr><th style="width:34%">Producto</th><th style="width:11%">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:8%">Cantidad</th><th style="width:10%">Tipo comprobante</th><th style="width:11%">Serie-correlativo</th><th class="ta-r" style="width:10%">Total</th><th class="ta-r" style="width:10%">Margen</th></tr></thead>
+            <table class="cash-products-table">
+              <thead><tr><th style="width:${data.showVehicleInfo ? '24%' : '30%'}">Producto</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '8%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '10%' : '10%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:18%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '8%' : '10%'}">Total</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '10%'}">Margen</th></tr></thead>
               <tbody>
-                ${productRows || '<tr><td colspan="8" class="ta-c">Sin productos vendidos en la sesion</td></tr>'}
-                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="2"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>
+                ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '9' : '8'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
+                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>
               </tbody>
             </table>
           </div>

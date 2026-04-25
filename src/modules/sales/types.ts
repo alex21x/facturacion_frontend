@@ -30,10 +30,36 @@ export type CommercialDocumentListItem = {
   total: string;
   balance_due: string;
   customer_name: string;
+  customer_vehicle_id?: number | null;
+  vehicle_plate_snapshot?: string | null;
+  vehicle_brand_snapshot?: string | null;
+  vehicle_model_snapshot?: string | null;
   payment_method_name?: string | null;
   has_tributary_conversion?: boolean | string | number;
   has_order_conversion?: boolean | string | number;
   has_items?: boolean | string | number;
+};
+
+export type CommercialDocumentProductDetailRow = {
+  id: number;
+  document_kind: string;
+  document_kind_label?: string | null;
+  series: string;
+  number: number;
+  issue_at: string;
+  status: string;
+  customer_name: string;
+  customer_vehicle_id?: number | null;
+  vehicle_plate_snapshot?: string | null;
+  vehicle_brand_snapshot?: string | null;
+  vehicle_model_snapshot?: string | null;
+  payment_method_name?: string | null;
+  product_id?: number | null;
+  product_description: string;
+  unit_code: string;
+  qty: number | string;
+  unit_price: number | string;
+  line_total: number | string;
 };
 
 export type PaginationMeta = {
@@ -128,6 +154,7 @@ export type UpdateCommercialDocumentPayload = {
   cash_register_id?: number | null;
   due_at?: string | null;
   customer_id?: number;
+  customer_vehicle_id?: number | null;
   currency_id?: number;
   payment_method_id?: number | null;
   notes?: string;
@@ -274,6 +301,16 @@ export type SalesCustomerSuggestion = {
   price_profile_status?: number;
 };
 
+export type SalesCustomerVehicle = {
+  id: number;
+  customer_id: number;
+  plate: string;
+  brand?: string | null;
+  model?: string | null;
+  is_default: boolean;
+  status: number;
+};
+
 export type SalesLookups = {
   document_kinds: SalesDocumentKind[];
   currencies: SalesCurrency[];
@@ -307,6 +344,7 @@ export type SalesLookups = {
     trade_name: string | null;
     address: string | null;
     phone: string | null;
+    email?: string | null;
     logo_url: string | null;
   } | null;
 };
@@ -343,6 +381,7 @@ export type CreateDocumentForm = {
   documentKind: SalesDocumentKind['code'];
   documentKindId?: number | null;
   customerId: number;
+  customerVehicleId?: number | null;
   currencyId: number;
   paymentMethodId: number;
   productId: number | null;

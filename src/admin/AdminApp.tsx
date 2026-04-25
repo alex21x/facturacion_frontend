@@ -1,14 +1,26 @@
-﻿import { useMemo, useState } from 'react';
+﻿import { useMemo, useState, useCallback } from 'react';
 import { login, logout } from '../modules/auth/api';
 import type { AuthSession } from '../modules/auth/types';
 import { CompanyControlView } from '../modules/admin/components/CompanyControlView';
 
 const STORAGE_KEY = 'facturacion.admin.session';
 
+function isSessionExpired(session: AuthSession): boolean {
+  if (!session.expiresAt) return false;
+  return new Date(session.expiresAt).getTime() < Date.now();
+}
+
 function loadSession(): AuthSession | null {
   const raw = typeof window !== 'undefined' ? window.localStorage.getItem(STORAGE_KEY) : null;
   if (!raw) return null;
-  try { return JSON.parse(raw) as AuthSession; } catch { return null; }
+  try {
+    const s = JSON.parse(raw) as AuthSession;
+    if (isSessionExpired(s)) {
+      window.localStorage.removeItem(STORAGE_KEY);
+      return null;
+    }
+    return s;
+  } catch { return null; }
 }
 function saveSession(s: AuthSession) { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); }
 function clearSession() { window.localStorage.removeItem(STORAGE_KEY); }
@@ -107,6 +119,12 @@ export function AdminApp() {
     setSession(null);
   }
 
+  // Called by child views when any API call returns 401 (token expired)
+  const handleUnauthorized = useCallback(() => {
+    clearSession();
+    setSession(null);
+  }, []);
+
   if (!session) {
     return <AdminLogin onSuccess={setSession} />;
   }
@@ -149,7 +167,7 @@ export function AdminApp() {
       </nav>
 
       <main className="adm-content">
-        <CompanyControlView accessToken={session.accessToken} />
+        <CompanyControlView accessToken={session.accessToken} onUnauthorized={handleUnauthorized} />
       </main>
     </div>
   );
