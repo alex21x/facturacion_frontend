@@ -11,8 +11,8 @@ const cmd = target === 'admin'
 
 try {
   execSync(cmd, { stdio: 'inherit', shell: true });
-  if (target === 'admin' && existsSync('dist/admin.html')) {
-    copyFileSync('dist/admin.html', 'dist/index.html');
+  if (target === 'admin' && existsSync('dist-admin/admin.html')) {
+    copyFileSync('dist-admin/admin.html', 'dist-admin/index.html');
   }
 } catch {
   process.exit(1);

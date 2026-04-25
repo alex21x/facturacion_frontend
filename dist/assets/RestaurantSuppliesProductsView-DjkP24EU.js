@@ -1,0 +1,1 @@
+import{j as e}from"./index-D4PTU4Kx.js";import{P as i}from"./ProductsView-D9LKDpzT.js";import"./api-Ci2P5LNK.js";function P({accessToken:r,activeVerticalCode:t=null}){return e.jsx(i,{accessToken:r,activeVerticalCode:t,uiProfile:"RESTAURANT_SUPPLIES",defaultNatureFilter:"SUPPLY"})}export{P as RestaurantSuppliesProductsView};

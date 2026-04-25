@@ -28,11 +28,11 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: 'dist',
+    outDir: 'dist-admin',
     emptyOutDir: true,
     rollupOptions: {
       input: {
-        index: 'admin.html',
+        admin: 'admin.html',
       },
     },
   },

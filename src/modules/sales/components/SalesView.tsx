@@ -52,6 +52,7 @@ import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog'
 import type {
   CommercialDocumentListItem,
   CreateDocumentForm,
+  CommercialDocumentProductDetailRow,
   PaginationMeta,
   SalesCustomerSuggestion,
   SalesCustomerVehicle,

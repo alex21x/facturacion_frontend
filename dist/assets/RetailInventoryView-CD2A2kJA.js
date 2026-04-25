@@ -1,0 +1,1 @@
+import{j as i}from"./index-D4PTU4Kx.js";import{I as e}from"./InventoryView-7zqo9S1x.js";import"./lima-BQBj48Ah.js";import"./api-Ci2P5LNK.js";function u({accessToken:r,warehouseId:o,activeVerticalCode:t=null}){return i.jsx(e,{accessToken:r,warehouseId:o,activeVerticalCode:t,uiProfile:"DEFAULT"})}export{u as RetailInventoryView};

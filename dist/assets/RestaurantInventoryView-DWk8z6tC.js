@@ -1,0 +1,1 @@
+import{j as i}from"./index-D4PTU4Kx.js";import{I as n}from"./InventoryView-7zqo9S1x.js";import"./lima-BQBj48Ah.js";import"./api-Ci2P5LNK.js";function u({accessToken:r,warehouseId:t,activeVerticalCode:o=null}){return i.jsx(n,{accessToken:r,warehouseId:t,activeVerticalCode:o,uiProfile:"RESTAURANT"})}export{u as RestaurantInventoryView};

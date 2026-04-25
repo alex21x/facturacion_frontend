@@ -1,0 +1,1 @@
+import{j as i}from"./index-D4PTU4Kx.js";import{P as o}from"./ProductsView-D9LKDpzT.js";import"./api-Ci2P5LNK.js";function l({accessToken:r,activeVerticalCode:t=null}){return i.jsx(o,{accessToken:r,activeVerticalCode:t,uiProfile:"RETAIL",defaultNatureFilter:"ALL"})}export{l as RetailProductsView};

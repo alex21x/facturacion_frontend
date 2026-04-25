@@ -1,0 +1,1 @@
+import{j as e}from"./index-D4PTU4Kx.js";import{P as o}from"./ProductsView-D9LKDpzT.js";import"./api-Ci2P5LNK.js";function n({accessToken:r,activeVerticalCode:t=null}){return e.jsx(o,{accessToken:r,activeVerticalCode:t,uiProfile:"RESTAURANT_MENU",defaultNatureFilter:"PRODUCT"})}export{n as RestaurantMenuProductsView};
