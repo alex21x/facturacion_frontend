@@ -595,7 +595,7 @@ if (-not (Test-Path $clientConfig)) {
         "PGADMIN_DEFAULT_EMAIL=admin@example.com",
         "PGADMIN_DEFAULT_PASSWORD=Admin123!",
         "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql",
-        "TRANSACTIONAL_CLEANUP_SQL_PATH=..\facturacion_backend\database\sql\clean_transactional_operational.sql",
+        "TRANSACTIONAL_CLEANUP_SQL_PATH=database\sql\clean_transactional_operational.sql",
         "CLEAN_TRANSACTIONAL_ON_RESTORE=true",
         "RUN_MIGRATIONS=true"
     )
@@ -618,7 +618,7 @@ if (-not (Test-ValidEmail -Email $pgadminEmail)) {
 }
 $pgadminPassword = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_DEFAULT_PASSWORD' -DefaultValue 'Admin123!'
 $bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'BOOTSTRAP_SQL_PATH' -DefaultValue '..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql'
-$transactionalCleanupSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -DefaultValue '..\facturacion_backend\database\sql\clean_transactional_operational.sql'
+$transactionalCleanupSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -DefaultValue 'database\sql\clean_transactional_operational.sql'
 $cleanTransactionalOnRestore = Get-ConfigValue -FilePath $clientConfig -Key 'CLEAN_TRANSACTIONAL_ON_RESTORE' -DefaultValue 'true'
 $viteApiBaseUrl = Get-ApiBaseUrlConfigValue -BindHost $dockerBindHost -BackendPort $backendPort
 

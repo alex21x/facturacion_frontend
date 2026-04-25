@@ -10,6 +10,35 @@ function Get-ConfigValue {
     return ($match -split '=',2)[1].Trim()
 }
 
+function Resolve-CleanupSqlPath {
+    param(
+        [string]$FrontendRoot,
+        [string]$ConfiguredPath
+    )
+
+    $candidatePaths = @()
+
+    if ($ConfiguredPath) {
+        $candidatePaths += $ConfiguredPath
+    }
+
+    $candidatePaths += @(
+        'database\sql\clean_transactional_operational.sql',
+        '..\facturacion_backend\database\sql\clean_transactional_operational.sql',
+        '..\payload\facturacion_backend\database\sql\clean_transactional_operational.sql',
+        'payload\facturacion_backend\database\sql\clean_transactional_operational.sql'
+    )
+
+    foreach ($candidatePath in ($candidatePaths | Select-Object -Unique)) {
+        $resolvedPath = Resolve-Path (Join-Path $FrontendRoot $candidatePath) -ErrorAction SilentlyContinue
+        if ($resolvedPath) {
+            return $resolvedPath.Path
+        }
+    }
+
+    return $null
+}
+
 $resolvedComposeFile = Resolve-Path $ComposeFile -ErrorAction SilentlyContinue
 if (-not $resolvedComposeFile) { throw "No se encontro docker-compose.local.yml en: $ComposeFile" }
 $composeFilePath = $resolvedComposeFile.Path
@@ -25,11 +54,11 @@ $pgadminPort = Get-ConfigValue -FilePath $clientConfig -Key 'PGADMIN_PORT' -Defa
 $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_DB' -DefaultValue 'facturacion_v2'
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_USER' -DefaultValue 'facturacion'
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key 'POSTGRES_PASSWORD' -DefaultValue 'facturacion'
-$cleanupSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -DefaultValue '..\facturacion_backend\database\sql\clean_transactional_operational.sql'
+$cleanupSqlPath = Get-ConfigValue -FilePath $clientConfig -Key 'TRANSACTIONAL_CLEANUP_SQL_PATH' -DefaultValue 'database\sql\clean_transactional_operational.sql'
 
-$resolvedCleanupSql = Resolve-Path (Join-Path $frontendRoot $cleanupSqlPath) -ErrorAction SilentlyContinue
+$resolvedCleanupSql = Resolve-CleanupSqlPath -FrontendRoot $frontendRoot -ConfiguredPath $cleanupSqlPath
 if (-not $resolvedCleanupSql) {
-    throw "No se encontro el script SQL de limpieza: $cleanupSqlPath"
+    throw "No se encontro el script SQL de limpieza. Rutas probadas desde '$frontendRoot': $cleanupSqlPath, database\sql\clean_transactional_operational.sql, ..\facturacion_backend\database\sql\clean_transactional_operational.sql, ..\payload\facturacion_backend\database\sql\clean_transactional_operational.sql"
 }
 
 $env:DOCKER_BIND_HOST = $dockerBindHost

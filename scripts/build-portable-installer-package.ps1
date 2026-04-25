@@ -16,6 +16,7 @@ $portableScripts = Join-Path $OutputRoot "scripts"
 $portablePayload = Join-Path $OutputRoot "payload"
 $portableFrontend = Join-Path $portablePayload "facturacion_frontend"
 $portableBackend = Join-Path $portablePayload "facturacion_backend"
+$portableDatabaseSql = Join-Path $OutputRoot "database\sql"
 
 $trackedScripts = @(
     'actualizar-local.bat',
@@ -44,6 +45,7 @@ if (Test-Path $OutputRoot) {
 
 New-Item -ItemType Directory -Path $portableScripts -Force | Out-Null
 New-Item -ItemType Directory -Path $portablePayload -Force | Out-Null
+New-Item -ItemType Directory -Path $portableDatabaseSql -Force | Out-Null
 
 # Copy only the tracked/required scripts. Some historical PS1 filenames are
 # intentionally excluded because Windows Defender/ESET flag them by name even
@@ -68,6 +70,13 @@ robocopy $backendRoot.Path $portableBackend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /
 if ($LASTEXITCODE -ge 8) {
     throw "Fallo copia de backend al paquete portable."
 }
+
+$cleanupSqlSource = Join-Path $backendRoot.Path 'database\sql\clean_transactional_operational.sql'
+if (-not (Test-Path $cleanupSqlSource)) {
+    throw 'Falta el SQL de limpieza transaccional en facturacion_backend\database\sql\clean_transactional_operational.sql'
+}
+
+Copy-Item -Path $cleanupSqlSource -Destination (Join-Path $portableDatabaseSql 'clean_transactional_operational.sql') -Force
 
 $launcher = Join-Path $OutputRoot "INSTALAR-FACTURACION.bat"
 Set-Content -Path $launcher -Value @(
