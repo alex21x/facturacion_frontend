@@ -84,6 +84,77 @@ type CustomersViewProps = {
   accessToken: string;
 };
 
+const PAGE_SIZE = 10;
+
+function PlusColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="10" fill="#E8F9F0" stroke="#86D2A7" strokeWidth="1.4" />
+      <path d="M12 7v10M7 12h10" stroke="#1C9B5F" strokeWidth="2.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function RefreshColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M20 12a8 8 0 1 1-2.1-5.4" stroke="#2A77D8" strokeWidth="2" strokeLinecap="round" />
+      <path d="M20 5v6h-6" stroke="#18A0FB" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.1" fill="#8ED1FF" />
+    </svg>
+  );
+}
+
+function EditColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M4 20h4l10-10-4-4L4 16v4z" fill="#FCE7A4" stroke="#C0840A" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M12 6l4 4" stroke="#9A3412" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M4 20h8" stroke="#CA8A04" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ToggleOffColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="#FEE2E2" stroke="#F87171" strokeWidth="1.6" />
+      <path d="M8 8l8 8" stroke="#B91C1C" strokeWidth="2.1" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ToggleOnColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" fill="#DCFCE7" stroke="#4ADE80" strokeWidth="1.6" />
+      <path d="M8 12l2.6 2.6L16.6 9" stroke="#15803D" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function VehicleColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3.5 14l1.4-4.3A2.8 2.8 0 0 1 7.6 7h8.8a2.8 2.8 0 0 1 2.7 2.2l1.4 4.8" fill="#DBEAFE" stroke="#60A5FA" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M3 14h18v4a1 1 0 0 1-1 1h-1a1 1 0 0 1-1-1v-1H6v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-4z" fill="#BFDBFE" stroke="#3B82F6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="7" cy="15.5" r="1.2" fill="#1D4ED8" />
+      <circle cx="17" cy="15.5" r="1.2" fill="#1D4ED8" />
+    </svg>
+  );
+}
+
+function DeleteColorIcon() {
+  return (
+    <svg className="customers-icon-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M5 7h14" stroke="#DC2626" strokeWidth="1.9" strokeLinecap="round" />
+      <path d="M9 7V5h6v2" fill="#FCA5A5" stroke="#DC2626" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M8 7l1 12h6l1-12" fill="#FEE2E2" stroke="#EF4444" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 11v5M14 11v5" stroke="#B91C1C" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 const EMPTY_FORM: CustomerFormState = {
   doc_type: '',
   customer_type_id: null,
@@ -265,8 +336,50 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   const [vehicleRows, setVehicleRows] = useState<CustomerVehicleRow[]>([]);
   const [vehicleForm, setVehicleForm] = useState<CustomerVehicleFormState>(EMPTY_VEHICLE_FORM);
   const [editingVehicleId, setEditingVehicleId] = useState<number | null>(null);
+  const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
+  const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
+  const [vehiclesCustomer, setVehiclesCustomer] = useState<CustomerRow | null>(null);
+  const [page, setPage] = useState(1);
 
   const activeCount = useMemo(() => rows.filter((row) => Number(row.status) === 1).length, [rows]);
+  const inactiveCount = rows.length - activeCount;
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pagedRows = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return rows.slice(start, start + PAGE_SIZE);
+  }, [rows, page]);
+  const searchHints = useMemo(() => {
+    const suggestions = new Set<string>();
+
+    rows.forEach((row) => {
+      const doc = (row.doc_number ?? '').trim();
+      const name = (row.name ?? '').trim();
+      const trade = (row.trade_name ?? '').trim();
+      const plate = (row.plate ?? '').trim();
+
+      if (doc) {
+        suggestions.add(doc);
+      }
+      if (name) {
+        suggestions.add(name);
+      }
+      if (trade) {
+        suggestions.add(trade);
+      }
+      if (plate) {
+        suggestions.add(plate);
+      }
+      if (doc && name) {
+        suggestions.add(`${doc} - ${name}`);
+      }
+    });
+
+    return Array.from(suggestions).slice(0, 120);
+  }, [rows]);
+
+  useEffect(() => {
+    setPage((prev) => Math.min(prev, totalPages));
+  }, [totalPages]);
 
   async function loadCustomers() {
     setLoading(true);
@@ -278,6 +391,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         status: status === 'all' ? null : Number(status),
       });
       setRows(data);
+      setPage(1);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo cargar clientes');
     } finally {
@@ -324,7 +438,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   }, [accessToken]);
 
   useEffect(() => {
-    if (!workshopVehiclesEnabled || !editingId) {
+    if (!workshopVehiclesEnabled || !isVehicleModalOpen || !vehiclesCustomer) {
       setVehicleRows([]);
       setVehicleForm(EMPTY_VEHICLE_FORM);
       setEditingVehicleId(null);
@@ -333,27 +447,51 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
     (async () => {
       try {
-        const rowsData = await fetchCustomerVehicles(accessToken, editingId);
+        const rowsData = await fetchCustomerVehicles(accessToken, vehiclesCustomer.id);
         setVehicleRows(rowsData);
       } catch (error) {
         setMessage(error instanceof Error ? error.message : 'No se pudo cargar vehiculos del cliente');
       }
     })();
-  }, [accessToken, workshopVehiclesEnabled, editingId]);
+  }, [accessToken, workshopVehiclesEnabled, isVehicleModalOpen, vehiclesCustomer]);
 
   function resetForm() {
     setEditingId(null);
     setForm(EMPTY_FORM);
+  }
+
+  function closeCustomerModal() {
+    resetForm();
+    setIsCustomerModalOpen(false);
+  }
+
+  function openCreateCustomerModal() {
+    resetForm();
+    setMessage('');
+    setIsCustomerModalOpen(true);
+  }
+
+  function closeVehiclesModal() {
     setVehicleRows([]);
     setVehicleForm(EMPTY_VEHICLE_FORM);
     setEditingVehicleId(null);
+    setVehiclesCustomer(null);
+    setIsVehicleModalOpen(false);
   }
 
   function startEdit(row: CustomerRow) {
     setEditingId(row.id);
     setForm(inferFormFromRow(row, customerTypes));
+    setMessage('');
+    setIsCustomerModalOpen(true);
+  }
+
+  function openVehiclesModal(row: CustomerRow) {
+    setVehiclesCustomer(row);
     setVehicleForm(EMPTY_VEHICLE_FORM);
     setEditingVehicleId(null);
+    setMessage('');
+    setIsVehicleModalOpen(true);
   }
 
   function startEditVehicle(row: CustomerVehicleRow) {
@@ -394,7 +532,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         setMessage('Cliente creado correctamente.');
       }
 
-      resetForm();
+      closeCustomerModal();
       await loadCustomers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo guardar cliente');
@@ -415,7 +553,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   async function saveVehicle(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!editingId) {
+    if (!vehiclesCustomer) {
       setMessage('Primero selecciona un cliente para gestionar vehiculos.');
       return;
     }
@@ -430,14 +568,14 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
     try {
       if (editingVehicleId) {
-        await updateCustomerVehicle(accessToken, editingId, editingVehicleId, vehicleForm);
+        await updateCustomerVehicle(accessToken, vehiclesCustomer.id, editingVehicleId, vehicleForm);
         setMessage('Vehiculo actualizado correctamente.');
       } else {
-        await createCustomerVehicle(accessToken, editingId, vehicleForm);
+        await createCustomerVehicle(accessToken, vehiclesCustomer.id, vehicleForm);
         setMessage('Vehiculo creado correctamente.');
       }
 
-      const rowsData = await fetchCustomerVehicles(accessToken, editingId);
+      const rowsData = await fetchCustomerVehicles(accessToken, vehiclesCustomer.id);
       setVehicleRows(rowsData);
       resetVehicleForm();
     } catch (error) {
@@ -448,7 +586,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   }
 
   async function removeVehicle(row: CustomerVehicleRow) {
-    if (!editingId) {
+    if (!vehiclesCustomer) {
       return;
     }
 
@@ -456,8 +594,8 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     setMessage('');
 
     try {
-      await deleteCustomerVehicle(accessToken, editingId, row.id);
-      const rowsData = await fetchCustomerVehicles(accessToken, editingId);
+      await deleteCustomerVehicle(accessToken, vehiclesCustomer.id, row.id);
+      const rowsData = await fetchCustomerVehicles(accessToken, vehiclesCustomer.id);
       setVehicleRows(rowsData);
       if (editingVehicleId === row.id) {
         resetVehicleForm();
@@ -474,9 +612,31 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     <section className="module-panel customers-module">
       <div className="module-header customers-module-header">
         <h3>Clientes</h3>
-        <button type="button" onClick={() => void loadCustomers()} disabled={loading}>
-          Refrescar
-        </button>
+        <div className="workspace-mode-switch customers-header-actions">
+          <button type="button" className="mode-btn mode-btn-active customers-header-btn" onClick={openCreateCustomerModal} disabled={loading}>
+            <PlusColorIcon />
+            Nuevo
+          </button>
+          <button type="button" className="mode-btn customers-header-btn" onClick={() => void loadCustomers()} disabled={loading}>
+            <RefreshColorIcon />
+            Refrescar
+          </button>
+        </div>
+      </div>
+
+      <div className="stat-grid customers-stat-grid">
+        <article>
+          <span>Total clientes</span>
+          <strong>{rows.length}</strong>
+        </article>
+        <article>
+          <span>Activos</span>
+          <strong>{activeCount}</strong>
+        </article>
+        <article>
+          <span>Inactivos</span>
+          <strong>{inactiveCount}</strong>
+        </article>
       </div>
 
       <div className="grid-form entity-filters">
@@ -485,6 +645,8 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
           <input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
+            list="customers-search-hints"
+            autoComplete="off"
             placeholder="Documento, razon social, nombre, placa, marca o modelo"
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
@@ -493,6 +655,11 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
               }
             }}
           />
+          <datalist id="customers-search-hints">
+            {searchHints.map((item) => (
+              <option key={item} value={item} />
+            ))}
+          </datalist>
         </label>
         <label>
           Estado
@@ -509,122 +676,214 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         </div>
       </div>
 
-      <form className="grid-form entity-editor" onSubmit={saveCustomer}>
-        <h4>{editingId ? `Editar cliente #${editingId}` : 'Nuevo cliente'}</h4>
-        <label>
-          Tipo documento
-          <select
-            value={form.customer_type_id ?? ''}
-            onChange={(event) => {
-              const selectedId = Number(event.target.value || 0);
-              const selectedType = customerTypes.find((type) => type.id === selectedId) ?? null;
+      {message && <p className="notice">{message}</p>}
 
-              setForm((prev) => ({
-                ...prev,
-                customer_type_id: selectedType ? selectedType.id : null,
-                doc_type: selectedType ? String(selectedType.sunat_code) : prev.doc_type,
-              }));
-            }}
-          >
-            <option value="">Selecciona tipo</option>
-            {customerTypes.map((type) => (
-              <option key={type.id} value={type.id}>
-                {type.sunat_code} - {type.name}
-              </option>
+      <div className="table-wrap customers-table-wrap">
+        <h4>Catalogo de clientes</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Doc.</th>
+              <th>Nombre</th>
+              <th>Comercial</th>
+              <th>Placa</th>
+              <th>Direccion</th>
+              <th>Perfil precio</th>
+              <th>Estado</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagedRows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.id}</td>
+                <td>{row.doc_type ?? '-'} {row.doc_number ?? ''}</td>
+                <td>{row.name}</td>
+                <td>{row.trade_name ?? '-'}</td>
+                <td>{row.plate ?? '-'}</td>
+                <td>{row.address ?? '-'}</td>
+                <td>
+                  {(row.default_tier_code || row.default_tier_name)
+                    ? `${row.default_tier_code ?? ''} ${row.default_tier_name ?? ''}`.trim()
+                    : 'Sin escala'}
+                  {' | '}Dscto: {Number(row.discount_percent ?? 0).toFixed(2)}%
+                  {' | '}{Number(row.price_profile_status) === 1 ? 'ACTIVO' : 'INACTIVO'}
+                </td>
+                <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
+                <td>
+                  <div className="customers-table-actions">
+                    <button type="button" className="customers-icon-btn customers-icon-btn-edit" title="Editar cliente" onClick={() => startEdit(row)}>
+                      <EditColorIcon />
+                    </button>
+                    <button
+                      type="button"
+                      className={Number(row.status) === 1 ? 'customers-icon-btn customers-icon-btn-toggle is-off' : 'customers-icon-btn customers-icon-btn-toggle is-on'}
+                      title={Number(row.status) === 1 ? 'Desactivar cliente' : 'Activar cliente'}
+                      aria-label={Number(row.status) === 1 ? 'Desactivar cliente' : 'Activar cliente'}
+                      onClick={() => void toggleCustomer(row)}
+                    >
+                      {Number(row.status) === 1 ? (
+                        <ToggleOffColorIcon />
+                      ) : (
+                        <ToggleOnColorIcon />
+                      )}
+                    </button>
+                    {workshopVehiclesEnabled && (
+                      <button type="button" className="customers-icon-btn customers-icon-btn-vehicles" title="Gestionar vehiculos" aria-label="Gestionar vehiculos" onClick={() => openVehiclesModal(row)}>
+                        <VehicleColorIcon />
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
             ))}
-          </select>
-        </label>
-        <label>
-          Numero documento
-          <input value={form.doc_number} onChange={(event) => setForm((prev) => ({ ...prev, doc_number: event.target.value }))} />
-        </label>
-        <label>
-          Razon social / Nombre
-          <input value={form.legal_name} onChange={(event) => setForm((prev) => ({ ...prev, legal_name: event.target.value }))} />
-        </label>
-        <label>
-          Nombre comercial
-          <input value={form.trade_name} onChange={(event) => setForm((prev) => ({ ...prev, trade_name: event.target.value }))} />
-        </label>
-        <label>
-          Nombres
-          <input value={form.first_name} onChange={(event) => setForm((prev) => ({ ...prev, first_name: event.target.value }))} />
-        </label>
-        <label>
-          Apellidos
-          <input value={form.last_name} onChange={(event) => setForm((prev) => ({ ...prev, last_name: event.target.value }))} />
-        </label>
-        <label>
-          Placa
-          <input value={form.plate} onChange={(event) => setForm((prev) => ({ ...prev, plate: event.target.value }))} />
-        </label>
-        <label>
-          Direccion
-          <input value={form.address} onChange={(event) => setForm((prev) => ({ ...prev, address: event.target.value }))} />
-        </label>
-        <label>
-          Estado
-          <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: Number(event.target.value) }))}>
-            <option value={1}>ACTIVO</option>
-            <option value={0}>INACTIVO</option>
-          </select>
-        </label>
-        <label>
-          Escala precio cliente
-          <select
-            value={form.default_tier_id ?? ''}
-            onChange={(event) => {
-              const raw = event.target.value;
-              setForm((prev) => ({
-                ...prev,
-                default_tier_id: raw ? Number(raw) : null,
-              }));
-            }}
-          >
-            <option value="">Sin escala</option>
-            {priceTiers.map((tier) => (
-              <option key={tier.id} value={tier.id}>{tier.code} - {tier.name}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Descuento perfil (%)
-          <input
-            type="number"
-            min={0}
-            max={100}
-            step="0.01"
-            value={form.discount_percent}
-            onChange={(event) => setForm((prev) => ({ ...prev, discount_percent: Number(event.target.value || 0) }))}
-          />
-        </label>
-        <label>
-          Estado perfil precio
-          <select
-            value={form.price_profile_status}
-            onChange={(event) => setForm((prev) => ({ ...prev, price_profile_status: Number(event.target.value) }))}
-          >
-            <option value={1}>ACTIVO</option>
-            <option value={0}>INACTIVO</option>
-          </select>
-        </label>
-        <div className="entity-actions wide">
-          <button type="submit" disabled={loading}>{editingId ? 'Guardar cambios' : 'Crear cliente'}</button>
-          <button type="button" className="danger" onClick={resetForm}>Limpiar</button>
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={9}>No hay clientes para el filtro actual.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+
+        {rows.length > 0 && (
+          <div className="ds-pagination customers-pagination">
+            <button type="button" className="ds-btn-secondary" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1}>
+              Anterior
+            </button>
+            <span className="ds-hint">Pagina {page} de {totalPages}</span>
+            <button type="button" className="ds-btn-secondary" onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} disabled={page >= totalPages}>
+              Siguiente
+            </button>
+          </div>
+        )}
+      </div>
+
+      {isCustomerModalOpen && (
+        <div className="ds-modal-overlay" role="presentation" onClick={closeCustomerModal}>
+          <div className="ds-modal customers-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="ds-modal__header">
+              <h3>{editingId ? `Editar cliente #${editingId}` : 'Nuevo cliente'}</h3>
+              <button type="button" className="ds-btn-close" onClick={closeCustomerModal}>×</button>
+            </div>
+            <div className="ds-modal__body">
+              <form className="grid-form entity-editor customers-modal-form" onSubmit={saveCustomer}>
+                <label>
+                  Tipo documento
+                  <select
+                    value={form.customer_type_id ?? ''}
+                    onChange={(event) => {
+                      const selectedId = Number(event.target.value || 0);
+                      const selectedType = customerTypes.find((type) => type.id === selectedId) ?? null;
+
+                      setForm((prev) => ({
+                        ...prev,
+                        customer_type_id: selectedType ? selectedType.id : null,
+                        doc_type: selectedType ? String(selectedType.sunat_code) : prev.doc_type,
+                      }));
+                    }}
+                  >
+                    <option value="">Selecciona tipo</option>
+                    {customerTypes.map((type) => (
+                      <option key={type.id} value={type.id}>
+                        {type.sunat_code} - {type.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Numero documento
+                  <input value={form.doc_number} onChange={(event) => setForm((prev) => ({ ...prev, doc_number: event.target.value }))} />
+                </label>
+                <label>
+                  Razon social / Nombre
+                  <input value={form.legal_name} onChange={(event) => setForm((prev) => ({ ...prev, legal_name: event.target.value }))} />
+                </label>
+                <label>
+                  Nombre comercial
+                  <input value={form.trade_name} onChange={(event) => setForm((prev) => ({ ...prev, trade_name: event.target.value }))} />
+                </label>
+                <label>
+                  Nombres
+                  <input value={form.first_name} onChange={(event) => setForm((prev) => ({ ...prev, first_name: event.target.value }))} />
+                </label>
+                <label>
+                  Apellidos
+                  <input value={form.last_name} onChange={(event) => setForm((prev) => ({ ...prev, last_name: event.target.value }))} />
+                </label>
+                <label>
+                  Placa
+                  <input value={form.plate} onChange={(event) => setForm((prev) => ({ ...prev, plate: event.target.value }))} />
+                </label>
+                <label>
+                  Direccion
+                  <input value={form.address} onChange={(event) => setForm((prev) => ({ ...prev, address: event.target.value }))} />
+                </label>
+                <label>
+                  Estado
+                  <select value={form.status} onChange={(event) => setForm((prev) => ({ ...prev, status: Number(event.target.value) }))}>
+                    <option value={1}>ACTIVO</option>
+                    <option value={0}>INACTIVO</option>
+                  </select>
+                </label>
+                <label>
+                  Escala precio cliente
+                  <select
+                    value={form.default_tier_id ?? ''}
+                    onChange={(event) => {
+                      const raw = event.target.value;
+                      setForm((prev) => ({
+                        ...prev,
+                        default_tier_id: raw ? Number(raw) : null,
+                      }));
+                    }}
+                  >
+                    <option value="">Sin escala</option>
+                    {priceTiers.map((tier) => (
+                      <option key={tier.id} value={tier.id}>{tier.code} - {tier.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Descuento perfil (%)
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    step="0.01"
+                    value={form.discount_percent}
+                    onChange={(event) => setForm((prev) => ({ ...prev, discount_percent: Number(event.target.value || 0) }))}
+                  />
+                </label>
+                <label>
+                  Estado perfil precio
+                  <select
+                    value={form.price_profile_status}
+                    onChange={(event) => setForm((prev) => ({ ...prev, price_profile_status: Number(event.target.value) }))}
+                  >
+                    <option value={1}>ACTIVO</option>
+                    <option value={0}>INACTIVO</option>
+                  </select>
+                </label>
+                <div className="entity-actions wide">
+                  <button type="submit" disabled={loading}>{editingId ? 'Guardar cambios' : 'Crear cliente'}</button>
+                  <button type="button" className="danger" onClick={closeCustomerModal}>Cancelar</button>
+                </div>
+              </form>
+            </div>
+          </div>
         </div>
-      </form>
+      )}
 
-      {workshopVehiclesEnabled && (
-        <div className="table-wrap customers-vehicles-wrap">
-          <h4>Vehiculos del cliente</h4>
-
-          {!editingId && (
-            <p className="notice">Guarda o edita un cliente para registrar multiples vehiculos.</p>
-          )}
-
-          {editingId && (
-            <>
-              <form className="grid-form entity-editor" onSubmit={saveVehicle}>
+      {workshopVehiclesEnabled && isVehicleModalOpen && vehiclesCustomer && (
+        <div className="ds-modal-overlay" role="presentation" onClick={closeVehiclesModal}>
+          <div className="ds-modal customers-modal customers-vehicles-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="ds-modal__header">
+              <h3>Vehiculos de {vehiclesCustomer.name}</h3>
+              <button type="button" className="ds-btn-close" onClick={closeVehiclesModal}>×</button>
+            </div>
+            <div className="ds-modal__body">
+              <form className="grid-form entity-editor customers-modal-form" onSubmit={saveVehicle}>
                 <label>
                   Placa
                   <input
@@ -709,8 +968,14 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                       <td>{row.year ?? '-'}</td>
                       <td>{row.is_default ? 'SI' : 'NO'}</td>
                       <td>
-                        <button type="button" className="customers-row-action customers-row-action-edit" onClick={() => startEditVehicle(row)}>✏ Editar</button>{' '}
-                        <button type="button" className="customers-row-action customers-row-action-toggle is-danger" onClick={() => void removeVehicle(row)}>🗑 Eliminar</button>
+                        <div className="customers-table-actions">
+                          <button type="button" className="customers-icon-btn customers-icon-btn-edit" title="Editar vehiculo" onClick={() => startEditVehicle(row)}>
+                            <EditColorIcon />
+                          </button>
+                          <button type="button" className="customers-icon-btn customers-icon-btn-delete" title="Eliminar vehiculo" aria-label="Eliminar vehiculo" onClick={() => void removeVehicle(row)}>
+                            <DeleteColorIcon />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -721,77 +986,10 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                   )}
                 </tbody>
               </table>
-            </>
-          )}
+            </div>
+          </div>
         </div>
       )}
-
-      {message && <p className="notice">{message}</p>}
-
-      <div className="stat-grid">
-        <article>
-          <span>Total clientes</span>
-          <strong>{rows.length}</strong>
-        </article>
-        <article>
-          <span>Activos</span>
-          <strong>{activeCount}</strong>
-        </article>
-        <article>
-          <span>Inactivos</span>
-          <strong>{rows.length - activeCount}</strong>
-        </article>
-      </div>
-
-      <div className="table-wrap customers-table-wrap">
-        <h4>Catalogo de clientes</h4>
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Doc.</th>
-              <th>Nombre</th>
-              <th>Comercial</th>
-              <th>Placa</th>
-              <th>Direccion</th>
-              <th>Perfil precio</th>
-              <th>Estado</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.id}>
-                <td>{row.id}</td>
-                <td>{row.doc_type ?? '-'} {row.doc_number ?? ''}</td>
-                <td>{row.name}</td>
-                <td>{row.trade_name ?? '-'}</td>
-                <td>{row.plate ?? '-'}</td>
-                <td>{row.address ?? '-'}</td>
-                <td>
-                  {(row.default_tier_code || row.default_tier_name)
-                    ? `${row.default_tier_code ?? ''} ${row.default_tier_name ?? ''}`.trim()
-                    : 'Sin escala'}
-                  {' | '}Dscto: {Number(row.discount_percent ?? 0).toFixed(2)}%
-                  {' | '}{Number(row.price_profile_status) === 1 ? 'ACTIVO' : 'INACTIVO'}
-                </td>
-                <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
-                <td>
-                  <button type="button" className="customers-row-action customers-row-action-edit" onClick={() => startEdit(row)}>✏ Editar</button>{' '}
-                  <button type="button" className={Number(row.status) === 1 ? 'customers-row-action customers-row-action-toggle is-danger' : 'customers-row-action customers-row-action-toggle is-ok'} onClick={() => void toggleCustomer(row)}>
-                    {Number(row.status) === 1 ? '⏸ Desactivar' : '✓ Activar'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={9}>No hay clientes para el filtro actual.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
     </section>
   );
 }
