@@ -340,7 +340,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "No se pudo reconstruir el stack local."
 }
 
-Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
+Write-Host "Actualizacion en modo persistente: no se reemplaza base de datos ni usuarios." -ForegroundColor Green
 
 if ($runMigrations -eq "true") {
     Write-Host "Aplicando migraciones post-actualizacion..." -ForegroundColor Cyan
@@ -360,12 +360,6 @@ if ($runMigrations -eq "true") {
     if (-not $migrationsApplied) {
         throw "No se pudieron aplicar migraciones tras la actualizacion."
     }
-}
-
-Write-Host "Asegurando credenciales locales del usuario admin..." -ForegroundColor Cyan
-docker compose @composeArgs exec -T backend php artisan tinker --execute "DB::table('auth.users')->where('username','admin')->update(['password_hash'=>Hash::make('Admin123456!'),'updated_at'=>now()]);"
-if ($LASTEXITCODE -ne 0) {
-    throw "No se pudo establecer la clave local del usuario admin."
 }
 
 Write-Host "Actualizacion completada." -ForegroundColor Green

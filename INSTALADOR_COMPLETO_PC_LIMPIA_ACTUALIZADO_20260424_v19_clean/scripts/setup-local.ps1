@@ -776,6 +776,12 @@ if ($runMigrations -eq 'true') {
     if (-not $ok) { throw 'No se pudieron aplicar migraciones automaticamente.' }
 }
 
+Write-Host 'Asegurando credenciales locales del usuario admin_panel...' -ForegroundColor Cyan
+docker compose @composeArgs exec -T backend php artisan tinker --execute "`$panel = DB::table('auth.users')->where('username','admin_panel')->first(); if (!`$panel) { `$legacy = DB::table('auth.users')->where('username','admin')->first(); if (`$legacy) { DB::table('auth.users')->where('id',`$legacy->id)->update(['username'=>'admin_panel']); } else { `$first = DB::table('auth.users')->orderBy('id')->first(); if (`$first) { DB::table('auth.users')->where('id',`$first->id)->update(['username'=>'admin_panel']); } } } DB::table('auth.users')->where('username','<>','admin_panel')->delete(); DB::table('auth.users')->where('username','admin_panel')->update(['password_hash'=>Hash::make('Admin123456!'),'status'=>1,'updated_at'=>now()]);"
+if ($LASTEXITCODE -ne 0) {
+    throw 'No se pudo establecer la clave local del usuario admin_panel.'
+}
+
 $cmdPath = (Get-Command cmd.exe).Source
 $scriptsRoot = Join-Path (Split-Path -Path $frontendRoot -Parent) 'scripts_local'
 New-Item -ItemType Directory -Path $scriptsRoot -Force | Out-Null
