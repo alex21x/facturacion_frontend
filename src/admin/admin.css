@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+
 /* ============================================================
    PORTAL ADMINISTRATIVO — Sistema de Administración
    Estilos completamente independientes del sistema operativo
@@ -9,12 +11,16 @@
 
 body {
   margin: 0;
-  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif;
   background: #0f172a;
   color: #f1f5f9;
   min-height: 100vh;
   font-size: 14px;
   line-height: 1.5;
+}
+
+h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
+  font-family: 'Manrope', 'Plus Jakarta Sans', sans-serif;
 }
 
 /* ── LOGIN PAGE ─────────────────────────────────────────── */
@@ -284,6 +290,85 @@ body {
   margin: 0;
 }
 
+.adm-workspace-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  margin-bottom: 1rem;
+  border: 1px solid #dbe5f3;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 84% 20%, rgba(56, 189, 248, 0.14), transparent 42%),
+    radial-gradient(circle at 16% 100%, rgba(59, 130, 246, 0.1), transparent 44%),
+    linear-gradient(180deg, #ffffff, #f8fbff);
+}
+
+.adm-workspace-kicker {
+  display: inline-block;
+  font-size: 0.66rem;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  font-weight: 800;
+  margin-bottom: 0.45rem;
+}
+
+.adm-workspace-hero h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.08rem;
+}
+
+.adm-workspace-hero p {
+  margin: 0.3rem 0 0;
+  color: #475569;
+  font-size: 0.82rem;
+  max-width: 640px;
+}
+
+.adm-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.adm-kpi-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.adm-kpi-chip {
+  border: 1px solid #d8e4f6;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 0.45rem 0.7rem;
+  min-width: 170px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.adm-kpi-chip__label {
+  font-size: 0.72rem;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.adm-kpi-chip strong {
+  color: #1d4ed8;
+  font-size: 0.86rem;
+}
+
 /* ── CARD ───────────────────────────────────────────────── */
 .adm-card {
   background: #ffffff;
@@ -383,9 +468,250 @@ body {
   gap: 0.65rem;
 }
 
-.adm-form-hint {
-  font-size: 0.8rem;
+.adm-create-layout {
+  display: grid;
+  gap: 0.9rem;
+}
+
+/* ── WIZARD CARD (Alta de empresa) ────────────────────── */
+.adm-wizard-card {
+  background: #ffffff;
+  border: 1px solid #dbe5f3;
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(15, 23, 42, 0.07);
+  overflow: hidden;
+}
+
+.adm-wizard-header {
+  padding: 1.25rem 1.5rem;
+  background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.adm-wizard-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  color: #ffffff;
+  flex-shrink: 0;
+  backdrop-filter: blur(6px);
+}
+
+.adm-wizard-title {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.adm-wizard-label {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.adm-wizard-sub {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.7);
+  margin-top: 0.15rem;
+}
+
+/* Stepper */
+.adm-wizard-stepper {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.adm-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  border: 1.5px solid rgba(255,255,255,0.25);
+  background: transparent;
+  color: rgba(255,255,255,0.6);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 700;
+  transition: all 0.18s;
+}
+
+.adm-wizard-step:hover:not(:disabled) {
+  border-color: rgba(255,255,255,0.6);
+  color: #ffffff;
+}
+
+.adm-wizard-step.is-active {
+  background: rgba(255,255,255,0.2);
+  border-color: rgba(255,255,255,0.8);
+  color: #ffffff;
+  backdrop-filter: blur(6px);
+}
+
+.adm-wizard-step.is-done {
+  background: rgba(52,211,153,0.2);
+  border-color: #34d399;
+  color: #a7f3d0;
+}
+
+.adm-wizard-step__num {
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.7rem;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+
+.adm-wizard-step.is-active .adm-wizard-step__num {
+  background: #ffffff;
+  color: #1e3a8a;
+}
+
+.adm-wizard-step.is-done .adm-wizard-step__num {
+  background: #34d399;
+  color: #065f46;
+}
+
+.adm-wizard-step__label {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+/* Wizard body */
+.adm-wizard-body {
+  padding: 1.5rem;
+  min-height: 320px;
+}
+
+.adm-wizard-step-pane {
+  animation: fadeStepIn 0.18s ease;
+}
+
+@keyframes fadeStepIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.adm-wizard-step-desc {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.825rem;
   color: #64748b;
+  margin: 0 0 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.adm-wizard-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem 1.2rem;
+}
+
+.adm-wizard-divider {
+  grid-column: 1 / -1;
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #2563eb;
+  padding-bottom: 0.4rem;
+  border-bottom: 1.5px solid #dbeafe;
+  margin-top: 0.4rem;
+}
+
+/* Field groups */
+.adm-field-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.adm-field-group--wide {
+  grid-column: 1 / -1;
+}
+
+.adm-field-group label {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #475569;
+  letter-spacing: 0.02em;
+}
+
+.adm-field-group--required label::after {
+  content: ' *';
+  color: #ef4444;
+}
+
+.adm-field-group .adm-input,
+.adm-field-group .adm-select {
+  height: 42px;
+  padding: 0 0.9rem;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 9px;
+  font-size: 0.875rem;
+  color: #1e293b;
+  background: #f8fafc;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  width: 100%;
+}
+
+.adm-field-group .adm-input:focus,
+.adm-field-group .adm-select:focus {
+  border-color: #3b82f6;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+  outline: none;
+}
+
+/* Wizard footer */
+.adm-wizard-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #f1f5f9;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  background: #f8fafc;
+}
+
+.adm-btn-create {
+  background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+  color: #ffffff;
+  padding: 0.6rem 1.4rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+  border-radius: 9px;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(37,99,235,0.35);
+  transition: opacity 0.15s;
+}
+
+.adm-btn-create:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.adm-btn-create:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .adm-input {
@@ -458,6 +784,309 @@ body {
 
 .adm-bulk-count strong {
   color: #1d4ed8;
+}
+
+.adm-toolbar-sticky {
+  position: sticky;
+  top: 8px;
+  z-index: 6;
+  background: #ffffff;
+  border: 1px solid #dbe5f3;
+  border-radius: 10px;
+  padding: 0.7rem;
+}
+
+.adm-hint-inline {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #64748b;
+}
+
+.adm-mark {
+  background: #fde68a;
+  color: #92400e;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+
+/* ── COMPANIES COMPACT LIST ───────────────────────────── */
+.adm-company-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.adm-company-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-bottom: 1px solid #f1f5f9;
+  background: #ffffff;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+  min-height: 54px;
+}
+
+.adm-company-row:last-child {
+  border-bottom: none;
+}
+
+.adm-company-row:hover {
+  background: #f0f7ff;
+}
+
+/* Status dot */
+.adm-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.adm-row-dot--on  { background: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
+.adm-row-dot--off { background: #94a3b8; }
+
+/* Row number */
+.adm-row-num {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  min-width: 1.8rem;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* Main name + trade block */
+.adm-row-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.adm-row-name {
+  font-family: 'Manrope', sans-serif;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adm-row-trade {
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.72rem;
+  color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* RUC */
+.adm-row-ruc {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.78rem;
+  color: #1e40af;
+  white-space: nowrap;
+  flex-shrink: 0;
+  background: #eff6ff;
+  padding: 0.15rem 0.45rem;
+  border-radius: 5px;
+  border: 1px solid #bfdbfe;
+}
+
+/* Meta: rubro badge */
+.adm-row-meta {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Admin username */
+.adm-row-admin {
+  flex-shrink: 0;
+  min-width: 100px;
+  display: flex;
+  align-items: center;
+}
+
+.adm-row-admin-name {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+/* Arrow */
+.adm-row-arrow {
+  font-size: 1.1rem;
+  color: #cbd5e1;
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: color 0.12s;
+}
+
+.adm-company-row:hover .adm-row-arrow {
+  color: #2563eb;
+}
+
+.adm-link-url-block {
+  display: block;
+  max-width: 100%;
+  flex: 1 1 240px;
+}
+
+.adm-company-empty {
+  border: 1px dashed #bfdbfe;
+  border-radius: 10px;
+  color: #64748b;
+  background: #f8fbff;
+  padding: 1.1rem;
+  text-align: center;
+}
+
+.adm-pagination {
+  margin-top: 0.9rem;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.adm-pagination__meta {
+  font-size: 0.78rem;
+  color: #475569;
+  min-width: 130px;
+  text-align: center;
+}
+
+/* ── COMPANY SIDE DRAWER ──────────────────────────────── */
+.adm-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(3px);
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.adm-drawer {
+  width: min(560px, 100vw);
+  height: 100%;
+  background: #ffffff;
+  box-shadow: -6px 0 36px rgba(15,23,42,0.18);
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight 0.22s ease;
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.adm-drawer-header {
+  padding: 1.1rem 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%);
+  flex-shrink: 0;
+}
+
+.adm-drawer-title {
+  font-family: 'Manrope', sans-serif;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.01em;
+}
+
+.adm-drawer-sub {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.78rem;
+  color: rgba(255,255,255,0.65);
+  margin-top: 0.1rem;
+}
+
+.adm-drawer-body {
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.adm-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+  padding: 0.9rem;
+}
+
+.adm-drawer-field-label {
+  display: block;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  font-size: 0.67rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 0.3rem;
+}
+
+.adm-drawer-field-value {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.84rem;
+  color: #1e293b;
+}
+
+.adm-drawer-field-sub {
+  font-size: 0.73rem;
+  color: #64748b;
+  margin-top: 0.2rem;
+}
+
+.adm-drawer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  padding-top: 0.5rem;
+}
+
+.adm-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.adm-detail-tab {
+  border: 1px solid #c9d6ea;
+  background: #ffffff;
+  color: #4b5b76;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 700;
+  padding: 0.34rem 0.78rem;
+  cursor: pointer;
+}
+
+.adm-detail-tab.is-active {
+  background: #2563eb;
+  border-color: #1d4ed8;
+  color: #ffffff;
 }
 
 /* ── BUTTONS ────────────────────────────────────────────── */
@@ -917,4 +1546,177 @@ body {
   border: 1px solid #bfdbfe;
   border-radius: 999px;
   padding: 2px 8px;
+}
+
+/* ── PANEL NAV ─────────────────────────────────────────── */
+.adm-panel-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid #dbe5f3;
+  background: linear-gradient(180deg, #f9fbff, #f3f6fc);
+}
+
+.adm-panel-tab {
+  border: 1px solid #c9d6ea;
+  background: #fff;
+  color: #4b5b76;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.44rem 0.95rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.adm-panel-tab:hover {
+  border-color: #8bb4ea;
+  color: #1f4f8b;
+}
+
+.adm-panel-tab.is-active {
+  background: linear-gradient(145deg, #3b82f6, #2563eb);
+  border-color: #1d4ed8;
+  color: #fff;
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.25);
+}
+
+.adm-credential-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ── RESET CREDENTIAL MODAL ────────────────────────────── */
+.adm-cred-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1400;
+  padding: 16px;
+}
+
+.adm-cred-modal {
+  width: min(700px, 100%);
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #dbe5f3;
+  box-shadow: 0 26px 58px rgba(15, 23, 42, 0.3);
+  overflow: hidden;
+}
+
+.adm-cred-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid #e2e8f0;
+  background: #f8fbff;
+}
+
+.adm-cred-modal-header h4 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 0.96rem;
+}
+
+.adm-btn-close {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 7px;
+  width: 28px;
+  height: 28px;
+}
+
+.adm-btn-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.adm-cred-modal-body {
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.adm-cred-modal-sub {
+  margin: 0;
+  color: #475569;
+  font-size: 0.82rem;
+}
+
+.adm-cred-row {
+  display: grid;
+  gap: 6px;
+}
+
+.adm-cred-label {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.adm-cred-password-wrap {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.adm-copy-ok {
+  border-left: 3px solid #16a34a;
+  background: #dcfce7;
+  color: #166534;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  .adm-workspace-hero {
+    flex-direction: column;
+  }
+
+  .adm-wizard-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .adm-wizard-stepper {
+    flex-wrap: wrap;
+  }
+
+  .adm-hint-inline {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .adm-company-card__meta {
+    grid-template-columns: 1fr;
+  }
+
+  .adm-company-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .adm-pagination {
+    justify-content: space-between;
+  }
+
+  .adm-cred-password-wrap {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
