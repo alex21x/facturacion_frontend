@@ -277,6 +277,7 @@ $frontendBranch = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_BRANCH"
 $backendBranch = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_BRANCH" -DefaultValue "main"
 $composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key "RUN_MIGRATIONS" -DefaultValue "true"
+$allowBootstrapRestoreOnUpdate = Get-ConfigValue -FilePath $clientConfig -Key "ALLOW_BOOTSTRAP_RESTORE_ON_UPDATE" -DefaultValue "false"
 $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST" -DefaultValue "127.0.0.1"
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_PORT" -DefaultValue "8000"
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_PORT" -DefaultValue "5173"
@@ -340,7 +341,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "No se pudo reconstruir el stack local."
 }
 
-Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
+if ($allowBootstrapRestoreOnUpdate -eq "true") {
+    Write-Host "Modo mantenimiento: restaurar bootstrap durante update esta habilitado." -ForegroundColor Yellow
+    Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
+} else {
+    Write-Host "Update en modo seguro: no se restaura bootstrap ni se toca data sensible." -ForegroundColor Green
+}
 
 if ($runMigrations -eq "true") {
     Write-Host "Aplicando migraciones post-actualizacion..." -ForegroundColor Cyan
@@ -362,11 +368,7 @@ if ($runMigrations -eq "true") {
     }
 }
 
-Write-Host "Asegurando credenciales locales del usuario admin..." -ForegroundColor Cyan
-docker compose @composeArgs exec -T backend php artisan tinker --execute "DB::table('auth.users')->where('username','admin')->update(['password_hash'=>Hash::make('Admin123456!'),'updated_at'=>now()]);"
-if ($LASTEXITCODE -ne 0) {
-    throw "No se pudo establecer la clave local del usuario admin."
-}
+Write-Host "Credenciales y usuarios existentes preservados (sin cambios)." -ForegroundColor Green
 
 Write-Host "Actualizacion completada." -ForegroundColor Green
 if ($dockerBindHost -eq "0.0.0.0") {
