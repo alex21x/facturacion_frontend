@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchFeatureToggles } from '../../appcfg/api';
 import { fetchInventoryProducts } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
-import { fetchCustomerAutocomplete, fetchSalesLookups, fetchSeriesNumbers, resolveCustomerByDocument } from '../../sales/api';
-import type { SalesCustomerSuggestion, SalesLookups, SeriesNumber } from '../../sales/types';
 import {
   createRestaurantOrder,
+  fetchRestaurantCustomerAutocomplete,
+  fetchRestaurantBootstrap,
   fetchRestaurantOrders,
   fetchRestaurantTables,
+  resolveRestaurantCustomerByDocument,
   updateRestaurantOrder,
 } from '../api';
 import type {
+  RestaurantCustomerSuggestion,
+  RestaurantBootstrapResponse,
   RestaurantOrderRow,
+  RestaurantSeriesNumber,
   RestaurantTableRow,
 } from '../types';
 
@@ -123,7 +126,7 @@ function TableCard({
 
 export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Props) {
   // ── lookups & tables ──────────────────────────────────────────────────────
-  const [lookups, setLookups] = useState<SalesLookups | null>(null);
+  const [lookups, setLookups] = useState<RestaurantBootstrapResponse | null>(null);
   const [tables, setTables] = useState<RestaurantTableRow[]>([]);
   const [loadingInit, setLoadingInit] = useState(true);
 
@@ -133,9 +136,9 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
   // ── customer autocomplete ─────────────────────────────────────────────────
   const [customerQuery, setCustomerQuery] = useState('');
-  const [customerSuggestions, setCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
+  const [customerSuggestions, setCustomerSuggestions] = useState<RestaurantCustomerSuggestion[]>([]);
   const [resolvingCustomerDocument, setResolvingCustomerDocument] = useState(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<SalesCustomerSuggestion | null>(null);
+  const [selectedCustomer, setSelectedCustomer] = useState<RestaurantCustomerSuggestion | null>(null);
   const customerDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── product search ────────────────────────────────────────────────────────
@@ -156,8 +159,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
   // ── form field overrides ──────────────────────────────────────────────────
   const [seriesId, setSeriesId] = useState<string>('');
-  const [salesOrderSeriesList, setSalesOrderSeriesList] = useState<SeriesNumber[]>([]);
-  const [seriesLoading, setSeriesLoading] = useState(false);
+  const [salesOrderSeriesList, setSalesOrderSeriesList] = useState<RestaurantSeriesNumber[]>([]);
   const [currencyId, setCurrencyId] = useState<string>('');
   const [paymentMethodId, setPaymentMethodId] = useState<string>('');
 
@@ -166,6 +168,8 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('');
   const [orderSearch, setOrderSearch] = useState('');
+  const [orderSearchDebounced, setOrderSearchDebounced] = useState('');
+  const orderSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [restaurantPriceIncludesIgv, setRestaurantPriceIncludesIgv] = useState(true);
 
   // ── feedback ──────────────────────────────────────────────────────────────
@@ -187,26 +191,32 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     void (async () => {
       setLoadingInit(true);
       try {
-        const [lookupsRes, tablesRes] = await Promise.all([
-          fetchSalesLookups(accessToken, { branchId }),
+        const [bootstrapRes, tablesRes] = await Promise.all([
+          fetchRestaurantBootstrap(accessToken, { branchId, warehouseId }),
           fetchRestaurantTables(accessToken, { branchId }),
         ]);
 
         if (cancelled) return;
 
-        setLookups(lookupsRes);
+        setLookups(bootstrapRes);
         setTables(tablesRes.data ?? []);
 
-        // Auto-select defaults
-        const defaultSeries = lookupsRes.document_kinds.find((dk) => dk.code === 'SALES_ORDER');
-        if (defaultSeries) {
-          // We'll pick the series from the series_numbers in lookups when available
-        }
+        setRestaurantPriceIncludesIgv(Boolean(bootstrapRes.restaurant_price_includes_igv));
 
-        const defaultCurrency = lookupsRes.currencies.find((c) => c.is_default) ?? lookupsRes.currencies[0];
+        const salesOrderSeries = (bootstrapRes.series_numbers ?? []).filter((s) => s.document_kind === 'SALES_ORDER' && Boolean(s.is_enabled));
+        setSalesOrderSeriesList(salesOrderSeries);
+        setSeriesId((prev) => {
+          if (prev && salesOrderSeries.some((s) => s.series === prev)) {
+            return prev;
+          }
+          return salesOrderSeries[0]?.series ?? '';
+        });
+
+        // Auto-select defaults
+        const defaultCurrency = bootstrapRes.currencies.find((c) => c.is_default) ?? bootstrapRes.currencies[0];
         if (defaultCurrency) setCurrencyId(String(defaultCurrency.id));
 
-        const defaultPm = lookupsRes.payment_methods[0];
+        const defaultPm = bootstrapRes.payment_methods[0];
         if (defaultPm) setPaymentMethodId(String(defaultPm.id));
       } catch {
         if (!cancelled) setMessage('No se pudo cargar la configuración inicial.');
@@ -216,45 +226,18 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     })();
 
     return () => { cancelled = true; };
-  }, [accessToken, branchId]);
-
-  // ── series lookup for SALES_ORDER by branch/warehouse context ─────────────
-  useEffect(() => {
-    let cancelled = false;
-
-    setSeriesLoading(true);
-    void (async () => {
-      try {
-        const rows = await fetchSeriesNumbers(accessToken, {
-          documentKind: 'SALES_ORDER',
-          branchId,
-          warehouseId,
-        });
-
-        if (cancelled) return;
-
-        const enabled = (rows ?? []).filter((s) => Boolean(s.is_enabled));
-        setSalesOrderSeriesList(enabled);
-        setSeriesId((prev) => {
-          if (prev && enabled.some((s) => s.series === prev)) {
-            return prev;
-          }
-          return enabled[0]?.series ?? '';
-        });
-      } catch {
-        if (!cancelled) {
-          setSalesOrderSeriesList([]);
-          setSeriesId('');
-        }
-      } finally {
-        if (!cancelled) setSeriesLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
   }, [accessToken, branchId, warehouseId]);
+
+  // ── debounce orderSearch ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (orderSearchDebounceRef.current) clearTimeout(orderSearchDebounceRef.current);
+    orderSearchDebounceRef.current = setTimeout(() => {
+      setOrderSearchDebounced(orderSearch);
+    }, 350);
+    return () => {
+      if (orderSearchDebounceRef.current) clearTimeout(orderSearchDebounceRef.current);
+    };
+  }, [orderSearch]);
 
   // ── load active orders ────────────────────────────────────────────────────
   const loadOrders = useCallback(async () => {
@@ -263,7 +246,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
       const res = await fetchRestaurantOrders(accessToken, {
         branchId,
         status: orderStatusFilter,
-        search: orderSearch,
+        search: orderSearchDebounced,
       });
       setOrders(res.data ?? []);
     } catch {
@@ -271,7 +254,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     } finally {
       setOrdersLoading(false);
     }
-  }, [accessToken, branchId, orderStatusFilter, orderSearch]);
+  }, [accessToken, branchId, orderStatusFilter, orderSearchDebounced]);
 
   useEffect(() => {
     void loadOrders();
@@ -299,30 +282,6 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     return () => { bc?.close(); };
   }, [loadOrders]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    void (async () => {
-      try {
-        const featureRows = await fetchFeatureToggles(accessToken, branchId);
-        if (cancelled) {
-          return;
-        }
-
-        const igvFeature = featureRows.find((row) => row.feature_code === 'RESTAURANT_MENU_IGV_INCLUDED');
-        setRestaurantPriceIncludesIgv(igvFeature ? Boolean(igvFeature.is_enabled) : true);
-      } catch {
-        if (!cancelled) {
-          setRestaurantPriceIncludesIgv(true);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [accessToken, branchId]);
-
   // ── customer autocomplete ─────────────────────────────────────────────────
   useEffect(() => {
     if (customerDebounceRef.current) clearTimeout(customerDebounceRef.current);
@@ -336,7 +295,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     customerDebounceRef.current = setTimeout(() => {
       void (async () => {
         try {
-          const results = await fetchCustomerAutocomplete(accessToken, q);
+          const results = await fetchRestaurantCustomerAutocomplete(accessToken, q);
           setCustomerSuggestions(results);
         } catch {
           setCustomerSuggestions([]);
@@ -626,7 +585,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     try {
       setResolvingCustomerDocument(true);
       setMessage('Consultando padron...');
-      const resolved = await resolveCustomerByDocument(accessToken, document);
+      const resolved = await resolveRestaurantCustomerByDocument(accessToken, document);
       setSelectedCustomer(resolved.data);
       setCustomerQuery('');
       setCustomerSuggestions([]);
@@ -869,10 +828,10 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                     className="restaurant-input"
                     value={seriesId}
                     onChange={(e) => setSeriesId(e.target.value)}
-                    disabled={seriesLoading || salesOrderSeriesList.length === 0}
+                    disabled={loadingInit || salesOrderSeriesList.length === 0}
                   >
-                    {seriesLoading && <option value="">Cargando series...</option>}
-                    {!seriesLoading && salesOrderSeriesList.length === 0 && (
+                    {loadingInit && <option value="">Cargando series...</option>}
+                    {!loadingInit && salesOrderSeriesList.length === 0 && (
                       <option value="">Sin series activas</option>
                     )}
                     {salesOrderSeriesList.map((s) => (
@@ -900,7 +859,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                 </label>
               </div>
 
-              {!seriesLoading && salesOrderSeriesList.length === 0 && (
+              {!loadingInit && salesOrderSeriesList.length === 0 && (
                 <p className="notice" style={{ marginTop: '0.25rem' }}>
                   No hay series activas para SALES_ORDER en esta sucursal/almacen. Configura una en Maestros &gt; Series.
                 </p>
@@ -1100,7 +1059,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                 <button
                   type="button"
                   className="restaurant-primary-btn"
-                  disabled={submitting || cart.length === 0 || seriesLoading || salesOrderSeriesList.length === 0}
+                  disabled={submitting || cart.length === 0 || loadingInit || salesOrderSeriesList.length === 0}
                   onClick={() => void handleSubmit()}
                 >
                   {submitting ? (editingOrderId ? 'Actualizando pedido...' : 'Enviando a cocina...') : (editingOrderId ? 'Guardar cambios del pedido' : 'Enviar pedido a cocina')}
