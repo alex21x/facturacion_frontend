@@ -776,6 +776,116 @@ if ($runMigrations -eq 'true') {
     if (-not $ok) { throw 'No se pudieron aplicar migraciones automaticamente.' }
 }
 
+# Keep superadmin credentials deterministic for every fresh/local install.
+$seedSuperAdminSqlPath = Join-Path $env:TEMP 'facturacion_seed_superadmin.sql'
+Set-Content -Path $seedSuperAdminSqlPath -Encoding UTF8 -Value @'
+DO $$
+DECLARE
+    v_now timestamptz := now();
+    v_branch_id bigint;
+    v_role_id bigint;
+    v_user_id bigint;
+BEGIN
+    SELECT id INTO v_branch_id
+    FROM core.branches
+    WHERE company_id = 1 AND is_main = true
+    ORDER BY id
+    LIMIT 1;
+
+    IF v_branch_id IS NULL THEN
+        SELECT id INTO v_branch_id
+        FROM core.branches
+        WHERE company_id = 1
+        ORDER BY id
+        LIMIT 1;
+    END IF;
+
+    IF v_branch_id IS NULL THEN
+        RAISE EXCEPTION 'No existe sucursal para company_id=1';
+    END IF;
+
+    SELECT id INTO v_role_id
+    FROM auth.roles
+    WHERE company_id = 1 AND UPPER(code) = 'ADMIN'
+    ORDER BY id
+    LIMIT 1;
+
+    IF v_role_id IS NULL THEN
+        INSERT INTO auth.roles (company_id, code, name, status)
+        VALUES (1, 'ADMIN', 'Administrador', 1)
+        RETURNING id INTO v_role_id;
+    END IF;
+
+    SELECT id INTO v_user_id
+    FROM auth.users
+    WHERE username = 'admin_panel'
+    ORDER BY id
+    LIMIT 1;
+
+    IF v_user_id IS NULL THEN
+        INSERT INTO auth.users (
+            company_id,
+            branch_id,
+            username,
+            password_hash,
+            first_name,
+            last_name,
+            email,
+            phone,
+            status,
+            created_at,
+            updated_at
+        ) VALUES (
+            1,
+            v_branch_id,
+            'admin_panel',
+            '$2y$10$kt/Rblu2jmRTCMHZ9pMnJez2MNNTiwrkgXYWMAvmNTbH2QbJGe5l.',
+            'Super',
+            'Admin',
+            'admin.panel@demo.local',
+            NULL,
+            1,
+            v_now,
+            v_now
+        ) RETURNING id INTO v_user_id;
+    ELSE
+        UPDATE auth.users
+        SET company_id = 1,
+            branch_id = v_branch_id,
+            password_hash = '$2y$10$kt/Rblu2jmRTCMHZ9pMnJez2MNNTiwrkgXYWMAvmNTbH2QbJGe5l.',
+            first_name = 'Super',
+            last_name = 'Admin',
+            email = 'admin.panel@demo.local',
+            status = 1,
+            updated_at = v_now
+        WHERE id = v_user_id;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM auth.user_roles
+        WHERE user_id = v_user_id AND role_id = v_role_id
+    ) THEN
+        INSERT INTO auth.user_roles (user_id, role_id)
+        VALUES (v_user_id, v_role_id);
+    END IF;
+
+    IF to_regclass('appcfg.admin_portal_users') IS NOT NULL THEN
+        INSERT INTO appcfg.admin_portal_users (user_id, status, created_at, updated_at)
+        VALUES (v_user_id, 1, v_now, v_now)
+        ON CONFLICT (user_id) DO UPDATE
+        SET status = EXCLUDED.status,
+            updated_at = EXCLUDED.updated_at;
+    END IF;
+END;
+$$;
+'@
+
+Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath $seedSuperAdminSqlPath
+if ($LASTEXITCODE -ne 0) {
+    throw 'No se pudo asegurar el superadmin por defecto (admin_panel).'
+}
+
 $cmdPath = (Get-Command cmd.exe).Source
 $scriptsRoot = Join-Path (Split-Path -Path $frontendRoot -Parent) 'scripts_local'
 New-Item -ItemType Directory -Path $scriptsRoot -Force | Out-Null
@@ -794,4 +904,5 @@ if (Test-Path $updateShortcutPath) { Remove-Item $updateShortcutPath -Force }
 if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Force }
 
 Write-Host 'Instalacion completada.' -ForegroundColor Green
+Write-Host 'Superadmin por defecto: usuario admin_panel / clave Admin123456!' -ForegroundColor Cyan
 Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort -PgAdminPort $pgadminPort -PgAdminEmail $pgadminEmail -PgAdminPassword $pgadminPassword
