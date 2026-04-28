@@ -91,10 +91,145 @@ if ($LASTEXITCODE -ne 0) {
 
 docker compose @composeArgs exec -T postgres rm -f /tmp/clean_transactional_operational.sql | Out-Null
 
-Write-Host 'Asegurando credenciales locales del usuario admin_panel...' -ForegroundColor Cyan
-docker compose @composeArgs exec -T backend php artisan tinker --execute "`$panel = DB::table('auth.users')->where('username','admin_panel')->first(); if (!`$panel) { `$legacy = DB::table('auth.users')->where('username','admin')->first(); if (`$legacy) { DB::table('auth.users')->where('id',`$legacy->id)->update(['username'=>'admin_panel']); } else { `$first = DB::table('auth.users')->orderBy('id')->first(); if (`$first) { DB::table('auth.users')->where('id',`$first->id)->update(['username'=>'admin_panel']); } } } DB::table('auth.users')->where('username','<>','admin_panel')->update(['status'=>0,'password_hash'=>Hash::make('DISABLED_' . uniqid()),'updated_at'=>now()]); DB::table('auth.users')->where('username','admin_panel')->update(['password_hash'=>Hash::make('Admin123456!'),'status'=>1,'updated_at'=>now()]);"
+Write-Host 'Asegurando baseline local: superadmin + empresas retail/restaurante...' -ForegroundColor Cyan
+$seedBaseline = @'
+$now = now();
+
+$ensureCompany = function ($id, $taxId, $legalName, $tradeName) use ($now) {
+    $existing = DB::table('core.companies')->where('id', $id)->first();
+    if (!$existing) {
+        DB::table('core.companies')->insert([
+            'id' => $id,
+            'tax_id' => $taxId,
+            'legal_name' => $legalName,
+            'trade_name' => $tradeName,
+            'status' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+    } else {
+        DB::table('core.companies')->where('id', $id)->update([
+            'status' => 1,
+            'updated_at' => $now,
+        ]);
+    }
+};
+
+$ensureBranch = function ($companyId, $code, $name) use ($now) {
+    $main = DB::table('core.branches')
+        ->where('company_id', $companyId)
+        ->where('is_main', true)
+        ->orderBy('id')
+        ->first();
+
+    if ($main) {
+        DB::table('core.branches')->where('id', $main->id)->update([
+            'status' => 1,
+            'updated_at' => $now,
+        ]);
+        return (int) $main->id;
+    }
+
+    return (int) DB::table('core.branches')->insertGetId([
+        'company_id' => $companyId,
+        'code' => $code,
+        'name' => $name,
+        'address' => null,
+        'is_main' => true,
+        'status' => 1,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+};
+
+$ensureRole = function ($companyId) {
+    $role = DB::table('auth.roles')
+        ->where('company_id', $companyId)
+        ->whereRaw("UPPER(code) = 'ADMIN'")
+        ->orderBy('id')
+        ->first();
+
+    if ($role) {
+        return (int) $role->id;
+    }
+
+    return (int) DB::table('auth.roles')->insertGetId([
+        'company_id' => $companyId,
+        'code' => 'ADMIN',
+        'name' => 'Administrador',
+        'status' => 1,
+    ]);
+};
+
+$ensureAdminUser = function ($companyId, $branchId, $username, $firstName, $lastName, $email, $password) use ($now) {
+    $user = DB::table('auth.users')->where('username', $username)->first();
+
+    if (!$user) {
+        $userId = (int) DB::table('auth.users')->insertGetId([
+            'company_id' => $companyId,
+            'branch_id' => $branchId,
+            'username' => $username,
+            'password_hash' => Hash::make($password),
+            'first_name' => $firstName,
+            'last_name' => $lastName,
+            'email' => $email,
+            'phone' => null,
+            'status' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        return $userId;
+    }
+
+    DB::table('auth.users')->where('id', $user->id)->update([
+        'company_id' => $companyId,
+        'branch_id' => $branchId,
+        'password_hash' => Hash::make($password),
+        'first_name' => $firstName,
+        'last_name' => $lastName,
+        'email' => $email,
+        'status' => 1,
+        'updated_at' => $now,
+    ]);
+
+    return (int) $user->id;
+};
+
+$ensureRoleLink = function ($userId, $roleId) {
+    $exists = DB::table('auth.user_roles')->where('user_id', $userId)->where('role_id', $roleId)->exists();
+    if (!$exists) {
+        DB::table('auth.user_roles')->insert(['user_id' => $userId, 'role_id' => $roleId]);
+    }
+};
+
+$ensureCompany(1, '00000000001', 'MSEP PERU SAC', 'SISTEMA');
+$ensureCompany(2, '00000000002', 'DEMO RETAIL', 'RETAIL');
+$ensureCompany(3, '00000000003', 'DEMO RESTAURANTE', 'RESTAURANTE');
+
+$branch1 = $ensureBranch(1, '001', 'Sucursal Principal');
+$branch2 = $ensureBranch(2, '001', 'Sucursal Retail');
+$branch3 = $ensureBranch(3, '001', 'Sucursal Restaurante');
+
+$role1 = $ensureRole(1);
+$role2 = $ensureRole(2);
+$role3 = $ensureRole(3);
+
+$u1 = $ensureAdminUser(1, $branch1, 'admin_panel', 'Super', 'Admin', 'admin.panel@demo.local', 'Admin123456!');
+$u2 = $ensureAdminUser(2, $branch2, 'admin_retail', 'Admin', 'Retail', 'admin.retail@local.test', 'Admin123456!');
+$u3 = $ensureAdminUser(3, $branch3, 'admin_restaurante', 'Admin', 'Restaurante', 'admin.restaurante@local.test', 'Admin123456!');
+
+$ensureRoleLink($u1, $role1);
+$ensureRoleLink($u2, $role2);
+$ensureRoleLink($u3, $role3);
+
+DB::table('appcfg.admin_portal_users')->updateOrInsert(
+    ['user_id' => $u1],
+    ['status' => 1, 'updated_at' => $now, 'created_at' => $now]
+);
+'@
+docker compose @composeArgs exec -T backend php artisan tinker --execute $seedBaseline
 if ($LASTEXITCODE -ne 0) {
-    throw 'No se pudo establecer la clave local del usuario admin_panel tras la limpieza.'
+    throw 'No se pudo asegurar el baseline local tras la limpieza (superadmin + retail + restaurante).'
 }
 
 Write-Host 'Limpieza completada.' -ForegroundColor Green
