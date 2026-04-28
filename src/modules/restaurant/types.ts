@@ -47,6 +47,36 @@ export type RestaurantTablesResponse = {
   allowed_statuses: RestaurantTableStatus[];
 };
 
+export type RestaurantCurrency = {
+  id: number;
+  code: string;
+  name: string;
+  symbol: string;
+  is_default: boolean;
+};
+
+export type RestaurantPaymentMethod = {
+  id: number;
+  code: string;
+  name: string;
+};
+
+export type RestaurantSeriesNumber = {
+  id: number;
+  document_kind: string;
+  series: string;
+  current_number: number;
+  is_enabled: boolean;
+};
+
+export type RestaurantBootstrapResponse = {
+  currencies: RestaurantCurrency[];
+  payment_methods: RestaurantPaymentMethod[];
+  active_igv_rate_percent: number;
+  restaurant_price_includes_igv: boolean;
+  series_numbers: RestaurantSeriesNumber[];
+};
+
 // ---------------------------------------------------------------------------
 // Restaurant orders  (the neutral nucleus behind every vertical's sales flow)
 // ---------------------------------------------------------------------------
@@ -132,4 +162,22 @@ export type CheckoutResult = {
   number: number;
   total: number;
   status: string;
+};
+
+export type RestaurantCustomerSuggestion = {
+  id: number;
+  name: string;
+  doc_number: string | null;
+  doc_type: string | null;
+  trade_name: string | null;
+  plate: string | null;
+  address: string | null;
+  default_tier_id: number | null;
+};
+
+export type ResolveRestaurantCustomerByDocumentResponse = {
+  data: RestaurantCustomerSuggestion;
+  source: 'local' | 'reniec' | 'sunat';
+  created: boolean;
+  message: string;
 };

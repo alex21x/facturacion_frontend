@@ -113,11 +113,40 @@ function featureLabel(code: string): string {
   return code.replace(/_+/g, ' ').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 
+function buildSuggestedAdminUsername(taxId: string, legalName: string): string {
+  const cleanTaxId = (taxId || '').replace(/\D+/g, '');
+  if (cleanTaxId.length >= 6) {
+    return `admin_${cleanTaxId}`;
+  }
+
+  const slugBase = (legalName || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 18);
+
+  return slugBase ? `admin_${slugBase}` : 'admin_empresa';
+}
+
 type Props = { accessToken: string; onUnauthorized?: () => void };
 
+type AdminPanelKey = 'companies' | 'operational' | 'rate' | 'commerce' | 'inventory';
+
+type ResetPreview = {
+  companyName: string;
+  username: string;
+  email: string | null;
+  newPassword: string;
+  generatedAtLabel: string;
+};
+
 export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
+  const PAGE_SIZE = 12;
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [activePanel, setActivePanel] = useState<AdminPanelKey>('companies');
 
   function handleApiError(err: unknown, fallback: string): string {
     const msg = err instanceof Error ? err.message : fallback;
@@ -188,31 +217,67 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     preset_code: 'PRO' as 'BASIC' | 'PRO' | 'ENTERPRISE',
   });
 
-  const [resetModal, setResetModal] = useState<{
-    companyName: string;
-    username: string;
-    email: string | null;
-    newPassword: string;
-  } | null>(null);
+  const [createStep, setCreateStep] = useState<1 | 2 | 3>(1);
+  const [resetModal, setResetModal] = useState<ResetPreview | null>(null);
+  const [detailCompanyId, setDetailCompanyId] = useState<number | null>(null);
+  const [detailTab, setDetailTab] = useState<'general' | 'access' | 'security' | 'history'>('general');
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
+  const [resetPreviewByCompany, setResetPreviewByCompany] = useState<Record<number, ResetPreview>>({});
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
+  const [adminUsernameTouched, setAdminUsernameTouched] = useState(false);
+  const [debouncedSearchText, setDebouncedSearchText] = useState('');
+  const [currentCompanyPage, setCurrentCompanyPage] = useState(1);
+
+  useEffect(() => {
+    if (adminUsernameTouched) return;
+    const suggested = buildSuggestedAdminUsername(createDraft.tax_id, createDraft.legal_name);
+    setCreateDraft(prev => {
+      if (prev.admin_username === suggested) return prev;
+      return { ...prev, admin_username: suggested };
+    });
+  }, [adminUsernameTouched, createDraft.tax_id, createDraft.legal_name]);
 
   async function doResetAdminPassword(companyId: number, companyName: string) {
     if (!confirm(`¿Resetear la contraseña del administrador de "${companyName}"? Se generará una nueva contraseña temporal.`)) return;
     setLoading(true); setMessage(''); setIsError(false);
     try {
       const result = await resetAdminCompanyPassword(accessToken, companyId);
-      setResetModal({ companyName, username: result.username, email: result.email, newPassword: result.new_password });
-      setMessage(`Nueva clave generada para ${companyName}: usuario ${result.username} | clave ${result.new_password}`);
+      const generatedAtLabel = new Intl.DateTimeFormat('es-PE', {
+        dateStyle: 'short',
+        timeStyle: 'short',
+        timeZone: 'America/Lima',
+      }).format(new Date());
+      const preview: ResetPreview = {
+        companyName,
+        username: result.username,
+        email: result.email,
+        newPassword: result.new_password,
+        generatedAtLabel,
+      };
+      setResetPreviewByCompany((prev) => ({
+        ...prev,
+        [companyId]: preview,
+      }));
+      setShowResetPassword(false);
+      setResetPasswordCopied(false);
+      setResetModal(preview);
+      setMessage(`Nueva clave temporal generada para ${companyName}.`);
       setIsError(false);
-      try {
-        void navigator.clipboard.writeText(`Empresa: ${companyName}\nUsuario: ${result.username}\nClave: ${result.new_password}`);
-      } catch {
-        // Ignore clipboard errors; credentials are still visible on screen.
-      }
-      alert(`Nueva contraseña generada\n\nEmpresa: ${companyName}\nUsuario: ${result.username}\nClave: ${result.new_password}`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'No se pudo resetear la contraseña');
       setIsError(true);
     } finally { setLoading(false); }
+  }
+
+  async function copyResetCredentials(preview: ResetPreview) {
+    try {
+      await navigator.clipboard.writeText(`Empresa: ${preview.companyName}\nUsuario: ${preview.username}\nClave temporal: ${preview.newPassword}`);
+      setResetPasswordCopied(true);
+    } catch {
+      setMessage('No se pudo copiar la credencial.');
+      setIsError(true);
+    }
   }
 
   async function loadMatrix() {
@@ -320,6 +385,13 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
 
   useEffect(() => { void loadMatrix(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchText(searchText);
+    }, 220);
+    return () => window.clearTimeout(timeoutId);
+  }, [searchText]);
+
   const allCommerceFeatureCodes = useMemo(
     () => buildCommerceFeatureCodes(commerceMatrix),
     [commerceMatrix]
@@ -361,7 +433,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
 
   const filteredCompanies = useMemo(() => {
     return (matrix?.companies ?? []).filter(company => {
-      const search = searchText.trim().toLowerCase();
+      const search = debouncedSearchText.trim().toLowerCase();
       const bySearch =
         search === '' ||
         company.legal_name.toLowerCase().includes(search) ||
@@ -373,7 +445,11 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         company.assignments.some(a => a.vertical_code === filterVerticalCode && a.is_enabled);
       return bySearch && byVertical;
     });
-  }, [matrix?.companies, searchText, filterVerticalCode]);
+  }, [matrix?.companies, debouncedSearchText, filterVerticalCode]);
+
+  useEffect(() => {
+    setCurrentCompanyPage(1);
+  }, [debouncedSearchText, filterVerticalCode]);
 
   async function toggleOne(companyId: number, isEnabled: boolean) {
     if (!matrix) return;
@@ -659,6 +735,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         admin_email: '',
         admin_phone: '',
       }));
+      setAdminUsernameTouched(false);
       setMessage(`Empresa creada (ID ${result.company_id}) con admin inicial.`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'No se pudo crear la empresa');
@@ -671,12 +748,81 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const totalCompanies  = matrix?.companies.length ?? 0;
   const activeCompanies = matrix?.companies.filter(c => c.active_vertical_code).length ?? 0;
   const totalVerticals  = matrix?.verticals.length ?? 0;
+  const pendingCompanies = totalCompanies - activeCompanies;
+  const filteredCount = filteredCompanies.length;
+  const totalCompanyPages = Math.max(1, Math.ceil(filteredCompanies.length / PAGE_SIZE));
+  const paginatedCompanies = useMemo(() => {
+    const start = (currentCompanyPage - 1) * PAGE_SIZE;
+    return filteredCompanies.slice(start, start + PAGE_SIZE);
+  }, [currentCompanyPage, filteredCompanies]);
+  const detailCompany = useMemo(
+    () => (matrix?.companies ?? []).find((company) => company.company_id === detailCompanyId) ?? null,
+    [detailCompanyId, matrix?.companies]
+  );
+
+  function highlightMatch(text: string | null | undefined) {
+    const value = text ?? '—';
+    const query = debouncedSearchText.trim();
+    if (!query) return <>{value}</>;
+    const lower = value.toLowerCase();
+    const queryLower = query.toLowerCase();
+    const index = lower.indexOf(queryLower);
+    if (index === -1) return <>{value}</>;
+
+    const before = value.slice(0, index);
+    const match = value.slice(index, index + query.length);
+    const after = value.slice(index + query.length);
+    return (
+      <>
+        {before}
+        <mark className="adm-mark">{match}</mark>
+        {after}
+      </>
+    );
+  }
+
+  const panelMeta: Record<AdminPanelKey, { title: string; subtitle: string }> = {
+    companies: {
+      title: 'Empresas y accesos',
+      subtitle: 'Alta, activación, rubros y credenciales desde una sola vista operativa.',
+    },
+    operational: {
+      title: 'Capacidad operativa',
+      subtitle: 'Define límites de sucursales, almacenes y cajas según demanda de cada cliente.',
+    },
+    rate: {
+      title: 'Rate limits',
+      subtitle: 'Controla la carga y aísla impacto por empresa para mantener estabilidad.',
+    },
+    commerce: {
+      title: 'Funcionalidades comerciales',
+      subtitle: 'Activa o pausa módulos de ventas y compras por compañía.',
+    },
+    inventory: {
+      title: 'Inventario avanzado',
+      subtitle: 'Ajusta complejidad, lotes, vencimientos y reglas de stock por empresa.',
+    },
+  };
 
   return (
     <>
       <div className="adm-page-header">
         <h2>Control de Empresas</h2>
         <p>Administración centralizada de rubros, límites, reglas comerciales e inventario por empresa.</p>
+      </div>
+
+      <div className="adm-workspace-hero">
+        <div>
+          <div className="adm-workspace-kicker">Centro de operación</div>
+          <h3>{panelMeta[activePanel].title}</h3>
+          <p>{panelMeta[activePanel].subtitle}</p>
+        </div>
+        <div className="adm-workspace-actions">
+          <button className="adm-btn adm-btn-secondary" type="button" onClick={() => void loadMatrix()} disabled={loading}>
+            Refrescar datos
+          </button>
+          <span className="adm-badge adm-badge-blue">Panel activo: {panelMeta[activePanel].title}</span>
+        </div>
       </div>
 
       {/* Stats */}
@@ -703,90 +849,248 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         </div>
       </div>
 
+      <div className="adm-panel-nav" role="tablist" aria-label="Paneles administrativos">
+        <button type="button" role="tab" aria-selected={activePanel === 'companies'} className={`adm-panel-tab${activePanel === 'companies' ? ' is-active' : ''}`} onClick={() => setActivePanel('companies')}>Empresas</button>
+        <button type="button" role="tab" aria-selected={activePanel === 'operational'} className={`adm-panel-tab${activePanel === 'operational' ? ' is-active' : ''}`} onClick={() => setActivePanel('operational')}>Límites operativos</button>
+        <button type="button" role="tab" aria-selected={activePanel === 'rate'} className={`adm-panel-tab${activePanel === 'rate' ? ' is-active' : ''}`} onClick={() => setActivePanel('rate')}>Rate limits</button>
+        <button type="button" role="tab" aria-selected={activePanel === 'commerce'} className={`adm-panel-tab${activePanel === 'commerce' ? ' is-active' : ''}`} onClick={() => setActivePanel('commerce')}>Funcionalidades</button>
+        <button type="button" role="tab" aria-selected={activePanel === 'inventory'} className={`adm-panel-tab${activePanel === 'inventory' ? ' is-active' : ''}`} onClick={() => setActivePanel('inventory')}>Inventario</button>
+      </div>
+
+      <div className="adm-kpi-strip">
+        <div className="adm-kpi-chip">
+          <span className="adm-kpi-chip__label">Empresas filtradas</span>
+          <strong>{filteredCount}</strong>
+        </div>
+        <div className="adm-kpi-chip">
+          <span className="adm-kpi-chip__label">Pendientes por rubro</span>
+          <strong>{pendingCompanies}</strong>
+        </div>
+        <div className="adm-kpi-chip">
+          <span className="adm-kpi-chip__label">Estado</span>
+          <strong>{loading ? 'Sincronizando...' : 'Actualizado'}</strong>
+        </div>
+      </div>
+
       {message && (
         <div className={`adm-notice ${isError ? 'adm-notice-err' : 'adm-notice-ok'}`}>
           {message}
         </div>
       )}
 
-      <div className="adm-card">
-        <div className="adm-card-header">
-          <h3>Alta de Empresa (Panel Admin)</h3>
-          <div className="adm-card-header-actions">
-            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Crea empresa + sucursal principal + usuario admin</span>
+      {activePanel === 'companies' && (
+      <div className="adm-wizard-card">
+        {/* Wizard header */}
+        <div className="adm-wizard-header">
+          <div className="adm-wizard-title">
+            <div className="adm-wizard-icon">&#xFF0B;</div>
+            <div>
+              <div className="adm-wizard-label">Nueva empresa</div>
+              <div className="adm-wizard-sub">Completa los 3 pasos. Todo se crea en una sola operación.</div>
+            </div>
+          </div>
+          <div className="adm-wizard-stepper">
+            {([1, 2, 3] as const).map(n => (
+              <button
+                key={n}
+                type="button"
+                className={`adm-wizard-step${createStep === n ? ' is-active' : ''}${createStep > n ? ' is-done' : ''}`}
+                onClick={() => setCreateStep(n)}
+                disabled={loading}
+              >
+                <span className="adm-wizard-step__num">{createStep > n ? '✓' : n}</span>
+                <span className="adm-wizard-step__label">
+                  {n === 1 ? 'Empresa' : n === 2 ? 'Estructura' : 'Administrador'}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
-        <div className="adm-card-body">
-          <div className="adm-form-grid">
-            <input className="adm-input" placeholder="RUC" value={createDraft.tax_id} onChange={e => setCreateDraft(prev => ({ ...prev, tax_id: e.target.value }))} />
-            <input className="adm-input" placeholder="Razon social" value={createDraft.legal_name} onChange={e => setCreateDraft(prev => ({ ...prev, legal_name: e.target.value }))} />
-            <input className="adm-input" placeholder="Nombre comercial" value={createDraft.trade_name} onChange={e => setCreateDraft(prev => ({ ...prev, trade_name: e.target.value }))} />
-            <input className="adm-input" placeholder="Email empresa" value={createDraft.email} onChange={e => setCreateDraft(prev => ({ ...prev, email: e.target.value }))} />
-            <input className="adm-input" placeholder="Telefono empresa" value={createDraft.phone} onChange={e => setCreateDraft(prev => ({ ...prev, phone: e.target.value }))} />
-            <input className="adm-input" placeholder="Direccion fiscal" value={createDraft.address} onChange={e => setCreateDraft(prev => ({ ...prev, address: e.target.value }))} />
 
-            <select className="adm-select" value={createDraft.vertical_code} onChange={e => setCreateDraft(prev => ({ ...prev, vertical_code: e.target.value }))}>
-              <option value="">Rubro por defecto</option>
-              {matrix?.verticals.map(v => <option key={`new-${v.code}`} value={v.code}>{v.name} ({v.code})</option>)}
-            </select>
-            <select className="adm-select" value={createDraft.plan_code} onChange={e => setCreateDraft(prev => ({ ...prev, plan_code: e.target.value as 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM' }))}>
-              <option value="BASIC">Plan BASIC</option>
-              <option value="PRO">Plan PRO</option>
-              <option value="ENTERPRISE">Plan ENTERPRISE</option>
-              <option value="CUSTOM">Plan CUSTOM</option>
-            </select>
-            <select className="adm-select" value={createDraft.preset_code} onChange={e => setCreateDraft(prev => ({ ...prev, preset_code: e.target.value as 'BASIC' | 'PRO' | 'ENTERPRISE' }))}>
-              <option value="BASIC">Preset BASIC</option>
-              <option value="PRO">Preset PRO</option>
-              <option value="ENTERPRISE">Preset ENTERPRISE</option>
-            </select>
+        <div className="adm-wizard-body">
+          {/* PASO 1 — Datos empresa */}
+          {createStep === 1 && (
+            <div className="adm-wizard-step-pane">
+              <p className="adm-wizard-step-desc">Datos tributarios y de contacto de la empresa cliente.</p>
+              <div className="adm-wizard-fields">
+                <div className="adm-field-group adm-field-group--required">
+                  <label>RUC</label>
+                  <input className="adm-input" placeholder="Ej: 20123456789" maxLength={11} value={createDraft.tax_id} onChange={e => setCreateDraft(prev => ({ ...prev, tax_id: e.target.value }))} />
+                </div>
+                <div className="adm-field-group adm-field-group--required">
+                  <label>Razón social</label>
+                  <input className="adm-input" placeholder="Nombre legal registrado en SUNAT" value={createDraft.legal_name} onChange={e => setCreateDraft(prev => ({ ...prev, legal_name: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Nombre comercial</label>
+                  <input className="adm-input" placeholder="Nombre que usa en el mercado" value={createDraft.trade_name} onChange={e => setCreateDraft(prev => ({ ...prev, trade_name: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Email empresa</label>
+                  <input className="adm-input" type="email" placeholder="empresa@ejemplo.com" value={createDraft.email} onChange={e => setCreateDraft(prev => ({ ...prev, email: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Teléfono</label>
+                  <input className="adm-input" placeholder="+51 ..." value={createDraft.phone} onChange={e => setCreateDraft(prev => ({ ...prev, phone: e.target.value }))} />
+                </div>
+                <div className="adm-field-group adm-field-group--wide">
+                  <label>Dirección fiscal</label>
+                  <input className="adm-input" placeholder="Av. / Jr. / Calle y número" value={createDraft.address} onChange={e => setCreateDraft(prev => ({ ...prev, address: e.target.value }))} />
+                </div>
+              </div>
+            </div>
+          )}
 
-            <input className="adm-input" placeholder="Codigo sucursal (001)" value={createDraft.main_branch_code} onChange={e => setCreateDraft(prev => ({ ...prev, main_branch_code: e.target.value }))} />
-            <input className="adm-input" placeholder="Nombre sucursal principal" value={createDraft.main_branch_name} onChange={e => setCreateDraft(prev => ({ ...prev, main_branch_name: e.target.value }))} />
-            <select className="adm-select" value={createDraft.create_default_warehouse ? '1' : '0'} onChange={e => setCreateDraft(prev => ({ ...prev, create_default_warehouse: e.target.value === '1' }))}>
-              <option value="1">Crear almacen inicial</option>
-              <option value="0">Sin almacen inicial</option>
-            </select>
-            <input className="adm-input" placeholder="Codigo almacen" value={createDraft.default_warehouse_code} onChange={e => setCreateDraft(prev => ({ ...prev, default_warehouse_code: e.target.value }))} />
-            <input className="adm-input" placeholder="Nombre almacen" value={createDraft.default_warehouse_name} onChange={e => setCreateDraft(prev => ({ ...prev, default_warehouse_name: e.target.value }))} />
-            <select className="adm-select" value={createDraft.create_default_cash_register ? '1' : '0'} onChange={e => setCreateDraft(prev => ({ ...prev, create_default_cash_register: e.target.value === '1' }))}>
-              <option value="1">Crear caja inicial</option>
-              <option value="0">Sin caja inicial</option>
-            </select>
-            <input className="adm-input" placeholder="Codigo caja" value={createDraft.default_cash_register_code} onChange={e => setCreateDraft(prev => ({ ...prev, default_cash_register_code: e.target.value }))} />
-            <input className="adm-input" placeholder="Nombre caja" value={createDraft.default_cash_register_name} onChange={e => setCreateDraft(prev => ({ ...prev, default_cash_register_name: e.target.value }))} />
+          {/* PASO 2 — Estructura y plan */}
+          {createStep === 2 && (
+            <div className="adm-wizard-step-pane">
+              <p className="adm-wizard-step-desc">Define el rubro, plan y estructura operativa inicial (sucursal, almacén, caja).</p>
+              <div className="adm-wizard-fields">
+                <div className="adm-field-group">
+                  <label>Rubro</label>
+                  <select className="adm-select" value={createDraft.vertical_code} onChange={e => setCreateDraft(prev => ({ ...prev, vertical_code: e.target.value }))}>
+                    <option value="">Rubro por defecto</option>
+                    {matrix?.verticals.map(v => <option key={`new-${v.code}`} value={v.code}>{v.name} ({v.code})</option>)}
+                  </select>
+                </div>
+                <div className="adm-field-group">
+                  <label>Plan</label>
+                  <select className="adm-select" value={createDraft.plan_code} onChange={e => setCreateDraft(prev => ({ ...prev, plan_code: e.target.value as 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM' }))}>
+                    <option value="BASIC">BASIC</option>
+                    <option value="PRO">PRO</option>
+                    <option value="ENTERPRISE">ENTERPRISE</option>
+                    <option value="CUSTOM">CUSTOM</option>
+                  </select>
+                </div>
+                <div className="adm-field-group">
+                  <label>Preset de límites</label>
+                  <select className="adm-select" value={createDraft.preset_code} onChange={e => setCreateDraft(prev => ({ ...prev, preset_code: e.target.value as 'BASIC' | 'PRO' | 'ENTERPRISE' }))}>
+                    <option value="BASIC">BASIC</option>
+                    <option value="PRO">PRO</option>
+                    <option value="ENTERPRISE">ENTERPRISE</option>
+                  </select>
+                </div>
 
-            <input className="adm-input" placeholder="Usuario admin inicial" value={createDraft.admin_username} onChange={e => setCreateDraft(prev => ({ ...prev, admin_username: e.target.value }))} />
-            <input className="adm-input" type="password" placeholder="Contrasena admin inicial" value={createDraft.admin_password} onChange={e => setCreateDraft(prev => ({ ...prev, admin_password: e.target.value }))} />
-            <input className="adm-input" placeholder="Nombre admin" value={createDraft.admin_first_name} onChange={e => setCreateDraft(prev => ({ ...prev, admin_first_name: e.target.value }))} />
-            <input className="adm-input" placeholder="Apellido admin" value={createDraft.admin_last_name} onChange={e => setCreateDraft(prev => ({ ...prev, admin_last_name: e.target.value }))} />
-            <input className="adm-input" placeholder="Email admin" value={createDraft.admin_email} onChange={e => setCreateDraft(prev => ({ ...prev, admin_email: e.target.value }))} />
-            <input className="adm-input" placeholder="Telefono admin" value={createDraft.admin_phone} onChange={e => setCreateDraft(prev => ({ ...prev, admin_phone: e.target.value }))} />
-          </div>
+                <div className="adm-wizard-divider">Sucursal principal</div>
+                <div className="adm-field-group">
+                  <label>Código sucursal</label>
+                  <input className="adm-input" placeholder="001" value={createDraft.main_branch_code} onChange={e => setCreateDraft(prev => ({ ...prev, main_branch_code: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Nombre sucursal</label>
+                  <input className="adm-input" placeholder="Sucursal Principal" value={createDraft.main_branch_name} onChange={e => setCreateDraft(prev => ({ ...prev, main_branch_name: e.target.value }))} />
+                </div>
 
-          <div className="adm-toolbar" style={{ marginTop: '1rem' }}>
-            <button className="adm-btn adm-btn-primary" type="button" onClick={() => void createCompanyFromAdmin()} disabled={loading}>
-              Crear empresa desde admin
+                <div className="adm-wizard-divider">Almacén y caja</div>
+                <div className="adm-field-group">
+                  <label>Almacén inicial</label>
+                  <select className="adm-select" value={createDraft.create_default_warehouse ? '1' : '0'} onChange={e => setCreateDraft(prev => ({ ...prev, create_default_warehouse: e.target.value === '1' }))}>
+                    <option value="1">Crear almacén inicial</option>
+                    <option value="0">No crear</option>
+                  </select>
+                </div>
+                <div className="adm-field-group">
+                  <label>Código almacén</label>
+                  <input className="adm-input" placeholder="ALM-001" value={createDraft.default_warehouse_code} onChange={e => setCreateDraft(prev => ({ ...prev, default_warehouse_code: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Nombre almacén</label>
+                  <input className="adm-input" placeholder="Almacén Principal" value={createDraft.default_warehouse_name} onChange={e => setCreateDraft(prev => ({ ...prev, default_warehouse_name: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Caja inicial</label>
+                  <select className="adm-select" value={createDraft.create_default_cash_register ? '1' : '0'} onChange={e => setCreateDraft(prev => ({ ...prev, create_default_cash_register: e.target.value === '1' }))}>
+                    <option value="1">Crear caja inicial</option>
+                    <option value="0">No crear</option>
+                  </select>
+                </div>
+                <div className="adm-field-group">
+                  <label>Código caja</label>
+                  <input className="adm-input" placeholder="CAJA-001" value={createDraft.default_cash_register_code} onChange={e => setCreateDraft(prev => ({ ...prev, default_cash_register_code: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Nombre caja</label>
+                  <input className="adm-input" placeholder="Caja Principal" value={createDraft.default_cash_register_name} onChange={e => setCreateDraft(prev => ({ ...prev, default_cash_register_name: e.target.value }))} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* PASO 3 — Administrador */}
+          {createStep === 3 && (
+            <div className="adm-wizard-step-pane">
+              <p className="adm-wizard-step-desc">Crea el usuario administrador que gestionará esta empresa desde el sistema.</p>
+              <div className="adm-wizard-fields">
+                <div className="adm-field-group adm-field-group--required">
+                  <label>Usuario</label>
+                  <input
+                    className="adm-input"
+                    placeholder="admin_20123456789"
+                    value={createDraft.admin_username}
+                    onChange={e => {
+                      setAdminUsernameTouched(true);
+                      setCreateDraft(prev => ({ ...prev, admin_username: e.target.value }));
+                    }}
+                  />
+                  <small className="adm-field-help">Sugerido: admin_RUC (puedes cambiarlo manualmente).</small>
+                </div>
+                <div className="adm-field-group adm-field-group--required">
+                  <label>Contraseña inicial</label>
+                  <input className="adm-input" type="password" placeholder="Mínimo 8 caracteres" value={createDraft.admin_password} onChange={e => setCreateDraft(prev => ({ ...prev, admin_password: e.target.value }))} />
+                </div>
+                <div className="adm-field-group adm-field-group--required">
+                  <label>Nombre</label>
+                  <input className="adm-input" placeholder="Nombre del admin" value={createDraft.admin_first_name} onChange={e => setCreateDraft(prev => ({ ...prev, admin_first_name: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Apellido</label>
+                  <input className="adm-input" placeholder="Apellido" value={createDraft.admin_last_name} onChange={e => setCreateDraft(prev => ({ ...prev, admin_last_name: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Email admin</label>
+                  <input className="adm-input" type="email" placeholder="admin@empresa.com" value={createDraft.admin_email} onChange={e => setCreateDraft(prev => ({ ...prev, admin_email: e.target.value }))} />
+                </div>
+                <div className="adm-field-group">
+                  <label>Teléfono admin</label>
+                  <input className="adm-input" placeholder="+51 ..." value={createDraft.admin_phone} onChange={e => setCreateDraft(prev => ({ ...prev, admin_phone: e.target.value }))} />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="adm-wizard-footer">
+          {createStep > 1 && (
+            <button className="adm-btn adm-btn-secondary" type="button" disabled={loading} onClick={() => setCreateStep((prev) => (prev - 1) as 1 | 2 | 3)}>
+              ← Anterior
             </button>
-            <span className="adm-form-hint">Se crea tambien sucursal principal y credenciales iniciales del administrador de esa empresa.</span>
-          </div>
+          )}
+          <span style={{ flex: 1 }} />
+          {createStep < 3 ? (
+            <button className="adm-btn adm-btn-primary" type="button" disabled={loading} onClick={() => setCreateStep((prev) => (prev + 1) as 1 | 2 | 3)}>
+              Siguiente →
+            </button>
+          ) : (
+            <button className="adm-btn adm-btn-create" type="button" disabled={loading} onClick={() => void createCompanyFromAdmin()}>
+              ✓ Crear empresa
+            </button>
+          )}
         </div>
       </div>
+      )}
 
+      {activePanel === 'companies' && (
       <div className="adm-card">
         <div className="adm-card-header">
           <h3>Empresas registradas</h3>
           <div className="adm-card-header-actions">
             {loading && <span style={{ fontSize: '0.8rem', color: '#64748b' }}>Procesando...</span>}
-            <button className="adm-btn adm-btn-secondary" type="button" onClick={() => void loadMatrix()} disabled={loading}>
-              ↻ Refrescar
-            </button>
           </div>
         </div>
 
         <div className="adm-card-body">
           {/* Filtros */}
-          <div className="adm-toolbar">
+          <div className="adm-toolbar adm-toolbar-sticky">
             <input
               className="adm-input"
               placeholder="Buscar por empresa o RUC..."
@@ -803,6 +1107,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                 <option key={`filter-${v.code}`} value={v.code}>{v.name} ({v.code})</option>
               ))}
             </select>
+            <span className="adm-hint-inline">Tip: aplica filtro antes de ejecutar acciones masivas.</span>
           </div>
 
           {/* Acción masiva */}
@@ -836,142 +1141,82 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                 ✕ Desactivar filtradas
               </button>
               <span className="adm-bulk-count">
-                Mostrando <strong>{filteredCompanies.length}</strong> de {totalCompanies} empresas
+                Mostrando <strong>{paginatedCompanies.length}</strong> de {filteredCompanies.length} filtradas ({totalCompanies} total)
               </span>
             </div>
           )}
 
-          {/* Tabla */}
-          <div className="adm-table-wrap">
-            <table className="adm-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Empresa</th>
-                  <th>RUC</th>
-                  <th>Admin</th>
-                  <th>Link acceso</th>
-                  <th>Rubro activo</th>
-                  <th>Asignar rubro</th>
-                  <th>Estado empresa</th>
-                  <th>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {!matrix && !loading && (
-                  <tr><td colSpan={9} className="adm-table-empty">Sin datos. Presiona Refrescar para cargar.</td></tr>
-                )}
-                {matrix && filteredCompanies.length === 0 && (
-                  <tr><td colSpan={9} className="adm-table-empty">No hay empresas que coincidan con el filtro.</td></tr>
-                )}
-                {filteredCompanies.map((company, idx) => {
-                  const selected       = selectedVerticalByCompany[company.company_id] ?? company.active_vertical_code ?? matrix?.verticals[0]?.code ?? '';
-                  const selectedAssign = company.assignments.find(a => a.vertical_code === selected);
-                  const isEnabled      = Boolean(selectedAssign?.is_enabled);
-
-                  return (
-                    <tr key={company.company_id}>
-                      <td style={{ color: '#94a3b8', fontSize: '0.75rem' }}>{idx + 1}</td>
-                      <td>
-                        <span className="adm-td-label">{company.legal_name}</span>
-                        {company.trade_name && <span className="adm-td-sub">{company.trade_name}</span>}
-                      </td>
-                      <td style={{ fontFamily: 'monospace', color: '#475569' }}>
-                        {company.tax_id ?? '—'}
-                      </td>
-                      <td>
-                        {company.admin_username ? (
-                          <div>
-                            <span style={{ fontFamily: 'monospace', fontSize: '0.8rem', color: '#1e40af', display: 'block' }}>{company.admin_username}</span>
-                            {company.admin_email && <span style={{ fontSize: '0.73rem', color: '#64748b' }}>{company.admin_email}</span>}
-                          </div>
-                        ) : (
-                          <span className="adm-badge adm-badge-neutral">Sin admin</span>
-                        )}
-                      </td>
-                      <td>
-                        {company.access_url ? (
-                          <div className="adm-link-cell">
-                            <a href={company.access_url} target="_blank" rel="noreferrer" className="adm-link-url">
-                              {company.access_url}
-                            </a>
-                            <button
-                              className="adm-btn adm-btn-secondary"
-                              type="button"
-                              disabled={loading}
-                              onClick={() => void copyCompanyAccessLink(company.company_id)}
-                            >
-                              Copiar
-                            </button>
-                          </div>
-                        ) : (
-                          <span className="adm-badge adm-badge-neutral">Sin link</span>
-                        )}
-                      </td>
-                      <td>
-                        {company.active_vertical_name
-                          ? <span className="adm-badge adm-badge-blue">{company.active_vertical_name}</span>
-                          : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
-                        }
-                      </td>
-                      <td>
-                        <select
-                          className="adm-select"
-                          value={selected}
-                          onChange={e => setSelectedVerticalByCompany(prev => ({ ...prev, [company.company_id]: e.target.value }))}
-                          disabled={loading}
-                          style={{ fontSize: '0.8rem' }}
-                        >
-                          {matrix?.verticals.map(v => (
-                            <option key={`${company.company_id}-${v.code}`} value={v.code}>
-                              {v.name} ({v.code})
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                      <td>
-                        <span className={`adm-badge ${company.company_status === 1 ? 'adm-badge-ok' : 'adm-badge-off'}`}>
-                          {company.company_status === 1 ? 'Activa' : 'Inactiva'}
-                        </span>
-                      </td>
-                      <td>
-                        <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                          <button
-                            className="adm-btn adm-btn-success"
-                            type="button"
-                            disabled={loading || isEnabled}
-                            onClick={() => void toggleOne(company.company_id, true)}
-                          >
-                            Activar
-                          </button>
-                          <button
-                            className="adm-btn adm-btn-danger"
-                            type="button"
-                            disabled={loading || !isEnabled}
-                            onClick={() => void toggleOne(company.company_id, false)}
-                          >
-                            Desactivar
-                          </button>
-                          <button
-                            className="adm-btn adm-btn-secondary"
-                            type="button"
-                            disabled={loading || !company.admin_username}
-                            title={company.admin_username ? 'Generar nueva contraseña para el admin' : 'Esta empresa no tiene admin registrado'}
-                            onClick={() => void doResetAdminPassword(company.company_id, company.legal_name)}
-                          >
-                            Reset pass
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="adm-company-list">
+            {!matrix && !loading && (
+              <div className="adm-company-empty">Sin datos. Refresca para cargar.</div>
+            )}
+            {matrix && filteredCompanies.length === 0 && (
+              <div className="adm-company-empty">Ninguna empresa coincide con el filtro.</div>
+            )}
+            {paginatedCompanies.map((company, idx) => {
+              const isActive = company.company_status === 1;
+              return (
+                <button
+                  key={company.company_id}
+                  type="button"
+                  className="adm-company-row"
+                  onClick={() => {
+                    setDetailTab('general');
+                    setDetailCompanyId(company.company_id);
+                    setDetailDrawerOpen(true);
+                  }}
+                >
+                  <span className={`adm-row-dot${isActive ? ' adm-row-dot--on' : ' adm-row-dot--off'}`} />
+                  <span className="adm-row-num">{(currentCompanyPage - 1) * PAGE_SIZE + idx + 1}</span>
+                  <span className="adm-row-main">
+                    <span className="adm-row-name">{highlightMatch(company.legal_name)}</span>
+                    {company.trade_name && <span className="adm-row-trade">{highlightMatch(company.trade_name)}</span>}
+                  </span>
+                  <span className="adm-row-ruc">{highlightMatch(company.tax_id)}</span>
+                  <span className="adm-row-meta">
+                    {company.active_vertical_name
+                      ? <span className="adm-badge adm-badge-blue">{company.active_vertical_name}</span>
+                      : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
+                    }
+                  </span>
+                  <span className="adm-row-admin">
+                    {company.admin_username
+                      ? <span className="adm-row-admin-name">{company.admin_username}</span>
+                      : <span className="adm-badge adm-badge-neutral">Sin admin</span>
+                    }
+                  </span>
+                  <span className="adm-row-arrow">›</span>
+                </button>
+              );
+            })}
           </div>
+
+          {filteredCompanies.length > PAGE_SIZE && (
+            <div className="adm-pagination">
+              <button
+                className="adm-btn adm-btn-secondary"
+                type="button"
+                disabled={currentCompanyPage <= 1}
+                onClick={() => setCurrentCompanyPage((prev) => Math.max(1, prev - 1))}
+              >
+                Anterior
+              </button>
+              <span className="adm-pagination__meta">Página {currentCompanyPage} de {totalCompanyPages}</span>
+              <button
+                className="adm-btn adm-btn-secondary"
+                type="button"
+                disabled={currentCompanyPage >= totalCompanyPages}
+                onClick={() => setCurrentCompanyPage((prev) => Math.min(totalCompanyPages, prev + 1))}
+              >
+                Siguiente
+              </button>
+            </div>
+          )}
         </div>
       </div>
+      )}
 
+      {activePanel === 'operational' && (
       <div className="adm-card">
         <div className="adm-card-header">
           <h3>Límites operativos por empresa</h3>
@@ -1042,7 +1287,9 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           </div>
         </div>
       </div>
+      )}
 
+      {activePanel === 'rate' && (
       <div className="adm-card">
         <div className="adm-card-header">
           <h3>Límites por empresa (aislamiento de carga)</h3>
@@ -1260,8 +1507,10 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           </div>
         </div>
       </div>
+      )}
 
       {/* Commerce features — card-based per-company activation */}
+      {activePanel === 'commerce' && (
       <div className="adm-card">
         <div className="adm-card-header">
           <h3>Activación de funcionalidades por empresa</h3>
@@ -1435,8 +1684,10 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           })()}
         </div>
       </div>
+      )}
 
       {/* Inventory settings matrix */}
+      {activePanel === 'inventory' && (
       <div className="adm-section">
         <div className="adm-section-header">
           <h3>Configuración de inventario por empresa</h3>
@@ -1521,6 +1772,204 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           </table>
         </div>
       </div>
+
+      )}
+
+      {detailCompany && detailDrawerOpen && (() => {
+        const selected = selectedVerticalByCompany[detailCompany.company_id] ?? detailCompany.active_vertical_code ?? matrix?.verticals[0]?.code ?? '';
+        const selectedAssign = detailCompany.assignments.find((assignment) => assignment.vertical_code === selected);
+        const isEnabled = Boolean(selectedAssign?.is_enabled);
+        const resetPreview = resetPreviewByCompany[detailCompany.company_id];
+
+        const closeDrawer = () => { setDetailDrawerOpen(false); setDetailCompanyId(null); };
+
+        return (
+          <div className="adm-drawer-overlay" role="presentation" onClick={closeDrawer}>
+            <div className="adm-drawer" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="adm-drawer-header">
+                <div>
+                  <div className="adm-drawer-title">{detailCompany.legal_name}</div>
+                  <div className="adm-drawer-sub">{detailCompany.tax_id ?? ''}</div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <span className={`adm-badge ${detailCompany.company_status === 1 ? 'adm-badge-ok' : 'adm-badge-off'}`}>
+                    {detailCompany.company_status === 1 ? 'Activa' : 'Inactiva'}
+                  </span>
+                  <button type="button" className="adm-btn-close" onClick={closeDrawer} aria-label="Cerrar">×</button>
+                </div>
+              </div>
+              <div className="adm-drawer-body">
+                <div className="adm-detail-tabs" role="tablist" aria-label="Detalle empresa">
+                  <button type="button" role="tab" aria-selected={detailTab === 'general'} className={`adm-detail-tab${detailTab === 'general' ? ' is-active' : ''}`} onClick={() => setDetailTab('general')}>General</button>
+                  <button type="button" role="tab" aria-selected={detailTab === 'access'} className={`adm-detail-tab${detailTab === 'access' ? ' is-active' : ''}`} onClick={() => setDetailTab('access')}>Acceso</button>
+                  <button type="button" role="tab" aria-selected={detailTab === 'security'} className={`adm-detail-tab${detailTab === 'security' ? ' is-active' : ''}`} onClick={() => setDetailTab('security')}>Seguridad</button>
+                  <button type="button" role="tab" aria-selected={detailTab === 'history'} className={`adm-detail-tab${detailTab === 'history' ? ' is-active' : ''}`} onClick={() => setDetailTab('history')}>Historial</button>
+                </div>
+
+                {detailTab === 'general' && (
+                  <>
+                    <div className="adm-drawer-grid">
+                      <div>
+                        <span className="adm-drawer-field-label">RUC</span>
+                        <div className="adm-drawer-field-value">{detailCompany.tax_id ?? '—'}</div>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Administrador</span>
+                        {detailCompany.admin_username
+                          ? <div className="adm-drawer-field-value">{detailCompany.admin_username}</div>
+                          : <span className="adm-badge adm-badge-neutral">Sin admin</span>
+                        }
+                        {detailCompany.admin_email && <div className="adm-drawer-field-sub">{detailCompany.admin_email}</div>}
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Rubro activo</span>
+                        {detailCompany.active_vertical_name
+                          ? <span className="adm-badge adm-badge-blue">{detailCompany.active_vertical_name}</span>
+                          : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
+                        }
+                      </div>
+                    </div>
+
+                    <div className="adm-drawer-grid">
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <span className="adm-drawer-field-label">Asignar rubro</span>
+                        <select
+                          className="adm-select"
+                          value={selected}
+                          onChange={e => setSelectedVerticalByCompany(prev => ({ ...prev, [detailCompany.company_id]: e.target.value }))}
+                          disabled={loading}
+                        >
+                          {matrix?.verticals.map(v => (
+                            <option key={`${detailCompany.company_id}-${v.code}`} value={v.code}>
+                              {v.name} ({v.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {detailTab === 'access' && (
+                  <div className="adm-drawer-grid">
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <span className="adm-drawer-field-label">Link de acceso</span>
+                      {detailCompany.access_url ? (
+                        <div className="adm-drawer-actions">
+                          <a href={detailCompany.access_url} target="_blank" rel="noreferrer" className="adm-link-url adm-link-url-block">
+                            {detailCompany.access_url}
+                          </a>
+                          <button className="adm-btn adm-btn-secondary" type="button" disabled={loading} onClick={() => void copyCompanyAccessLink(detailCompany.company_id)}>
+                            Copiar link
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="adm-badge adm-badge-neutral">Sin link de acceso</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {detailTab === 'security' && (
+                  <div className="adm-drawer-grid">
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <span className="adm-drawer-field-label">Seguridad</span>
+                      <div className="adm-drawer-actions">
+                        <button
+                          className="adm-btn adm-btn-secondary"
+                          type="button"
+                          disabled={loading || !detailCompany.admin_username}
+                          title={detailCompany.admin_username ? 'Generar nueva contraseña para el admin' : 'Esta empresa no tiene admin registrado'}
+                          onClick={() => void doResetAdminPassword(detailCompany.company_id, detailCompany.legal_name)}
+                        >
+                          Reset pass
+                        </button>
+                        <div className="adm-credential-cell">
+                          <span className="adm-badge adm-badge-neutral">Credencial oculta por defecto</span>
+                          {resetPreview && (
+                            <button
+                              className="adm-btn adm-btn-secondary"
+                              type="button"
+                              disabled={loading}
+                              onClick={() => {
+                                setResetPasswordCopied(false);
+                                setShowResetPassword(false);
+                                setResetModal(resetPreview);
+                              }}
+                            >
+                              Ver clave temporal
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {detailTab === 'history' && (
+                  <div className="adm-drawer-grid">
+                    <div style={{ gridColumn: '1 / -1' }}>
+                      <span className="adm-drawer-field-label">Último evento registrado</span>
+                      {resetPreview
+                        ? <div className="adm-drawer-field-sub">Reset de contraseña temporal en {resetPreview.generatedAtLabel} (Lima).</div>
+                        : <div className="adm-drawer-field-sub">Sin eventos recientes en esta sesión.</div>
+                      }
+                    </div>
+                  </div>
+                )}
+
+                <div className="adm-drawer-actions">
+                  <button className="adm-btn adm-btn-success" type="button" disabled={loading || isEnabled} onClick={() => void toggleOne(detailCompany.company_id, true)}>
+                    Activar
+                  </button>
+                  <button className="adm-btn adm-btn-danger" type="button" disabled={loading || !isEnabled} onClick={() => void toggleOne(detailCompany.company_id, false)}>
+                    Desactivar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {resetModal && (
+        <div className="adm-cred-modal-overlay" role="presentation" onClick={() => setResetModal(null)}>
+          <div className="adm-cred-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="adm-cred-modal-header">
+              <h4>Credencial temporal generada</h4>
+              <button type="button" className="adm-btn-close" onClick={() => setResetModal(null)} aria-label="Cerrar">×</button>
+            </div>
+            <div className="adm-cred-modal-body">
+              <p className="adm-cred-modal-sub">Comparte esta clave con el cliente y solicita cambio inmediato.</p>
+              <div className="adm-cred-row">
+                <span className="adm-cred-label">Empresa</span>
+                <strong>{resetModal.companyName}</strong>
+              </div>
+              <div className="adm-cred-row">
+                <span className="adm-cred-label">Usuario</span>
+                <code>{resetModal.username}</code>
+              </div>
+              <div className="adm-cred-row">
+                <span className="adm-cred-label">Generada en</span>
+                <strong>{resetModal.generatedAtLabel} (Lima)</strong>
+              </div>
+              <div className="adm-cred-row">
+                <span className="adm-cred-label">Password</span>
+                <div className="adm-cred-password-wrap">
+                  <input className="adm-input" readOnly value={showResetPassword ? resetModal.newPassword : '••••••••••••'} />
+                  <button type="button" className="adm-btn adm-btn-secondary" onClick={() => setShowResetPassword((prev) => !prev)}>
+                    {showResetPassword ? 'Ocultar' : 'Ver'}
+                  </button>
+                  <button type="button" className="adm-btn adm-btn-primary" onClick={() => void copyResetCredentials(resetModal)}>
+                    Copiar
+                  </button>
+                </div>
+              </div>
+              {resetPasswordCopied && <div className="adm-copy-ok">Credencial copiada al portapapeles.</div>}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

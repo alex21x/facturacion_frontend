@@ -1,10 +1,13 @@
 import { apiClient } from '../../shared/api/client';
 import type {
+  RestaurantBootstrapResponse,
   CheckoutRestaurantOrderPayload,
   ComandaKitchenStatus,
   CreateRestaurantOrderPayload,
   PaginatedComandasResponse,
   PaginatedRestaurantOrdersResponse,
+  ResolveRestaurantCustomerByDocumentResponse,
+  RestaurantCustomerSuggestion,
   RestaurantTableStatus,
   RestaurantTablesResponse,
 } from './types';
@@ -13,6 +16,59 @@ function authHeaders(accessToken: string): HeadersInit {
   return {
     Authorization: `Bearer ${accessToken}`,
   };
+}
+
+export async function fetchRestaurantBootstrap(
+  accessToken: string,
+  params?: { branchId?: number | null; warehouseId?: number | null }
+): Promise<RestaurantBootstrapResponse> {
+  const query = new URLSearchParams();
+
+  if (params?.branchId) query.set('branch_id', String(params.branchId));
+  if (params?.warehouseId) query.set('warehouse_id', String(params.warehouseId));
+
+  const suffix = query.toString();
+  const path = suffix ? `/api/restaurant/bootstrap?${suffix}` : '/api/restaurant/bootstrap';
+
+  return apiClient.request<RestaurantBootstrapResponse>(path, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function fetchRestaurantCustomerAutocomplete(
+  accessToken: string,
+  queryText: string
+): Promise<RestaurantCustomerSuggestion[]> {
+  const query = new URLSearchParams();
+  query.set('q', queryText);
+  query.set('limit', '12');
+
+  const response = await apiClient.request<{ data: RestaurantCustomerSuggestion[] }>(
+    `/api/sales/customers/autocomplete?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response.data;
+}
+
+export async function resolveRestaurantCustomerByDocument(
+  accessToken: string,
+  document: string
+): Promise<ResolveRestaurantCustomerByDocumentResponse> {
+  const query = new URLSearchParams();
+  query.set('document', document);
+
+  return apiClient.request<ResolveRestaurantCustomerByDocumentResponse>(
+    `/api/sales/customers/resolve-document?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
 }
 
 export async function fetchComandas(

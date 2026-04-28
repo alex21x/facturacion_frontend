@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { checkoutRestaurantOrder, fetchComandas, updateComandaStatus } from '../api';
-import type { CheckoutRestaurantOrderPayload, ComandaKitchenStatus, ComandaRow } from '../types';
-import { fetchSalesLookups, fetchSeriesNumbers } from '../../sales/api';
-import type { SalesLookups, SeriesNumber } from '../../sales/types';
+import { checkoutRestaurantOrder, fetchComandas, fetchRestaurantBootstrap, updateComandaStatus } from '../api';
+import type {
+  CheckoutRestaurantOrderPayload,
+  ComandaKitchenStatus,
+  ComandaRow,
+  RestaurantBootstrapResponse,
+  RestaurantSeriesNumber,
+} from '../types';
 
 const POLLING_INTERVAL_MS = 30_000;
 
@@ -83,11 +87,11 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   const [checkoutDocKind, setCheckoutDocKind] = useState<'INVOICE' | 'RECEIPT'>('RECEIPT');
   const [checkoutSeries, setCheckoutSeries] = useState('');
   const [checkoutPaymentMethodId, setCheckoutPaymentMethodId] = useState<number | ''>('');
-  const [checkoutSeriesOptions, setCheckoutSeriesOptions] = useState<SeriesNumber[]>([]);
+  const [checkoutSeriesOptions, setCheckoutSeriesOptions] = useState<RestaurantSeriesNumber[]>([]);
   const [checkoutSeriesLoading, setCheckoutSeriesLoading] = useState(false);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
   const [checkoutMessage, setCheckoutMessage] = useState('');
-  const [lookups, setLookups] = useState<SalesLookups | null>(null);
+  const [bootstrap, setBootstrap] = useState<RestaurantBootstrapResponse | null>(null);
 
   // Ticker for time-ago refresh (every minute)
   const [tick, setTick] = useState(0);
@@ -166,19 +170,19 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     return () => { bc?.close(); };
   }, []);
 
-  // Prefetch lookups (payment methods + series) for the checkout modal
+  // Prefetch restaurant bootstrap (payment methods + series) for checkout
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetchSalesLookups(accessToken, { branchId });
-        if (!cancelled) setLookups(res);
+        const res = await fetchRestaurantBootstrap(accessToken, { branchId, warehouseId });
+        if (!cancelled) setBootstrap(res);
       } catch {
-        // silently; checkout modal will still work without prefetched lookups
+        // silently; checkout modal will still work without prefetched bootstrap
       }
     })();
     return () => { cancelled = true; };
-  }, [accessToken, branchId]);
+  }, [accessToken, branchId, warehouseId]);
 
   async function moveStatus(row: ComandaRow, nextStatus: ComandaKitchenStatus) {
     setBusyId(row.id);
@@ -264,37 +268,26 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     }
   }
 
-  // Load series options when checkout modal opens or doc kind changes
+  // Resolve series options from restaurant bootstrap when checkout opens/doc kind changes
   useEffect(() => {
     if (!checkoutTarget) return;
-
-    let cancelled = false;
-    setCheckoutSeriesLoading(true);
     setCheckoutMessage('');
 
-    void (async () => {
-      try {
-        const options = await fetchSeriesNumbers(accessToken, {
-          documentKind: checkoutDocKind,
-          branchId,
-          warehouseId,
-        });
-        if (cancelled) return;
-        const enabled = (options ?? []).filter((s) => Boolean(s.is_enabled));
-        setCheckoutSeriesOptions(enabled);
-        setCheckoutSeries((prev) => {
-          if (prev && enabled.some((s) => s.series === prev)) return prev;
-          return enabled[0]?.series ?? '';
-        });
-      } catch {
-        if (!cancelled) { setCheckoutSeriesOptions([]); setCheckoutSeries(''); }
-      } finally {
-        if (!cancelled) setCheckoutSeriesLoading(false);
-      }
-    })();
+    if (!bootstrap) {
+      setCheckoutSeriesLoading(true);
+      setCheckoutSeriesOptions([]);
+      setCheckoutSeries('');
+      return;
+    }
 
-    return () => { cancelled = true; };
-  }, [checkoutTarget, checkoutDocKind, accessToken, branchId, warehouseId]);
+    setCheckoutSeriesLoading(false);
+    const enabled = (bootstrap.series_numbers ?? []).filter((s) => s.document_kind === checkoutDocKind && Boolean(s.is_enabled));
+    setCheckoutSeriesOptions(enabled);
+    setCheckoutSeries((prev) => {
+      if (prev && enabled.some((s) => s.series === prev)) return prev;
+      return enabled[0]?.series ?? '';
+    });
+  }, [checkoutTarget, checkoutDocKind, bootstrap]);
 
   const statusOptions: Array<{ value: ComandaKitchenStatus | ''; label: string }> = [
     { value: '', label: 'Todos los estados' },
@@ -556,7 +549,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
               </div>
             </label>
 
-            {lookups != null && (
+            {bootstrap != null && (
               <label className="cko-field">
                 <span>Medio de pago <em>(opcional)</em></span>
                 <select
@@ -565,7 +558,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                   onChange={(e) => setCheckoutPaymentMethodId(e.target.value === '' ? '' : Number(e.target.value))}
                 >
                   <option value="">Mantener del pedido</option>
-                  {(lookups.payment_methods ?? []).map((pm) => (
+                  {(bootstrap.payment_methods ?? []).map((pm) => (
                     <option key={pm.id} value={pm.id}>{pm.name}</option>
                   ))}
                 </select>
