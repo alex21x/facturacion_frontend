@@ -344,7 +344,18 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
       setLookups(bootstrapRes);
       setRestaurantPriceIncludesIgv(Boolean(bootstrapRes.restaurant_price_includes_igv));
 
-      const salesOrderSeries = (bootstrapRes.series_numbers ?? []).filter((s) => s.document_kind === 'SALES_ORDER' && Boolean(s.is_enabled));
+      const salesOrderKindId = bootstrapRes.document_kind_ids?.SALES_ORDER ?? null;
+      const salesOrderSeries = (bootstrapRes.series_numbers ?? []).filter((s) => {
+        if (!Boolean(s.is_enabled)) {
+          return false;
+        }
+
+        if (salesOrderKindId !== null && salesOrderKindId !== undefined) {
+          return Number(s.document_kind_id ?? 0) === Number(salesOrderKindId);
+        }
+
+        return String(s.document_kind ?? '').toUpperCase() === 'SALES_ORDER';
+      });
       setSalesOrderSeriesList(salesOrderSeries);
       setSeriesId((prev) => {
         if (prev && salesOrderSeries.some((s) => s.series === prev)) {
