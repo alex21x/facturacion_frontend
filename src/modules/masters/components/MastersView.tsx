@@ -81,6 +81,7 @@ const COMMERCE_FEATURE_LABELS: Record<string, string> = {
   DOC_KIND_DEBIT_NOTE: 'Notas de débito',
   // Restaurante
   RESTAURANT_MENU_IGV_INCLUDED: 'Restaurante: Menú con IGV incluido',
+  RESTAURANT_RECIPES_ENABLED: 'Restaurante: Validar recetas en comandas',
   // Productos e inventario
   PRODUCT_MULTI_UOM: 'Unidades múltiples por producto',
   PRODUCT_UOM_CONVERSIONS: 'Conversión entre unidades de producto',
