@@ -6,10 +6,14 @@ import type {
   CreateRestaurantOrderPayload,
   PaginatedComandasResponse,
   PaginatedRestaurantOrdersResponse,
+  RestaurantOrderRow,
   ResolveRestaurantCustomerByDocumentResponse,
   RestaurantCustomerSuggestion,
   RestaurantTableStatus,
   RestaurantTablesResponse,
+  RecipeLine,
+  RecipeHeader,
+  PreparationRequirementsResponse,
 } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -20,12 +24,13 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchRestaurantBootstrap(
   accessToken: string,
-  params?: { branchId?: number | null; warehouseId?: number | null }
+  params?: { branchId?: number | null; warehouseId?: number | null; mode?: 'full' | 'orders_minimal' }
 ): Promise<RestaurantBootstrapResponse> {
   const query = new URLSearchParams();
 
   if (params?.branchId) query.set('branch_id', String(params.branchId));
   if (params?.warehouseId) query.set('warehouse_id', String(params.warehouseId));
+  if (params?.mode) query.set('mode', params.mode);
 
   const suffix = query.toString();
   const path = suffix ? `/api/restaurant/bootstrap?${suffix}` : '/api/restaurant/bootstrap';
@@ -161,7 +166,7 @@ export async function updateRestaurantTable(
 
 export async function fetchRestaurantOrders(
   accessToken: string,
-  params?: { branchId?: number | null; status?: string; search?: string; page?: number; perPage?: number }
+  params?: { branchId?: number | null; status?: string; search?: string; page?: number; perPage?: number; includeItems?: boolean }
 ): Promise<PaginatedRestaurantOrdersResponse> {
   const query = new URLSearchParams();
 
@@ -170,6 +175,7 @@ export async function fetchRestaurantOrders(
   if (params?.search && params.search.trim() !== '') query.set('search', params.search.trim());
   if (params?.page && params.page > 0) query.set('page', String(params.page));
   if (params?.perPage && params.perPage > 0) query.set('per_page', String(params.perPage));
+  if (params?.includeItems) query.set('include_items', '1');
 
   const suffix = query.toString();
   const path = suffix ? `/api/restaurant/orders?${suffix}` : '/api/restaurant/orders';
@@ -178,6 +184,18 @@ export async function fetchRestaurantOrders(
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+}
+
+export async function fetchRestaurantOrderDetail(
+  accessToken: string,
+  orderId: number
+): Promise<RestaurantOrderRow> {
+  const response = await apiClient.request<{ data: RestaurantOrderRow }>(`/api/restaurant/orders/${orderId}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return response.data;
 }
 
 export async function createRestaurantOrder(
@@ -241,4 +259,52 @@ export async function checkoutRestaurantOrder(
     },
     body: JSON.stringify(payload),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Recipe management
+// ---------------------------------------------------------------------------
+
+export async function fetchRestaurantRecipe(
+  accessToken: string,
+  menuProductId: number
+): Promise<RecipeHeader | null> {
+  try {
+    return await apiClient.request<RecipeHeader>(`/api/restaurant/recipes/${menuProductId}`, {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    });
+  } catch (err) {
+    // 404 = no recipe defined yet; return null so UI can start fresh
+    if (err instanceof Error && err.message.includes('404')) return null;
+    throw err;
+  }
+}
+
+export async function upsertRestaurantRecipe(
+  accessToken: string,
+  menuProductId: number,
+  payload: { lines: Omit<RecipeLine, 'ingredient_name'>[]; notes?: string | null }
+): Promise<{ message: string }> {
+  return apiClient.request(`/api/restaurant/recipes/${menuProductId}`, {
+    method: 'PUT',
+    headers: {
+      ...authHeaders(accessToken),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchOrderPreparationRequirements(
+  accessToken: string,
+  orderId: number
+): Promise<PreparationRequirementsResponse> {
+  return apiClient.request<PreparationRequirementsResponse>(
+    `/api/restaurant/orders/${orderId}/preparation-requirements`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
 }

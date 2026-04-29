@@ -181,3 +181,46 @@ export type ResolveRestaurantCustomerByDocumentResponse = {
   created: boolean;
   message: string;
 };
+
+// ---------------------------------------------------------------------------
+// Recipe management
+// ---------------------------------------------------------------------------
+
+export type RecipeLine = {
+  ingredient_product_id: number;
+  ingredient_name?: string;
+  qty_required_base: number;
+  unit_label: string;
+  wastage_percent: number;
+};
+
+export type RecipeHeader = {
+  menu_product_id: number;
+  notes: string | null;
+  is_active: boolean;
+  lines: RecipeLine[];
+};
+
+export type PreparationShortage = {
+  ingredient_product_id: number;
+  name: string;
+  required: number;
+  available: number;
+  unit: string;
+};
+
+export type PreparationIngredientSummary = {
+  ingredient_product_id: number;
+  ingredient_code: string;
+  ingredient_name: string;
+  required_base: number;
+  available_base: number;
+  shortfall_base: number;
+};
+
+export type PreparationRequirementsResponse = {
+  order_id: number;
+  warehouse_id: number;
+  can_prepare: boolean;
+  ingredients_summary: PreparationIngredientSummary[];
+};

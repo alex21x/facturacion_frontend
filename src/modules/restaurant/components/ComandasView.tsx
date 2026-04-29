@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { checkoutRestaurantOrder, fetchComandas, fetchRestaurantBootstrap, updateComandaStatus } from '../api';
+import { checkoutRestaurantOrder, fetchComandas, fetchOrderPreparationRequirements, fetchRestaurantBootstrap, updateComandaStatus } from '../api';
 import type {
   CheckoutRestaurantOrderPayload,
   ComandaKitchenStatus,
   ComandaRow,
+  PreparationRequirementsResponse,
+  PreparationShortage,
   RestaurantBootstrapResponse,
   RestaurantSeriesNumber,
 } from '../types';
@@ -93,6 +95,14 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   const [checkoutMessage, setCheckoutMessage] = useState('');
   const [bootstrap, setBootstrap] = useState<RestaurantBootstrapResponse | null>(null);
 
+  // Preparation requirements modal (shortage warning + detailed view)
+  const [reqsModal, setReqsModal] = useState<{
+    row: ComandaRow;
+    requirements: PreparationRequirementsResponse;
+    shortages: PreparationShortage[];
+    allowStart: boolean;
+  } | null>(null);
+
   // Ticker for time-ago refresh (every minute)
   const [tick, setTick] = useState(0);
   const loadRef = useRef<() => void>(() => {});
@@ -113,6 +123,14 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   }, [rows]);
 
   async function load(silent = false) {
+    if (!branchId) {
+      setRows([]);
+      if (!silent) {
+        setLoading(false);
+      }
+      return;
+    }
+
     if (!silent) setLoading(true);
     setMessage('');
     try {
@@ -170,20 +188,6 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     return () => { bc?.close(); };
   }, []);
 
-  // Prefetch restaurant bootstrap (payment methods + series) for checkout
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetchRestaurantBootstrap(accessToken, { branchId, warehouseId });
-        if (!cancelled) setBootstrap(res);
-      } catch {
-        // silently; checkout modal will still work without prefetched bootstrap
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [accessToken, branchId, warehouseId]);
-
   async function moveStatus(row: ComandaRow, nextStatus: ComandaKitchenStatus) {
     setBusyId(row.id);
     setMessage('');
@@ -213,6 +217,56 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo actualizar estado');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  // Check preparation requirements before moving to IN_PREP; show warning if stock shortage
+  async function startPrep(row: ComandaRow) {
+    setBusyId(row.id);
+    try {
+      const reqs = await fetchOrderPreparationRequirements(accessToken, row.id);
+
+      const shortages: PreparationShortage[] = (reqs.ingredients_summary ?? [])
+        .filter((line) => Number(line.shortfall_base) > 0)
+        .map((line) => ({
+          ingredient_product_id: line.ingredient_product_id,
+          name: line.ingredient_name || line.ingredient_code || `#${line.ingredient_product_id}`,
+          required: Number(line.required_base),
+          available: Number(line.available_base),
+          unit: 'BASE',
+        }));
+
+      if (shortages.length > 0) {
+        setReqsModal({ row, requirements: reqs, shortages, allowStart: true });
+        setBusyId(null);
+        return;
+      }
+    } catch {
+      // If requirements check fails (e.g. no recipe defined), proceed anyway
+    }
+    void moveStatus(row, 'IN_PREP');
+  }
+
+  async function viewRequirements(row: ComandaRow) {
+    setBusyId(row.id);
+    setMessage('');
+    try {
+      const reqs = await fetchOrderPreparationRequirements(accessToken, row.id);
+      const shortages: PreparationShortage[] = (reqs.ingredients_summary ?? [])
+        .filter((line) => Number(line.shortfall_base) > 0)
+        .map((line) => ({
+          ingredient_product_id: line.ingredient_product_id,
+          name: line.ingredient_name || line.ingredient_code || `#${line.ingredient_product_id}`,
+          required: Number(line.required_base),
+          available: Number(line.available_base),
+          unit: 'BASE',
+        }));
+
+      setReqsModal({ row, requirements: reqs, shortages, allowStart: false });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo obtener requerimientos de preparación');
     } finally {
       setBusyId(null);
     }
@@ -262,32 +316,76 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
       closeCheckout();
       setMessage(`Cobro registrado: ${result.document_kind} ${result.series}-${String(result.number).padStart(6, '0')} · S/ ${Number(result.total).toFixed(2)}`);
     } catch (error) {
-      setCheckoutMessage(error instanceof Error ? error.message : 'Error al registrar cobro');
+      const raw = error instanceof Error ? error.message : 'Error al registrar cobro';
+      const stockMatch = raw.match(/Insufficient stock for product #(\d+)/i);
+      if (stockMatch) {
+        const productId = stockMatch[1];
+        setCheckoutMessage(`Stock insuficiente para el producto #${productId}. Revisa inventario o ajusta el pedido antes de cobrar.`);
+      } else {
+        setCheckoutMessage(raw);
+      }
     } finally {
       setCheckoutBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!reqsModal) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setReqsModal(null);
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [reqsModal]);
 
   // Resolve series options from restaurant bootstrap when checkout opens/doc kind changes
   useEffect(() => {
     if (!checkoutTarget) return;
     setCheckoutMessage('');
 
-    if (!bootstrap) {
-      setCheckoutSeriesLoading(true);
-      setCheckoutSeriesOptions([]);
-      setCheckoutSeries('');
-      return;
-    }
+    let cancelled = false;
 
-    setCheckoutSeriesLoading(false);
-    const enabled = (bootstrap.series_numbers ?? []).filter((s) => s.document_kind === checkoutDocKind && Boolean(s.is_enabled));
-    setCheckoutSeriesOptions(enabled);
-    setCheckoutSeries((prev) => {
-      if (prev && enabled.some((s) => s.series === prev)) return prev;
-      return enabled[0]?.series ?? '';
-    });
-  }, [checkoutTarget, checkoutDocKind, bootstrap]);
+    const resolveCheckoutSeries = async () => {
+      setCheckoutSeriesLoading(true);
+
+      let currentBootstrap = bootstrap;
+      if (!currentBootstrap) {
+        try {
+          currentBootstrap = await fetchRestaurantBootstrap(accessToken, { branchId });
+          if (!cancelled) {
+            setBootstrap(currentBootstrap);
+          }
+        } catch {
+          if (!cancelled) {
+            setCheckoutSeriesOptions([]);
+            setCheckoutSeries('');
+            setCheckoutSeriesLoading(false);
+          }
+          return;
+        }
+      }
+
+      if (cancelled) return;
+
+      const enabled = (currentBootstrap.series_numbers ?? []).filter((s) => s.document_kind === checkoutDocKind && Boolean(s.is_enabled));
+      setCheckoutSeriesOptions(enabled);
+      setCheckoutSeries((prev) => {
+        if (prev && enabled.some((s) => s.series === prev)) return prev;
+        return enabled[0]?.series ?? '';
+      });
+      setCheckoutSeriesLoading(false);
+    };
+
+    void resolveCheckoutSeries();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [checkoutTarget, checkoutDocKind, bootstrap, accessToken, branchId]);
 
   const statusOptions: Array<{ value: ComandaKitchenStatus | ''; label: string }> = [
     { value: '', label: 'Todos los estados' },
@@ -303,7 +401,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
 
   return (
     <>
-    <section className="module-panel restaurant-panel">
+    <section className="module-panel restaurant-panel restaurant-panel--comandas">
       <div className="restaurant-toolbar">
         <div className="restaurant-toolbar__intro">
           <p className="restaurant-toolbar__eyebrow">Restaurante</p>
@@ -387,6 +485,8 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                 ) : column.rows.map((row) => {
                   const isModified = modifiedOrderIds.has(row.id);
                   const items = row.items_preview ?? [];
+                  const previewItems = items.slice(0, 2);
+                  const hiddenItems = Math.max(0, items.length - previewItems.length);
                   return (
                   <article key={row.id} className={`comanda-card comanda-card--${column.tone}${isModified ? ' comanda-card--modified' : ''}`}>
 
@@ -418,17 +518,17 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                     </div>
 
                     {/* ── Info strip: Mesa · Cliente · Total ── */}
-                    <div className="comanda-card__strip">
-                      <span className="comanda-strip__chip comanda-strip__chip--mesa">
-                        <span className="comanda-strip__label">Mesa</span>
+                    <div className="comanda-card__meta-line">
+                      <span className="comanda-meta-pill">
+                        <span className="comanda-meta-pill__label">Mesa</span>
                         <strong>{row.table_label || '—'}</strong>
                       </span>
-                      <span className="comanda-strip__chip">
-                        <span className="comanda-strip__label">Cliente</span>
-                        <strong>{row.customer_name || 'Rápido'}</strong>
+                      <span className="comanda-meta-pill comanda-meta-pill--customer">
+                        <span className="comanda-meta-pill__label">Cliente</span>
+                        <strong>{row.customer_name || 'Rapido'}</strong>
                       </span>
-                      <span className="comanda-strip__chip comanda-strip__chip--total">
-                        <span className="comanda-strip__label">Total</span>
+                      <span className="comanda-meta-pill comanda-meta-pill--total">
+                        <span className="comanda-meta-pill__label">Total</span>
                         <strong>{formatTotal(row.total)}</strong>
                       </span>
                     </div>
@@ -443,42 +543,62 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                         <p className="comanda-items-empty">Sin detalle de platos</p>
                       ) : (
                         <ul className="comanda-items-inline-list">
-                          {items.map((item, idx) => (
+                          {previewItems.map((item, idx) => (
                             <li key={`item-${row.id}-${idx}`} className="comanda-items-inline-list__row">
                               <span className="comanda-items-inline-list__name">{item.description || 'Ítem sin descripción'}</span>
                               <strong className="comanda-items-inline-list__qty">✕ {formatQty(Number(item.qty))}</strong>
                             </li>
                           ))}
+                          {hiddenItems > 0 && (
+                            <li className="comanda-items-inline-list__row comanda-items-inline-list__row--more">
+                              <span className="comanda-items-inline-list__name">+{hiddenItems} platos mas</span>
+                              <strong className="comanda-items-inline-list__qty">ver</strong>
+                            </li>
+                          )}
                         </ul>
                       )}
                     </div>
 
                     {/* ── Actions ── */}
-                    <div className="comanda-card__actions">
+                    <div className="comanda-card__actions comanda-card__actions--compact">
                       <button
                         type="button"
-                        className="restaurant-stage-btn restaurant-stage-btn--prep"
-                        disabled={busyId === row.id || row.kitchen_status === 'IN_PREP'}
-                        onClick={() => void moveStatus(row, 'IN_PREP')}
+                        className="restaurant-stage-btn"
+                        disabled={busyId === row.id}
+                        onClick={() => void viewRequirements(row)}
                       >
-                        Preparar
+                        Ver requerimientos
                       </button>
-                      <button
-                        type="button"
-                        className="restaurant-stage-btn restaurant-stage-btn--ready"
-                        disabled={busyId === row.id || row.kitchen_status === 'READY'}
-                        onClick={() => void moveStatus(row, 'READY')}
-                      >
-                        Listo
-                      </button>
-                      <button
-                        type="button"
-                        className="restaurant-stage-btn restaurant-stage-btn--served"
-                        disabled={busyId === row.id || row.kitchen_status === 'SERVED'}
-                        onClick={() => void moveStatus(row, 'SERVED')}
-                      >
-                        Entregar
-                      </button>
+                      {row.kitchen_status === 'PENDING' && (
+                        <button
+                          type="button"
+                          className="restaurant-stage-btn restaurant-stage-btn--prep"
+                          disabled={busyId === row.id}
+                          onClick={() => void startPrep(row)}
+                        >
+                          Iniciar
+                        </button>
+                      )}
+                      {row.kitchen_status === 'IN_PREP' && (
+                        <button
+                          type="button"
+                          className="restaurant-stage-btn restaurant-stage-btn--ready"
+                          disabled={busyId === row.id}
+                          onClick={() => void moveStatus(row, 'READY')}
+                        >
+                          Marcar listo
+                        </button>
+                      )}
+                      {(row.kitchen_status === 'READY' || row.kitchen_status === 'SERVED') && (
+                        <button
+                          type="button"
+                          className="restaurant-stage-btn restaurant-stage-btn--served"
+                          disabled={busyId === row.id || row.kitchen_status === 'SERVED'}
+                          onClick={() => void moveStatus(row, 'SERVED')}
+                        >
+                          Entregar
+                        </button>
+                      )}
                       {(row.kitchen_status === 'READY' || row.kitchen_status === 'SERVED') && (
                         <button
                           type="button"
@@ -612,6 +732,98 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
       </div>
       );
     })()}
+
+    {/* ── Preparation requirements warning modal ───────────────────────── */}
+    {reqsModal && (
+      <div
+        className="cko-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Stock insuficiente"
+        onClick={() => setReqsModal(null)}
+      >
+        <div className="cko-dialog cko-dialog--requirements" onClick={(e) => e.stopPropagation()}>
+          <header className="cko-dialog__head">
+            <div>
+              <p className="cko-dialog__eyebrow">Requerimientos de preparación</p>
+              <h3>{reqsModal.shortages.length > 0 ? 'Insumos insuficientes' : 'Stock suficiente para preparar'}</h3>
+              <p className="cko-dialog__sub">
+                Orden #{reqsModal.row.id} · {reqsModal.row.series}-{String(reqsModal.row.number).padStart(6, '0')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="cko-dialog__close"
+              onClick={() => setReqsModal(null)}
+              aria-label="Cerrar"
+            >
+              &times;
+            </button>
+          </header>
+
+          <div className="cko-dialog__body">
+            <p style={{ fontSize: '0.83rem', color: '#7a6f63', marginBottom: 12 }}>
+              Esta vista ya considera la merma de la receta en el cálculo del requerido.
+            </p>
+            <div style={{ width: '100%', maxHeight: '44vh', overflow: 'auto', border: '1px solid #efe7dc', borderRadius: 10 }}>
+            <table style={{ width: '100%', fontSize: '0.82rem', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ color: '#7a6f63', textAlign: 'left', borderBottom: '1px solid #ede8e1' }}>
+                  <th style={{ padding: '4px 6px', fontWeight: 600 }}>Ingrediente</th>
+                  <th style={{ padding: '4px 6px', fontWeight: 600, textAlign: 'right' }}>Requerido</th>
+                  <th style={{ padding: '4px 6px', fontWeight: 600, textAlign: 'right' }}>Disponible</th>
+                  <th style={{ padding: '4px 6px', fontWeight: 600, textAlign: 'right' }}>Faltante</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(reqsModal.requirements.ingredients_summary ?? []).map((line) => (
+                  <tr key={line.ingredient_product_id} style={{ borderBottom: '1px solid #f3ede6' }}>
+                    <td style={{ padding: '5px 6px', color: '#3d3530' }}>
+                      {line.ingredient_name || line.ingredient_code || `#${line.ingredient_product_id}`}
+                    </td>
+                    <td style={{ padding: '5px 6px', textAlign: 'right', color: '#3d3530' }}>{formatQty(Number(line.required_base))}</td>
+                    <td style={{ padding: '5px 6px', textAlign: 'right', color: '#166534' }}>{formatQty(Number(line.available_base))}</td>
+                    <td style={{ padding: '5px 6px', textAlign: 'right', color: Number(line.shortfall_base) > 0 ? '#b91c1c' : '#3d3530', fontWeight: Number(line.shortfall_base) > 0 ? 700 : 500 }}>
+                      {formatQty(Number(line.shortfall_base))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+            {reqsModal.shortages.length > 0 && (
+              <p style={{ marginTop: 12, fontSize: '0.8rem', color: '#9a3412' }}>
+                Puedes iniciar la preparación igual y ajustar el inventario después, o cancelar para revisar stock primero.
+              </p>
+            )}
+          </div>
+
+          <footer className="cko-dialog__foot">
+            <button
+              type="button"
+              className="restaurant-ghost-btn"
+              onClick={() => setReqsModal(null)}
+            >
+              Cerrar
+            </button>
+            {reqsModal.allowStart && reqsModal.shortages.length > 0 && (
+              <button
+                type="button"
+                className="restaurant-primary-btn"
+                style={{ background: '#d97706' }}
+                onClick={() => {
+                  const row = reqsModal.row;
+                  setReqsModal(null);
+                  void moveStatus(row, 'IN_PREP');
+                }}
+              >
+                Iniciar de todas formas
+              </button>
+            )}
+          </footer>
+        </div>
+      </div>
+    )}
     </>
   );
 }

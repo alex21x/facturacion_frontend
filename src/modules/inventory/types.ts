@@ -21,6 +21,7 @@ export type InventoryProduct = {
   sunat_code: string | null;
   image_url: string | null;
   seller_commission_percent: string;
+  has_recipe?: boolean;
   line_name: string | null;
   brand_name: string | null;
   location_name: string | null;
