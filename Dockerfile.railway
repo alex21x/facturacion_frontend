@@ -24,4 +24,4 @@ ENV APP_VARIANT=app
 
 EXPOSE 3000
 
-CMD ["sh", "-lc", "if [ \"$APP_VARIANT\" = \"admin\" ]; then node scripts/serve-static.mjs dist-admin; else node scripts/serve-static.mjs dist; fi"]
+CMD ["sh", "-lc", "variant=\"$APP_VARIANT\"; if [ -z \"$variant\" ] || [ \"$variant\" = \"app\" ]; then case \"${RAILWAY_SERVICE_NAME:-}\" in *admin*|*Admin*) variant=admin ;; *) variant=app ;; esac; fi; if [ \"$variant\" = \"admin\" ]; then node scripts/serve-static.mjs dist-admin; else node scripts/serve-static.mjs dist; fi"]
