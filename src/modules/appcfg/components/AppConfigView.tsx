@@ -167,6 +167,7 @@ const FEATURE_LABELS: Record<string, string> = {
   DOC_KIND_DEBIT_NOTE: 'Notas de débito',
   DOC_KIND_DEBIT_NOTE_: 'Notas de débito',
   RESTAURANT_MENU_IGV_INCLUDED: 'Menú con IGV incluido',
+  RESTAURANT_RECIPES_ENABLED: 'Validar recetas en comandas',
   PRODUCT_MULTI_UOM: 'Múltiples unidades por producto',
   PRODUCT_UOM_CONVERSIONS: 'Conversión de unidades',
   PRODUCT_WHOLESALE_PRICING: 'Precios por volumen',
