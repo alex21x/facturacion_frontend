@@ -1,0 +1,27 @@
+FROM node:22-bullseye AS build
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --include=dev --no-audit --no-fund
+
+COPY . .
+
+# Build both variants once so each Railway service can choose at runtime.
+RUN npm run build && npm run build:admin
+
+FROM node:22-bullseye-slim
+
+WORKDIR /app
+
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/dist-admin ./dist-admin
+COPY --from=build /app/scripts/serve-static.mjs ./scripts/serve-static.mjs
+
+ENV HOST=0.0.0.0
+ENV PORT=3000
+ENV APP_VARIANT=app
+
+EXPOSE 3000
+
+CMD ["sh", "-lc", "if [ \"$APP_VARIANT\" = \"admin\" ]; then node scripts/serve-static.mjs dist-admin; else node scripts/serve-static.mjs dist; fi"]
