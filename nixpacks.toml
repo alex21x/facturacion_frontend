@@ -1,7 +1,11 @@
 [phases.install]
 cmds = [
-  "npm ci"
+  "npm install --include=dev --no-audit --no-fund"
 ]
+
+[variables]
+NPM_CONFIG_PRODUCTION = "false"
+NPM_CONFIG_CACHE = "/root/.npm"
 
 [phases.build]
 cmds = [
