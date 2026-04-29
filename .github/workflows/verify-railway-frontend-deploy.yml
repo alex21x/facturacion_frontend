@@ -1,0 +1,55 @@
+name: Verify Railway Frontend Deploy
+
+on:
+  push:
+    branches:
+      - deploy/railway-2026-04-10
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live-deploy:
+    runs-on: ubuntu-latest
+    env:
+      FRONTEND_URL: https://facturacionfrontend-production.up.railway.app
+      EXPECTED_SHA: ${{ github.sha }}
+
+    steps:
+      - name: Wait for Railway to publish the new build
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deadline=$((SECONDS + 600))
+          success=0
+
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            echo "Checking $FRONTEND_URL/version.json for commit $EXPECTED_SHA"
+
+            response="$(curl -fsS "$FRONTEND_URL/version.json" || true)"
+
+            if echo "$response" | grep -q '"git_sha"'; then
+              echo "$response"
+
+              live_sha="$(printf '%s' "$response" | sed -n 's/.*"git_sha"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+              if [ "$live_sha" = "$EXPECTED_SHA" ]; then
+                echo "Frontend deploy verified with git_sha=$live_sha"
+                success=1
+                break
+              fi
+
+              echo "Live SHA '$live_sha' still differs from expected '$EXPECTED_SHA'"
+            else
+              echo "version.json not available yet or stale fallback still active"
+              echo "$response"
+            fi
+
+            sleep 15
+          done
+
+          if [ "$success" -ne 1 ]; then
+            echo "Railway frontend did not publish the expected commit within the timeout"
+            exit 1
+          fi
