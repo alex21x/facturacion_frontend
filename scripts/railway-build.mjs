@@ -10,10 +10,11 @@ const cmd = target === 'admin'
   : 'npx vite build';
 
 try {
-  // Always clean outputs first to avoid stale files between Railway builds.
-  rmSync('dist', { recursive: true, force: true });
+  // Clean only the output directory for this specific target.
   if (target === 'admin') {
     rmSync('dist-admin', { recursive: true, force: true });
+  } else {
+    rmSync('dist', { recursive: true, force: true });
   }
 
   execSync(cmd, { stdio: 'inherit', shell: true });
