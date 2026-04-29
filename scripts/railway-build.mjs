@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { copyFileSync, cpSync, existsSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 
 const explicitTarget = (process.argv[2] ?? '').trim().toLowerCase();
 const envTarget = (process.env.APP_VARIANT ?? '').trim().toLowerCase();
@@ -20,12 +20,6 @@ try {
   if (target === 'admin') {
     if (existsSync('dist-admin/admin.html')) {
       copyFileSync('dist-admin/admin.html', 'dist-admin/index.html');
-    }
-
-    // Railpack static deployments expect /app/dist; mirror admin build output.
-    if (existsSync('dist-admin')) {
-      rmSync('dist', { recursive: true, force: true });
-      cpSync('dist-admin', 'dist', { recursive: true });
     }
   }
 
