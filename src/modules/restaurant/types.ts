@@ -63,6 +63,7 @@ export type RestaurantPaymentMethod = {
 
 export type RestaurantSeriesNumber = {
   id: number;
+  document_kind_id?: number | null;
   document_kind: string;
   series: string;
   current_number: number;
@@ -74,6 +75,7 @@ export type RestaurantBootstrapResponse = {
   payment_methods: RestaurantPaymentMethod[];
   active_igv_rate_percent: number;
   restaurant_price_includes_igv: boolean;
+  document_kind_ids?: Partial<Record<'SALES_ORDER' | 'INVOICE' | 'RECEIPT', number>>;
   series_numbers: RestaurantSeriesNumber[];
 };
 
