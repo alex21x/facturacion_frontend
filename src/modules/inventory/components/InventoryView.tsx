@@ -214,13 +214,8 @@ export function InventoryView({
   const isRestaurant = (uiProfile ?? ((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT' ? 'RESTAURANT' : 'DEFAULT')) === 'RESTAURANT';
 
   useEffect(() => {
-    if (isRestaurant) {
-      setStockNatureFilter('SUPPLY');
-      setLotNatureFilter('SUPPLY');
-    } else {
-      setStockNatureFilter('ALL');
-      setLotNatureFilter('ALL');
-    }
+    setStockNatureFilter('ALL');
+    setLotNatureFilter('ALL');
   }, [isRestaurant]);
 
   // Kardex state
