@@ -1,0 +1,49 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Backend: Laravel Serve",
+      "type": "shell",
+      "command": "php C:/xampp/htdocs/facturacion_backend/artisan serve --host=127.0.0.1 --port=8000",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Frontend: Vite Dev",
+      "type": "shell",
+      "command": "npm run dev -- --host=127.0.0.1 --port=5173",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Admin Portal: Vite Dev",
+      "type": "shell",
+      "command": "npm run dev:admin -- --host=127.0.0.1 --port=5174",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "Full Stack: Backend + Frontend",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Backend: Laravel Serve",
+        "Frontend: Vite Dev"
+      ]
+    },
+    {
+      "label": "Full Stack: Backend + Frontend + Admin",
+      "dependsOrder": "parallel",
+      "dependsOn": [
+        "Backend: Laravel Serve",
+        "Frontend: Vite Dev",
+        "Admin Portal: Vite Dev"
+      ]
+    }
+  ]
+}

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fetchInventoryProducts } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
+import './RestaurantOrderView.css';
 import {
   createRestaurantOrder,
   fetchRestaurantCustomerAutocomplete,
   fetchRestaurantBootstrap,
+  fetchRestaurantOrderDetail,
   fetchRestaurantOrders,
   fetchRestaurantTables,
   resolveRestaurantCustomerByDocument,
@@ -85,6 +86,129 @@ function roundCurrency(value: number): number {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function normalizeOrderQuantity(value: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 1;
+  return Math.max(1, Math.round(parsed));
+}
+
+function isDrinkProduct(product: InventoryProduct): boolean {
+  const category = String(product.category_name ?? '').toLowerCase();
+  const line = String(product.line_name ?? '').toLowerCase();
+  const name = String(product.name ?? '').toLowerCase();
+
+  return (
+    category.includes('bebida')
+    || category.includes('jug')
+    || category.includes('gaseosa')
+    || category.includes('coctel')
+    || category.includes('cocktail')
+    || line.includes('bebida')
+    || line.includes('bar')
+    || line.includes('coctel')
+    || line.includes('licor')
+    || name.includes('jugo')
+    || name.includes('gaseosa')
+    || name.includes('cola')
+    || name.includes('agua')
+    || name.includes('cerveza')
+    || name.includes('vino')
+    || name.includes('pisco')
+    || name.includes('cafe')
+    || name.includes('té')
+    || name.includes('refresco')
+  );
+}
+
+function isDishProduct(product: InventoryProduct): boolean {
+  const category = String(product.category_name ?? '').toLowerCase();
+  const line = String(product.line_name ?? '').toLowerCase();
+  const name = String(product.name ?? '').toLowerCase();
+
+  return (
+    category.includes('plato')
+    || category.includes('comida')
+    || category.includes('fondo')
+    || category.includes('entrada')
+    || line.includes('plato')
+    || line.includes('comida')
+    || line.includes('fondo')
+    || line.includes('entrada')
+    || name.includes('arroz')
+    || name.includes('ceviche')
+    || name.includes('chaufa')
+    || name.includes('tallar')
+    || name.includes('pollo')
+    || name.includes('res')
+    || name.includes('cerdo')
+  );
+}
+
+function filterSellableProducts(products: InventoryProduct[]): InventoryProduct[] {
+  return products.filter((product) => {
+    const nature = String(product.product_nature ?? '').toUpperCase();
+    const category = String(product.category_name ?? '').toLowerCase();
+    const line = String(product.line_name ?? '').toLowerCase();
+    const name = String(product.name ?? '').toLowerCase();
+
+    if (nature === 'SUPPLY') return false;
+
+    // Guardrail for inconsistent legacy catalogs where ingredients are still PRODUCT/null.
+    const looksLikeSupply =
+      category.includes('insumo')
+      || category.includes('ingred')
+      || category.includes('abarrote')
+      || category.includes('materia prima')
+      || line.includes('insumo')
+      || line.includes('ingred')
+      || line.includes('abarrote')
+      || line.includes('materia prima')
+      || name.includes('insumo')
+      || name.includes('ingred');
+
+    return !looksLikeSupply;
+  });
+}
+
+function resolveMenuTypeLabel(product: InventoryProduct): 'Plato' | 'Bebida' | 'Producto' {
+  const category = String(product.category_name ?? '').toLowerCase();
+  const line = String(product.line_name ?? '').toLowerCase();
+
+  const hasDishCatalogSignal =
+    category.includes('plato')
+    || category.includes('comida')
+    || category.includes('fondo')
+    || category.includes('entrada')
+    || line.includes('plato')
+    || line.includes('comida')
+    || line.includes('fondo')
+    || line.includes('entrada');
+
+  const hasDrinkCatalogSignal =
+    category.includes('bebida')
+    || category.includes('jug')
+    || category.includes('gaseosa')
+    || category.includes('coctel')
+    || category.includes('cocktail')
+    || line.includes('bebida')
+    || line.includes('bar')
+    || line.includes('coctel')
+    || line.includes('licor');
+
+  // If catalog metadata is explicit, it must win over name heuristics.
+  if (hasDishCatalogSignal) return 'Plato';
+  if (hasDrinkCatalogSignal) return 'Bebida';
+
+  const isDrink = isDrinkProduct(product);
+  if (isDrink) return 'Bebida';
+
+  const isDish = isDishProduct(product);
+  if (isDish) return 'Plato';
+
+  // Neutral fallback avoids misleading "Plato" when the catalog has no clear signal.
+  return 'Producto';
+}
+
 // ---------------------------------------------------------------------------
 // Sub-component: table selector card
 // ---------------------------------------------------------------------------
@@ -125,10 +249,15 @@ function TableCard({
 // ---------------------------------------------------------------------------
 
 export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Props) {
+  const TABLES_CACHE_TTL_MS = 45_000;
+  const ORDERS_CACHE_TTL_MS = 20_000;
+
   // ── lookups & tables ──────────────────────────────────────────────────────
   const [lookups, setLookups] = useState<RestaurantBootstrapResponse | null>(null);
   const [tables, setTables] = useState<RestaurantTableRow[]>([]);
-  const [loadingInit, setLoadingInit] = useState(true);
+  const [loadingLookups, setLoadingLookups] = useState(false);
+  const [lookupsLoaded, setLookupsLoaded] = useState(false);
+  const [loadingTables, setLoadingTables] = useState(true);
 
   // ── form stage & selected table ───────────────────────────────────────────
   const [stage, setStage] = useState<OrderStage>('SELECT_TABLE');
@@ -166,6 +295,8 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   // ── active orders ─────────────────────────────────────────────────────────
   const [orders, setOrders] = useState<RestaurantOrderRow[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
+  const [ordersPanelReady, setOrdersPanelReady] = useState(false);
+  const [loadingOrderDetailId, setLoadingOrderDetailId] = useState<number | null>(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('');
   const [orderSearch, setOrderSearch] = useState('');
   const [orderSearchDebounced, setOrderSearchDebounced] = useState('');
@@ -179,49 +310,121 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   // ── ready-order toasts (broadcast from ComandasView) ─────────────────────
   type ReadyAlert = { id: number; tableLabel: string; series: string; number: number; ts: number };
   const [readyAlerts, setReadyAlerts] = useState<ReadyAlert[]>([]);
+  const ORDERS_PAGE_SIZE = 20;
 
   function dismissReadyAlert(orderId: number) {
     setReadyAlerts((prev) => prev.filter((a) => a.id !== orderId));
   }
 
-  // ── init: load lookups + tables ───────────────────────────────────────────
+  function tablesCacheKey(): string {
+    return `restaurant:orders:tables:${branchId ?? 'none'}`;
+  }
+
+  function ordersCacheKey(status = orderStatusFilter, search = orderSearchDebounced): string {
+    return `restaurant:orders:list:${branchId ?? 'none'}:${status || 'ALL'}:${search.trim().toLowerCase() || 'ALL'}`;
+  }
+
+  const loadLookups = useCallback(async () => {
+    if (!branchId) {
+      return;
+    }
+
+    if (lookupsLoaded || loadingLookups) {
+      return;
+    }
+
+    setLoadingLookups(true);
+    try {
+      const bootstrapRes = await fetchRestaurantBootstrap(accessToken, {
+        branchId,
+        warehouseId,
+        mode: 'orders_minimal',
+      });
+
+      setLookups(bootstrapRes);
+      setRestaurantPriceIncludesIgv(Boolean(bootstrapRes.restaurant_price_includes_igv));
+
+      const salesOrderSeries = (bootstrapRes.series_numbers ?? []).filter((s) => s.document_kind === 'SALES_ORDER' && Boolean(s.is_enabled));
+      setSalesOrderSeriesList(salesOrderSeries);
+      setSeriesId((prev) => {
+        if (prev && salesOrderSeries.some((s) => s.series === prev)) {
+          return prev;
+        }
+        return salesOrderSeries[0]?.series ?? '';
+      });
+
+      const defaultCurrency = bootstrapRes.currencies.find((c) => c.is_default) ?? bootstrapRes.currencies[0];
+      if (defaultCurrency) setCurrencyId(String(defaultCurrency.id));
+
+      const defaultPm = bootstrapRes.payment_methods.find((pm) => {
+        const code = String(pm.code ?? '').toUpperCase();
+        const name = String(pm.name ?? '').toUpperCase();
+        return code.includes('EFECT') || code.includes('CASH') || name.includes('EFECT') || name.includes('CASH');
+      }) ?? bootstrapRes.payment_methods[0];
+      if (defaultPm) setPaymentMethodId(String(defaultPm.id));
+
+      setLookupsLoaded(true);
+    } catch {
+      setMessage('No se pudo cargar configuración de pedidos. Intenta nuevamente.');
+    } finally {
+      setLoadingLookups(false);
+    }
+  }, [accessToken, branchId, warehouseId, lookupsLoaded, loadingLookups]);
+
+  // ── init: fast-load tables only ───────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
 
     void (async () => {
-      setLoadingInit(true);
+      setLoadingTables(true);
+      setLookups(null);
+      setLookupsLoaded(false);
+      setSalesOrderSeriesList([]);
+      setSeriesId('');
+
+      if (!branchId) {
+        setTables([]);
+        setLoadingTables(false);
+        return;
+      }
+
       try {
-        const [bootstrapRes, tablesRes] = await Promise.all([
-          fetchRestaurantBootstrap(accessToken, { branchId, warehouseId }),
-          fetchRestaurantTables(accessToken, { branchId }),
-        ]);
-
-        if (cancelled) return;
-
-        setLookups(bootstrapRes);
-        setTables(tablesRes.data ?? []);
-
-        setRestaurantPriceIncludesIgv(Boolean(bootstrapRes.restaurant_price_includes_igv));
-
-        const salesOrderSeries = (bootstrapRes.series_numbers ?? []).filter((s) => s.document_kind === 'SALES_ORDER' && Boolean(s.is_enabled));
-        setSalesOrderSeriesList(salesOrderSeries);
-        setSeriesId((prev) => {
-          if (prev && salesOrderSeries.some((s) => s.series === prev)) {
-            return prev;
+        if (typeof window !== 'undefined') {
+          const raw = window.localStorage.getItem(tablesCacheKey());
+          if (raw) {
+            const parsed = JSON.parse(raw) as { ts?: number; rows?: RestaurantTableRow[] };
+            const ts = Number(parsed.ts ?? 0);
+            const rows = Array.isArray(parsed.rows) ? parsed.rows : [];
+            if (rows.length > 0 && Number.isFinite(ts) && (Date.now() - ts) <= TABLES_CACHE_TTL_MS) {
+              setTables(rows);
+              setLoadingTables(false);
+            }
           }
-          return salesOrderSeries[0]?.series ?? '';
-        });
-
-        // Auto-select defaults
-        const defaultCurrency = bootstrapRes.currencies.find((c) => c.is_default) ?? bootstrapRes.currencies[0];
-        if (defaultCurrency) setCurrencyId(String(defaultCurrency.id));
-
-        const defaultPm = bootstrapRes.payment_methods[0];
-        if (defaultPm) setPaymentMethodId(String(defaultPm.id));
+        }
       } catch {
-        if (!cancelled) setMessage('No se pudo cargar la configuración inicial.');
+        // Ignore cache parse errors
+      }
+
+      try {
+        const tablesRes = await fetchRestaurantTables(accessToken, { branchId });
+        if (cancelled) return;
+        const nextRows = tablesRes.data ?? [];
+        setTables(nextRows);
+
+        try {
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(
+              tablesCacheKey(),
+              JSON.stringify({ ts: Date.now(), rows: nextRows }),
+            );
+          }
+        } catch {
+          // Ignore cache write errors
+        }
+      } catch {
+        if (!cancelled) setMessage('No se pudo cargar mesas.');
       } finally {
-        if (!cancelled) setLoadingInit(false);
+        if (!cancelled) setLoadingTables(false);
       }
     })();
 
@@ -239,25 +442,86 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     };
   }, [orderSearch]);
 
+  // ── defer heavy orders panel startup to keep module opening instant ─────
+  useEffect(() => {
+    setOrdersPanelReady(false);
+    if (!branchId) {
+      return;
+    }
+
+    const timerId = setTimeout(() => {
+      setOrdersPanelReady(true);
+    }, 160);
+
+    return () => clearTimeout(timerId);
+  }, [branchId]);
+
   // ── load active orders ────────────────────────────────────────────────────
-  const loadOrders = useCallback(async () => {
-    setOrdersLoading(true);
+  const loadOrders = useCallback(async (preferCache = false) => {
+    if (!branchId || !ordersPanelReady) {
+      setOrders([]);
+      return;
+    }
+
+    let usedFreshCache = false;
+    if (preferCache) {
+      try {
+        if (typeof window !== 'undefined') {
+          const raw = window.localStorage.getItem(ordersCacheKey());
+          if (raw) {
+            const parsed = JSON.parse(raw) as { ts?: number; rows?: RestaurantOrderRow[] };
+            const ts = Number(parsed.ts ?? 0);
+            const cachedRows = Array.isArray(parsed.rows) ? parsed.rows : [];
+            if (Number.isFinite(ts) && (Date.now() - ts) <= ORDERS_CACHE_TTL_MS) {
+              setOrders(cachedRows);
+              usedFreshCache = true;
+            }
+          }
+        }
+      } catch {
+        // Ignore cache parsing issues.
+      }
+    }
+
+    if (!usedFreshCache) {
+      setOrdersLoading(true);
+    }
     try {
       const res = await fetchRestaurantOrders(accessToken, {
         branchId,
         status: orderStatusFilter,
         search: orderSearchDebounced,
+        perPage: ORDERS_PAGE_SIZE,
       });
-      setOrders(res.data ?? []);
+      const nextRows = res.data ?? [];
+      setOrders(nextRows);
+
+      try {
+        if (typeof window !== 'undefined') {
+          window.localStorage.setItem(
+            ordersCacheKey(orderStatusFilter, orderSearchDebounced),
+            JSON.stringify({ ts: Date.now(), rows: nextRows }),
+          );
+        }
+      } catch {
+        // Ignore cache write issues.
+      }
     } catch {
       // Silent — orders panel is secondary to the form
     } finally {
       setOrdersLoading(false);
     }
-  }, [accessToken, branchId, orderStatusFilter, orderSearchDebounced]);
+  }, [accessToken, branchId, orderSearchDebounced, orderStatusFilter, ordersPanelReady]);
 
   useEffect(() => {
-    void loadOrders();
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    timerId = setTimeout(() => {
+      void loadOrders(true);
+    }, 80);
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+    };
   }, [loadOrders]);
 
   // BroadcastChannel — listens for ORDER_READY from ComandasView
@@ -323,6 +587,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
       setLoadingProducts(true);
       void (async () => {
         try {
+          const { fetchInventoryProducts } = await import('../../inventory/api');
           const requestSeq = productAutocompleteRequestSeqRef.current + 1;
           productAutocompleteRequestSeqRef.current = requestSeq;
           const results = await fetchInventoryProducts(accessToken, {
@@ -335,7 +600,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
           if (requestSeq !== productAutocompleteRequestSeqRef.current) {
             return;
           }
-          setProductSuggestions(results);
+          setProductSuggestions(filterSellableProducts(results ?? []));
         } catch {
           setProductSuggestions([]);
         } finally {
@@ -394,12 +659,13 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
     setLoadingProducts(true);
     try {
+      const { fetchInventoryProducts } = await import('../../inventory/api');
       const results = await fetchInventoryProducts(accessToken, {
         warehouseId: warehouseId ?? undefined,
         status: 1,
         limit: 200,
       });
-      setFeaturedProducts(results ?? []);
+      setFeaturedProducts(filterSellableProducts(results ?? []));
       setFeaturedProductsLoaded(true);
     } catch {
       setFeaturedProducts([]);
@@ -409,7 +675,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   }
 
   function computeLinePricing(quantity: number, displayedUnitPrice: number, taxRate: number) {
-    const safeQty = Math.max(0.001, Number(quantity) || 0);
+    const safeQty = normalizeOrderQuantity(quantity);
     const safeDisplayed = Math.max(0, Number(displayedUnitPrice) || 0);
     const safeRate = Math.max(0, Number(taxRate) || 0);
 
@@ -441,7 +707,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   }
 
   function toDisplayedUnitPrice(unitPrice: number, taxTotal: number, total: number, quantity: number) {
-    const safeQty = Math.max(0.001, Number(quantity) || 0);
+    const safeQty = normalizeOrderQuantity(quantity);
     if (restaurantPriceIncludesIgv) {
       const safeUnit = Math.max(0, Number(unitPrice) || 0);
       const safeTax = Math.max(0, Number(taxTotal) || 0);
@@ -475,7 +741,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
           return {
             ...item,
-            quantity: roundCurrency(item.quantity + 1),
+            quantity: normalizeOrderQuantity(item.quantity + 1),
           };
         });
       }
@@ -497,25 +763,43 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     setProductPreviewOpen(false);
   }
 
-  function startEditOrder(order: RestaurantOrderRow) {
+  async function startEditOrder(order: RestaurantOrderRow) {
+    setLoadingOrderDetailId(order.id);
+
+    let sourceOrder: RestaurantOrderRow = order;
+    try {
+      await Promise.all([
+        loadLookups(),
+        (async () => {
+          if (!order.items || order.items.length === 0) {
+            sourceOrder = await fetchRestaurantOrderDetail(accessToken, order.id);
+          }
+        })(),
+      ]);
+    } catch {
+      setMessage('No se pudo cargar el detalle del pedido para editar.');
+      setLoadingOrderDetailId(null);
+      return;
+    }
+
     const resolvedTable = tables.find((table) => String(table.id) === String(order.table_id))
       ?? {
-        id: Number(order.table_id ?? 0),
+        id: Number(sourceOrder.table_id ?? 0),
         company_id: 0,
         branch_id: branchId ?? 0,
-        code: order.table_label || 'MESA',
-        name: order.table_label || 'Mesa',
+        code: sourceOrder.table_label || 'MESA',
+        name: sourceOrder.table_label || 'Mesa',
         capacity: 0,
         status: 'OCCUPIED' as const,
       };
 
-    setEditingOrderId(order.id);
+    setEditingOrderId(sourceOrder.id);
     setSelectedTable(resolvedTable);
     setStage('BUILD_ORDER');
-    setNotes(order.notes ?? '');
-    setSelectedCustomer(order.customer_id ? {
-      id: order.customer_id,
-      name: order.customer_name || 'Cliente',
+    setNotes(sourceOrder.notes ?? '');
+    setSelectedCustomer(sourceOrder.customer_id ? {
+      id: sourceOrder.customer_id,
+      name: sourceOrder.customer_name || 'Cliente',
       doc_number: null,
       doc_type: null,
       trade_name: null,
@@ -524,27 +808,35 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
       default_tier_id: null,
     } : null);
     setCustomerQuery('');
-    setCart((order.items ?? []).map((item) => ({
+    setCart((sourceOrder.items ?? []).map((item) => ({
       line_no: item.line_no,
       product_id: item.product_id,
       description: item.description,
-      quantity: Number(item.quantity),
+      quantity: normalizeOrderQuantity(Number(item.quantity)),
       unit_price: toDisplayedUnitPrice(item.unit_price, item.tax_total, item.total, item.quantity),
       unit_id: item.unit_id,
       tax_type: 'IGV',
       tax_rate: igvRate,
     })));
     setMessage('');
+    setLoadingOrderDetailId(null);
   }
 
   function removeCartItem(index: number) {
     setCart((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function bumpCartItemQuantity(index: number, delta: number) {
+    setCart((prev) => prev.map((item, i) => {
+      if (i !== index) return item;
+      return { ...item, quantity: normalizeOrderQuantity(item.quantity + delta) };
+    }));
+  }
+
   function updateCartItem(index: number, field: 'quantity' | 'unit_price' | 'description', value: string) {
     setCart((prev) => prev.map((item, i) => {
       if (i !== index) return item;
-      if (field === 'quantity') return { ...item, quantity: Math.max(0.001, Number(value) || 0) };
+      if (field === 'quantity') return { ...item, quantity: normalizeOrderQuantity(Number(value)) };
       if (field === 'unit_price') return { ...item, unit_price: Math.max(0, Number(value) || 0) };
       return { ...item, description: value };
     }));
@@ -561,6 +853,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     setSelectedTable(table);
     setStage('BUILD_ORDER');
     setMessage('');
+    void loadLookups();
   }
 
   function cancelTable() {
@@ -613,6 +906,11 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     }
     if (!currencyId || !paymentMethodId) {
       setMessage('Configura moneda y método de pago.');
+      return;
+    }
+
+    if (!lookupsLoaded || loadingLookups) {
+      setMessage('Espera un momento, estamos cargando configuración de pedidos.');
       return;
     }
 
@@ -708,20 +1006,8 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     }
   }
 
-  // ── render ────────────────────────────────────────────────────────────────
-
-  if (loadingInit) {
-    return (
-      <section className="module-panel restaurant-panel">
-        <div className="restaurant-empty-state">
-          <strong>Cargando módulo de pedidos...</strong>
-        </div>
-      </section>
-    );
-  }
-
   return (
-    <section className="module-panel restaurant-panel">
+    <section className="module-panel restaurant-panel restaurant-panel--orders">
 
       {/* Toolbar */}
       <div className="restaurant-toolbar">
@@ -741,7 +1027,23 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
             className="restaurant-ghost-btn"
             onClick={() => {
               void loadOrders();
-              void fetchRestaurantTables(accessToken, { branchId }).then((r) => setTables(r.data ?? []));
+              if (!branchId) {
+                return;
+              }
+              void fetchRestaurantTables(accessToken, { branchId }).then((r) => {
+                const nextRows = r.data ?? [];
+                setTables(nextRows);
+                try {
+                  if (typeof window !== 'undefined') {
+                    window.localStorage.setItem(
+                      tablesCacheKey(),
+                      JSON.stringify({ ts: Date.now(), rows: nextRows }),
+                    );
+                  }
+                } catch {
+                  // Ignore cache write errors
+                }
+              });
             }}
           >
             Actualizar
@@ -787,7 +1089,11 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
             <>
               <p className="ro-form-panel__heading">Selecciona una mesa</p>
 
-              {tables.length === 0 ? (
+              {loadingTables ? (
+                <div className="restaurant-empty-state">
+                  <strong>Cargando mesas...</strong>
+                </div>
+              ) : tables.length === 0 ? (
                 <div className="restaurant-empty-state">
                   <strong>Sin mesas registradas</strong>
                   <p>Ve a "Mesas" para crear las mesas del salón.</p>
@@ -828,10 +1134,10 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                     className="restaurant-input"
                     value={seriesId}
                     onChange={(e) => setSeriesId(e.target.value)}
-                    disabled={loadingInit || salesOrderSeriesList.length === 0}
+                    disabled={loadingLookups || salesOrderSeriesList.length === 0}
                   >
-                    {loadingInit && <option value="">Cargando series...</option>}
-                    {!loadingInit && salesOrderSeriesList.length === 0 && (
+                    {loadingLookups && <option value="">Cargando series...</option>}
+                    {!loadingLookups && salesOrderSeriesList.length === 0 && (
                       <option value="">Sin series activas</option>
                     )}
                     {salesOrderSeriesList.map((s) => (
@@ -859,7 +1165,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                 </label>
               </div>
 
-              {!loadingInit && salesOrderSeriesList.length === 0 && (
+              {!loadingLookups && salesOrderSeriesList.length === 0 && (
                 <p className="notice" style={{ marginTop: '0.25rem' }}>
                   No hay series activas para SALES_ORDER en esta sucursal/almacen. Configura una en Maestros &gt; Series.
                 </p>
@@ -978,10 +1284,13 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                             onClick={() => addProductToCart(p)}
                           >
                             <div>
-                              <strong>{p.name}</strong>
+                              <strong title={p.name}>{p.name}</strong>
                               <span>{p.sku ?? 'SIN-SKU'} · {p.category_name ?? 'General'}</span>
                             </div>
                             <em>
+                              <small className={`ro-menu-kind-badge ro-menu-kind-badge--${resolveMenuTypeLabel(p).toLowerCase()}`}>
+                                {resolveMenuTypeLabel(p)}
+                              </small>
                               {formatCurrency(p.sale_price)}
                               <small>{restaurantPriceIncludesIgv ? ' inc. IGV' : ' + IGV'}</small>
                             </em>
@@ -1003,17 +1312,36 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                     <div key={`cart-${index}`} className="ro-cart-item">
                       <input
                         className="ro-cart-item__desc restaurant-input"
+                        title={item.description}
                         value={item.description}
                         onChange={(e) => updateCartItem(index, 'description', e.target.value)}
                       />
-                      <input
-                        className="ro-cart-item__qty restaurant-input"
-                        type="number"
-                        min="0.001"
-                        step="1"
-                        value={item.quantity}
-                        onChange={(e) => updateCartItem(index, 'quantity', e.target.value)}
-                      />
+                      <div className="ro-cart-item__qty-stepper">
+                        <button
+                          type="button"
+                          className="ro-stepper-btn"
+                          onClick={() => bumpCartItemQuantity(index, -1)}
+                          aria-label="Disminuir cantidad"
+                        >
+                          -
+                        </button>
+                        <input
+                          className="ro-cart-item__qty restaurant-input"
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={item.quantity}
+                          onChange={(e) => updateCartItem(index, 'quantity', e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="ro-stepper-btn"
+                          onClick={() => bumpCartItemQuantity(index, 1)}
+                          aria-label="Aumentar cantidad"
+                        >
+                          +
+                        </button>
+                      </div>
                       <input
                         className="ro-cart-item__price restaurant-input"
                         type="number"
@@ -1037,7 +1365,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                   ))}
 
                   <div className="ro-cart-footer">
-                    <span>Total estimado (c/IGV)</span>
+                    <span>Total estimado (c/IGV) · Cantidad entera</span>
                     <strong>{formatCurrency(cartTotal)}</strong>
                   </div>
                 </div>
@@ -1059,7 +1387,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                 <button
                   type="button"
                   className="restaurant-primary-btn"
-                  disabled={submitting || cart.length === 0 || loadingInit || salesOrderSeriesList.length === 0}
+                  disabled={submitting || cart.length === 0 || loadingLookups || salesOrderSeriesList.length === 0}
                   onClick={() => void handleSubmit()}
                 >
                   {submitting ? (editingOrderId ? 'Actualizando pedido...' : 'Enviando a cocina...') : (editingOrderId ? 'Guardar cambios del pedido' : 'Enviar pedido a cocina')}
@@ -1071,8 +1399,14 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
         {/* ── Right: Active Orders ─────────────────────────────────────────── */}
         <div className="ro-orders-panel">
+          {!ordersPanelReady ? (
+            <div className="restaurant-empty-state ro-orders-panel--loading">
+              <strong>Cargando panel de pedidos...</strong>
+            </div>
+          ) : (
+            <>
           <div className="ro-orders-panel__head">
-            <p className="ro-form-panel__heading">Pedidos activos</p>
+            <p className="ro-form-panel__heading">Pedidos activos ({orders.length})</p>
             <div className="ro-orders-filters">
               <select
                 className="restaurant-input"
@@ -1169,9 +1503,10 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                         <button
                           type="button"
                           className="restaurant-ghost-btn"
-                          onClick={() => startEditOrder(order)}
+                          disabled={loadingOrderDetailId === order.id}
+                          onClick={() => void startEditOrder(order)}
                         >
-                          Editar pedido
+                          {loadingOrderDetailId === order.id ? 'Cargando...' : 'Editar pedido'}
                         </button>
                       </div>
                     )}
@@ -1179,6 +1514,8 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                 </article>
               ))}
             </div>
+          )}
+            </>
           )}
         </div>
       </div>
