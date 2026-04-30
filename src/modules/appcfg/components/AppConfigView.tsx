@@ -284,19 +284,28 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const adminManagedFeatureCodes = useMemo(
     () =>
       new Set([
+        // Ventas — todos gestionados desde Admin
+        'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
+        'SALES_ANTICIPO_ENABLED',
+        'SALES_CUSTOMER_PRICE_PROFILE',
+        'SALES_DETRACCION_ENABLED',
+        'SALES_FREE_ITEMS_ENABLED',
         'SALES_GLOBAL_DISCOUNT_ENABLED',
         'SALES_ITEM_DISCOUNT_ENABLED',
-        'SALES_FREE_ITEMS_ENABLED',
-        'SALES_DETRACCION_ENABLED',
-        'SALES_RETENCION_ENABLED',
         'SALES_PERCEPCION_ENABLED',
+        'SALES_RETENCION_ENABLED',
+        'SALES_SELLER_TO_CASHIER',
+        'SALES_TAX_BRIDGE',
+        'SALES_TAX_BRIDGE_DEBUG_VIEW',
+        'SALES_WORKSHOP_MULTI_VEHICLE',
+        // Compras — todos gestionados desde Admin
+        'PURCHASES_DETRACCION_ENABLED',
+        'PURCHASES_FREE_ITEMS_ENABLED',
         'PURCHASES_GLOBAL_DISCOUNT_ENABLED',
         'PURCHASES_ITEM_DISCOUNT_ENABLED',
-        'PURCHASES_FREE_ITEMS_ENABLED',
-        'PURCHASES_DETRACCION_ENABLED',
+        'PURCHASES_PERCEPCION_ENABLED',
         'PURCHASES_RETENCION_COMPRADOR_ENABLED',
         'PURCHASES_RETENCION_PROVEEDOR_ENABLED',
-        'PURCHASES_PERCEPCION_ENABLED',
       ]),
     []
   );
@@ -436,9 +445,10 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     try {
       const payload = commerceFeatures
         .filter((row) => {
-          // Exclude only the known superadmin-managed commercial toggles.
-          // Keep SALES_TAX_BRIDGE and SALES_TAX_BRIDGE_DEBUG_VIEW writable here.
-          return !adminManagedFeatureCodes.has(row.feature_code);
+          // Exclude all admin-managed flags from save, EXCEPT tax bridge which is
+          // configured via the comercial tab form even though it shows as readonly in modules.
+          const isTaxBridge = row.feature_code === 'SALES_TAX_BRIDGE' || row.feature_code === 'SALES_TAX_BRIDGE_DEBUG_VIEW';
+          return !adminManagedFeatureCodes.has(row.feature_code) || isTaxBridge;
         })
         .map((row) => {
         const feature_code = row.feature_code;
