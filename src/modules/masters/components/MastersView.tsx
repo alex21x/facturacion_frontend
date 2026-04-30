@@ -53,66 +53,42 @@ type MastersViewProps = {
 };
 
 type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'price-tier' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
-type CommerceCategoryTab = 'all' | 'documentos' | 'restaurante' | 'inventario' | 'ventas' | 'compras' | 'otros';
 
-const COMMERCE_CATEGORY_TABS_ALL: Array<{ id: CommerceCategoryTab; label: string }> = [
-  { id: 'all', label: 'Todas' },
-  { id: 'ventas', label: 'Ventas' },
-  { id: 'compras', label: 'Compras' },
-  { id: 'inventario', label: 'Inventario' },
-  { id: 'documentos', label: 'Documentos' },
-  { id: 'restaurante', label: 'Restaurante' },
-  { id: 'otros', label: 'Otros' },
-];
+function commerceCategoryKey(row: { feature_category_key?: string | null; feature_code: string }): string {
+  const key = String(row.feature_category_key ?? '').trim().toLowerCase();
+  if (key !== '') {
+    return key;
+  }
 
-function commerceCategoryByCode(code: string): CommerceCategoryTab {
-  const key = String(code ?? '').toUpperCase();
-  if (key.startsWith('SALES_')) return 'ventas';
-  if (key.startsWith('PURCHASES_')) return 'compras';
-  if (key.startsWith('PRODUCT_') || key.startsWith('INVENTORY_')) return 'inventario';
-  if (key.startsWith('DOC_KIND_')) return 'documentos';
-  if (key.startsWith('RESTAURANT_')) return 'restaurante';
-  return 'otros';
+  const code = String(row.feature_code ?? '').trim().toUpperCase();
+  const firstToken = code.split('_')[0]?.toLowerCase() ?? '';
+  return firstToken !== '' ? firstToken : 'general';
 }
 
-const COMMERCE_FEATURE_LABELS: Record<string, string> = {
-  // Documentos
-  DOC_KIND_CREDIT_NOTE: 'Notas de crédito',
-  DOC_KIND_DEBIT_NOTE: 'Notas de débito',
-  // Restaurante
-  RESTAURANT_MENU_IGV_INCLUDED: 'Restaurante: Menú con IGV incluido',
-  RESTAURANT_RECIPES_ENABLED: 'Restaurante: Validar recetas en comandas',
-  // Productos e inventario
-  PRODUCT_MULTI_UOM: 'Unidades múltiples por producto',
-  PRODUCT_UOM_CONVERSIONS: 'Conversión entre unidades de producto',
-  PRODUCT_WHOLESALE_PRICING: 'Precios mayoristas por volumen',
-  INVENTORY_PRODUCTS_BY_PROFILE: 'Permisos por perfil para guardar productos',
-  INVENTORY_PRODUCT_MASTERS_BY_PROFILE: 'Permisos por perfil para maestros de producto',
-  // Ventas
-  SALES_CUSTOMER_PRICE_PROFILE: 'Ventas: Precios por cliente',
-  SALES_SELLER_TO_CASHIER: 'Ventas: Flujo vendedor a caja independiente',
-  SALES_ANTICIPO_ENABLED: 'Ventas: Permitir anticipos',
-  SALES_GLOBAL_DISCOUNT_ENABLED: 'Ventas: Descuento global en ventas',
-  SALES_ITEM_DISCOUNT_ENABLED: 'Ventas: Descuento por item en ventas',
-  SALES_FREE_ITEMS_ENABLED: 'Ventas: Operaciones gratuitas en ventas',
-  SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL: 'Ventas: Editar comprobante antes de respuesta SUNAT',
-  SALES_TAX_BRIDGE: 'Ventas: Envío a SUNAT (puente tributario)',
-  SALES_TAX_BRIDGE_DEBUG_VIEW: 'Ventas: Visor de diagnóstico SUNAT',
-  SALES_DETRACCION_ENABLED: 'Ventas: Sujeto a detracción (SUNAT)',
-  SALES_RETENCION_ENABLED: 'Ventas: Sujeto a retención (SUNAT)',
-  SALES_PERCEPCION_ENABLED: 'Ventas: Sujeto a percepción (SUNAT)',
-  // Compras
-  PURCHASES_GLOBAL_DISCOUNT_ENABLED: 'Compras: Descuento global en compras',
-  PURCHASES_ITEM_DISCOUNT_ENABLED: 'Compras: Descuento por item en compras',
-  PURCHASES_FREE_ITEMS_ENABLED: 'Compras: Operaciones gratuitas en compras',
-  PURCHASES_DETRACCION_ENABLED: 'Compras: Detracción del proveedor',
-  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Compras: Retención al comprador (nosotros retenemos)',
-  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Compras: Retención del proveedor (nos retienen)',
-  PURCHASES_PERCEPCION_ENABLED: 'Compras: Sujeto a percepción (SUNAT)',
-};
+function commerceCategoryLabel(row: { feature_category_label?: string | null; feature_category_key?: string | null; feature_code: string }): string {
+  const apiLabel = String(row.feature_category_label ?? '').trim();
+  if (apiLabel !== '') {
+    return apiLabel;
+  }
 
-function commerceFeatureLabel(code: string): string {
-  return COMMERCE_FEATURE_LABELS[code] ?? code;
+  return commerceCategoryKey(row)
+    .replace(/_+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function commerceFeatureLabel(row: { feature_code: string; feature_label?: string | null }): string {
+  const apiLabel = (row.feature_label ?? '').trim();
+  if (apiLabel !== '' && apiLabel.toUpperCase() !== row.feature_code.toUpperCase()) {
+    return apiLabel;
+  }
+
+  return row.feature_code
+    .replace(/_+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function operationTypesToText(value: unknown): string {
@@ -248,7 +224,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<MasterSection>('warehouse');
-  const [activeCommerceTab, setActiveCommerceTab] = useState<CommerceCategoryTab>('all');
+  const [activeCommerceTab, setActiveCommerceTab] = useState<string>('all');
   const [sectionSearch, setSectionSearch] = useState('');
 
   const warehouseFormRef = useRef<HTMLFormElement | null>(null);
@@ -433,14 +409,14 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
 
   const filteredCommerceFeatures = useMemo(() => {
     return commerceFeatures.filter((row) => {
-      const matchesSearch = includesSearch(row.feature_code) || includesSearch(commerceFeatureLabel(row.feature_code));
+      const matchesSearch = includesSearch(row.feature_code) || includesSearch(commerceFeatureLabel(row));
       if (!matchesSearch) {
         return false;
       }
       if (activeCommerceTab === 'all') {
         return true;
       }
-      return commerceCategoryByCode(row.feature_code) === activeCommerceTab;
+      return commerceCategoryKey(row) === activeCommerceTab;
     });
   }, [commerceFeatures, includesSearch, activeCommerceTab]);
 
@@ -485,15 +461,22 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
 
-  const isRetailVertical = useMemo(
-    () => String(activeVerticalCode ?? '').trim().toUpperCase() === 'RETAIL',
-    [activeVerticalCode]
-  );
+  const COMMERCE_CATEGORY_TABS = useMemo(() => {
+    const categories = new Map<string, string>();
+    for (const row of commerceFeatures) {
+      const key = commerceCategoryKey(row);
+      if (!categories.has(key)) {
+        categories.set(key, commerceCategoryLabel(row));
+      }
+    }
 
-  const COMMERCE_CATEGORY_TABS = useMemo(
-    () => COMMERCE_CATEGORY_TABS_ALL.filter((tab) => !(isRetailVertical && tab.id === 'restaurante')),
-    [isRetailVertical]
-  );
+    return [
+      { id: 'all', label: 'Todas' },
+      ...Array.from(categories.entries())
+        .map(([id, label]) => ({ id, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    ];
+  }, [commerceFeatures]);
 
   const canManagePriceTiers = isAdminUser;
 
@@ -662,7 +645,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     if (activeSection === 'commerce') {
       lines = [
         'funcion_comercial,habilitado',
-        ...commerceFeatures.map((row) => [toCsvCell(commerceFeatureLabel(row.feature_code)), toCsvCell(row.is_enabled ? 'SI' : 'NO')].join(',')),
+        ...commerceFeatures.map((row) => [toCsvCell(commerceFeatureLabel(row)), toCsvCell(row.is_enabled ? 'SI' : 'NO')].join(',')),
       ];
     }
 
@@ -2134,7 +2117,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                           }
                         />
                         <span className={`mfunc-toggle-chip ${row.is_enabled ? 'is-on' : 'is-off'}`}>{row.is_enabled ? 'ON' : 'OFF'}</span>
-                        <span className="mfunc-item-label">{commerceFeatureLabel(row.feature_code)}</span>
+                        <span className="mfunc-item-label">{commerceFeatureLabel(row)}</span>
                       </label>
                     </div>
 

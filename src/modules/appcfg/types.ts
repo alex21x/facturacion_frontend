@@ -13,6 +13,8 @@ export type ModuleRow = {
 export type FeatureToggleRow = {
   feature_code: string;
   feature_label?: string | null;
+  feature_category_key?: string | null;
+  feature_category_label?: string | null;
   is_enabled: boolean;
   company_enabled: boolean | null;
   branch_enabled: boolean | null;
@@ -166,6 +168,8 @@ export type CompanyOperationalLimitMatrixResponse = {
 export type CommerceSettingsFeature = {
   feature_code: string;
   feature_label?: string | null;
+  feature_category_key?: string | null;
+  feature_category_label?: string | null;
   is_enabled: boolean;
   config: unknown;
   vertical_source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null;
@@ -363,6 +367,8 @@ export type CompanyCommerceAdminMatrixCompany = {
 
 export type CompanyCommerceAdminMatrixResponse = {
   feature_codes: string[];
+  feature_labels?: Record<string, string>;
+  feature_categories?: Record<string, { key: string; label: string }>;
   companies: CompanyCommerceAdminMatrixCompany[];
 };
 

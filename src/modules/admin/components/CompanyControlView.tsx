@@ -25,52 +25,6 @@ import type {
   CompanyVerticalAdminMatrixResponse,
 } from '../../appcfg/types';
 
-const FEATURE_LABELS: Record<string, string> = {
-  SALES_CUSTOMER_PRICE_PROFILE: 'Precios por cliente',
-  SALES_WORKSHOP_MULTI_VEHICLE: 'Taller: clientes con multiples vehiculos',
-  SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja',
-  SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL: 'Editar emitidos antes de respuesta final SUNAT',
-  SALES_ANTICIPO_ENABLED: 'Cobro con anticipo',
-  SALES_TAX_BRIDGE: 'Envío a SUNAT',
-  SALES_TAX_BRIDGE_DEBUG_VIEW: 'Ver diagnóstico SUNAT',
-  SALES_GLOBAL_DISCOUNT_ENABLED: 'Descuento global en ventas',
-  SALES_ITEM_DISCOUNT_ENABLED: 'Descuento por item en ventas',
-  SALES_FREE_ITEMS_ENABLED: 'Operaciones gratuitas en ventas',
-  SALES_DETRACCION_ENABLED: 'Usar detracción en ventas',
-  SALES_RETENCION_ENABLED: 'Usar retención en ventas',
-  SALES_PERCEPCION_ENABLED: 'Usar percepción en ventas',
-  PURCHASES_GLOBAL_DISCOUNT_ENABLED: 'Descuento global en compras',
-  PURCHASES_ITEM_DISCOUNT_ENABLED: 'Descuento por item en compras',
-  PURCHASES_FREE_ITEMS_ENABLED: 'Operaciones gratuitas en compras',
-  PURCHASES_DETRACCION_ENABLED: 'Usar detracción en compras',
-  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Retención compra por comprador',
-  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Retención compra por proveedor',
-  PURCHASES_PERCEPCION_ENABLED: 'Usar percepción en compras',
-};
-
-const REQUIRED_COMMERCE_FEATURE_CODES: string[] = [
-  'SALES_CUSTOMER_PRICE_PROFILE',
-  'SALES_WORKSHOP_MULTI_VEHICLE',
-  'SALES_SELLER_TO_CASHIER',
-  'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
-  'SALES_ANTICIPO_ENABLED',
-  'SALES_TAX_BRIDGE',
-  'SALES_TAX_BRIDGE_DEBUG_VIEW',
-  'SALES_GLOBAL_DISCOUNT_ENABLED',
-  'SALES_ITEM_DISCOUNT_ENABLED',
-  'SALES_FREE_ITEMS_ENABLED',
-  'SALES_DETRACCION_ENABLED',
-  'SALES_RETENCION_ENABLED',
-  'SALES_PERCEPCION_ENABLED',
-  'PURCHASES_GLOBAL_DISCOUNT_ENABLED',
-  'PURCHASES_ITEM_DISCOUNT_ENABLED',
-  'PURCHASES_FREE_ITEMS_ENABLED',
-  'PURCHASES_DETRACCION_ENABLED',
-  'PURCHASES_RETENCION_COMPRADOR_ENABLED',
-  'PURCHASES_RETENCION_PROVEEDOR_ENABLED',
-  'PURCHASES_PERCEPCION_ENABLED',
-];
-
 function buildCommerceFeatureCodes(matrix: CompanyCommerceAdminMatrixResponse | null): string[] {
   const apiCodes = matrix?.feature_codes ?? [];
   const companyCodes = new Set<string>();
@@ -82,22 +36,11 @@ function buildCommerceFeatureCodes(matrix: CompanyCommerceAdminMatrixResponse | 
   }
 
   const merged = new Set<string>([
-    ...REQUIRED_COMMERCE_FEATURE_CODES,
     ...apiCodes,
     ...Array.from(companyCodes),
   ]);
 
-  const preferredOrder = new Map<string, number>();
-  REQUIRED_COMMERCE_FEATURE_CODES.forEach((code, index) => preferredOrder.set(code, index));
-
-  return Array.from(merged).sort((a, b) => {
-    const aIndex = preferredOrder.get(a);
-    const bIndex = preferredOrder.get(b);
-    if (aIndex !== undefined && bIndex !== undefined) return aIndex - bIndex;
-    if (aIndex !== undefined) return -1;
-    if (bIndex !== undefined) return 1;
-    return a.localeCompare(b);
-  });
+  return Array.from(merged).sort((a, b) => a.localeCompare(b));
 }
 
 function normalizeCompanyFeatures(codes: string[], companyFeatures: Record<string, boolean> | undefined): Record<string, boolean> {
@@ -108,8 +51,12 @@ function normalizeCompanyFeatures(codes: string[], companyFeatures: Record<strin
   return normalized;
 }
 
-function featureLabel(code: string): string {
-  if (FEATURE_LABELS[code]) return FEATURE_LABELS[code];
+function featureLabel(code: string, labelsByCode: Record<string, string>): string {
+  const apiLabel = (labelsByCode[code] ?? '').trim();
+  if (apiLabel !== '' && apiLabel.toUpperCase() !== code.toUpperCase()) {
+    return apiLabel;
+  }
+
   return code.replace(/_+/g, ' ').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 }
 
@@ -394,6 +341,10 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
 
   const allCommerceFeatureCodes = useMemo(
     () => buildCommerceFeatureCodes(commerceMatrix),
+    [commerceMatrix]
+  );
+  const commerceFeatureLabelsByCode = useMemo(
+    () => commerceMatrix?.feature_labels ?? {},
     [commerceMatrix]
   );
 
@@ -1618,7 +1569,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                           title={code}
                         >
                           <div className="adm-feature-card__header">
-                            <span className="adm-feature-card__name">{featureLabel(code)}</span>
+                            <span className="adm-feature-card__name">{featureLabel(code, commerceFeatureLabelsByCode)}</span>
                             <label className="adm-switch">
                               <input
                                 type="checkbox"
