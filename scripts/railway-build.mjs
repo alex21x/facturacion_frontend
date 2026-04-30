@@ -35,7 +35,9 @@ try {
   if (existsSync(outputDir)) {
     writeFileSync(`${outputDir}/version.json`, JSON.stringify(metadata, null, 2));
   }
-  if (existsSync('dist')) {
+  // Only write dist/version.json for the app build.
+  // The admin build must NOT overwrite it or dist/ will report target:"admin".
+  if (target !== 'admin' && existsSync('dist')) {
     writeFileSync('dist/version.json', JSON.stringify(metadata, null, 2));
   }
 } catch {
