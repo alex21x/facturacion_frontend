@@ -652,6 +652,8 @@ export function App() {
   const moduleExecutionRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollToModuleRef = useRef(false);
   const hasHydratedOperationalContextRef = useRef(false);
+  const operationalContextInFlightKeyRef = useRef<string | null>(null);
+  const operationalContextLastCompletedKeyRef = useRef<string | null>(null);
 
   const operationalContextScope = session
     ? `${authScope}:${session.user.company_id}`
@@ -1142,7 +1144,18 @@ export function App() {
     warehouseId?: number | null,
     cashRegisterId?: number | null
   ): Promise<void> {
+    const requestKey = `${branchId ?? 'ALL'}:${warehouseId ?? 'ALL'}:${cashRegisterId ?? 'ALL'}`;
+
+    if (operationalContextInFlightKeyRef.current === requestKey) {
+      return;
+    }
+
+    if (operationalContextLastCompletedKeyRef.current === requestKey && hasHydratedOperationalContextRef.current) {
+      return;
+    }
+
     try {
+      operationalContextInFlightKeyRef.current = requestKey;
       setIsContextLoading(true);
       const nextContext = await fetchOperationalContext(accessToken, {
         branchId,
@@ -1194,10 +1207,14 @@ export function App() {
       }
 
       hasHydratedOperationalContextRef.current = true;
+      operationalContextLastCompletedKeyRef.current = requestKey;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar contexto operativo';
       setErrorMessage(message);
     } finally {
+      if (operationalContextInFlightKeyRef.current === requestKey) {
+        operationalContextInFlightKeyRef.current = null;
+      }
       setIsContextLoading(false);
     }
   }
