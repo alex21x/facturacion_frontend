@@ -22,6 +22,7 @@ import type {
   OperationalLimitsResponse,
   ReconcileStatsResponse,
   SalesTaxBridgeConfig,
+  UpdateCommerceSettingsPayload,
   UpdateOperationalLimitsPayload,
 } from '../types';
 
@@ -515,18 +516,36 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
       const result = await updateCommerceSettings(accessToken, { features: payload });
 
       if (branchId) {
+        const branchSyncFeatures: UpdateCommerceSettingsPayload['features'] = [
+          {
+            feature_code: 'SALES_TAX_BRIDGE',
+            is_enabled: commerceFeaturesForm.SALES_TAX_BRIDGE ?? false,
+            config: {
+              codigolocal: String(taxBridgeForm.codigolocal ?? '').trim(),
+            },
+          },
+        ];
+
+        if (Object.prototype.hasOwnProperty.call(commerceFeaturesForm, 'RESTAURANT_MENU_IGV_INCLUDED')) {
+          branchSyncFeatures.push({
+            feature_code: 'RESTAURANT_MENU_IGV_INCLUDED',
+            is_enabled: commerceFeaturesForm.RESTAURANT_MENU_IGV_INCLUDED ?? false,
+            config: null,
+          });
+        }
+
+        if (Object.prototype.hasOwnProperty.call(commerceFeaturesForm, 'RESTAURANT_RECIPES_ENABLED')) {
+          branchSyncFeatures.push({
+            feature_code: 'RESTAURANT_RECIPES_ENABLED',
+            is_enabled: commerceFeaturesForm.RESTAURANT_RECIPES_ENABLED ?? false,
+            config: null,
+          });
+        }
+
         await updateCommerceSettings(
           accessToken,
           {
-            features: [
-              {
-                feature_code: 'SALES_TAX_BRIDGE',
-                is_enabled: commerceFeaturesForm.SALES_TAX_BRIDGE ?? false,
-                config: {
-                  codigolocal: String(taxBridgeForm.codigolocal ?? '').trim(),
-                },
-              },
-            ],
+            features: branchSyncFeatures,
           },
           branchId
         );
