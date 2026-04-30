@@ -180,10 +180,11 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const description = (item.description || '').trim() || 'Producto sin descripcion';
         const unitCode = (item.unit_code || '').trim() || '-';
         const paymentMethod = (doc.payment_method_name || '').trim() || '-';
+        const sellerName = (doc.user_name || '').trim() || 'N/A';
         const documentKind = (doc.document_kind_label || doc.document_kind || '').trim() || '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
         const vehiclePlate = (doc.vehicle_plate_snapshot || '').trim() || '-';
-        const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${workshopMultiVehicleEnabled ? vehiclePlate.toLowerCase() : ''}`;
+        const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${sellerName.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${workshopMultiVehicleEnabled ? vehiclePlate.toLowerCase() : ''}`;
         const current = grouped.get(key);
 
         if (current) {
@@ -199,6 +200,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
             description,
             unitCode,
             paymentMethod,
+            sellerName,
             documentKind,
             documentNumber,
             vehiclePlate,
@@ -996,8 +998,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
               <thead>
                 <tr>
                   <th style={{ width: '44px', padding: '10px 12px' }}></th>
+                  <th style={{ minWidth: '90px', padding: '10px 14px', whiteSpace: 'nowrap' }}>Sesion</th>
                   <th style={{ minWidth: '180px', padding: '10px 14px', whiteSpace: 'nowrap' }}>Fecha de Apertura</th>
                   <th style={{ minWidth: '320px', padding: '10px 14px', whiteSpace: 'nowrap' }}>Caja / Punto de Caja</th>
+                  <th style={{ minWidth: '200px', padding: '10px 14px', whiteSpace: 'nowrap' }}>Usuario</th>
                   <th style={{ minWidth: '170px', padding: '10px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>Saldo de Apertura</th>
                   <th style={{ minWidth: '170px', padding: '10px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>Saldo de Cierre</th>
                   <th style={{ minWidth: '170px', padding: '10px 14px', textAlign: 'right', whiteSpace: 'nowrap' }}>Diferencia de Caja</th>
@@ -1007,7 +1011,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
               </thead>
               <tbody>
                 {sessions.length === 0 && (
-                  <tr><td colSpan={8} style={{ textAlign: 'center' }}>Sin sesiones</td></tr>
+                  <tr><td colSpan={10} style={{ textAlign: 'center' }}>Sin sesiones</td></tr>
                 )}
                 {sessions.map((s) => {
                   const difference = s.closing_balance != null ? Number(s.closing_balance) - Number(s.expected_balance) : null;
@@ -1018,8 +1022,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                         <td style={{ textAlign: 'center', padding: '10px 12px' }}>
                           <span className={isExpanded ? 'cash-row-toggle is-open' : 'cash-row-toggle'}>{isExpanded ? '▾' : '▸'}</span>
                         </td>
+                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap', fontWeight: 600 }}>#{s.id}</td>
                         <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.opened_at ? fmtDateTimeLima(s.opened_at) : '-'}</td>
                         <td style={{ padding: '10px 14px', minWidth: '320px' }}>{s.cash_register_name ?? s.cash_register_code ?? s.cash_register_id}</td>
+                        <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.user_name?.trim() || '-'}</td>
                         <td style={{ textAlign:'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{Number(s.opening_balance).toFixed(2)}</td>
                         <td style={{ textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap' }}>{s.closing_balance != null ? Number(s.closing_balance).toFixed(2) : '-'}</td>
                         <td style={{  textAlign: 'right', padding: '10px 14px', whiteSpace: 'nowrap', color: difference != null && difference >= 0 ? 'var(--color-ok)' : difference != null ? 'var(--color-err)' : undefined }}>
@@ -1042,7 +1048,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                       
                       {isExpanded && sessionDetail && (
                         <tr style={{ backgroundColor: '#f8fafc' }}>
-                          <td colSpan={8} style={{ padding: '16px', borderTop: '1px solid #ddd' }}>
+                          <td colSpan={10} style={{ padding: '16px', borderTop: '1px solid #ddd' }}>
                             {/* Resumen */}
                             <div className="cash-detail-card" style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
                               <h5 style={{ margin: '0 0 10px 0' }}>Resumen de Sesión</h5>
@@ -1107,38 +1113,43 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                 <div style={{ overflowX: 'auto' }}>
                                   <table style={{ width: '100%', fontSize: '0.8rem', tableLayout: 'fixed' }}>
                                     <colgroup>
-                                      <col style={{ width: '31%' }} />
-                                      <col style={{ width: '12%' }} />
+                                      <col style={{ width: '26%' }} />
+                                      <col style={{ width: '11%' }} />
+                                      <col style={{ width: '11%' }} />
                                       <col style={{ width: '7%' }} />
                                       <col style={{ width: '8%' }} />
                                       <col style={{ width: '11%' }} />
-                                      <col style={{ width: '12%' }} />
-                                      <col style={{ width: '10%' }} />
+                                      <col style={{ width: '11%' }} />
                                       <col style={{ width: '9%' }} />
+                                      <col style={{ width: '6%' }} />
                                     </colgroup>
                                     <thead>
                                       <tr style={{ borderBottom: '2px solid #ddd' }}>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Producto</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Tipo de pago</th>
+                                        <th style={{ textAlign: 'left', padding: '6px' }}>Vendedor</th>
                                         <th style={{ textAlign: 'center', padding: '6px' }}>Unidad</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Cantidad</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Tipo comprobante</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Serie-correlativo</th>
                                         {workshopMultiVehicleEnabled && <th style={{ textAlign: 'left', padding: '6px' }}>Vehículo</th>}
+                                        <th style={{ textAlign: 'center', padding: '6px' }}>Sesion</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Total</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Margen</th>
                                       </tr>
                                     </thead>
                                     <tbody>
                                       {soldProducts.map((row) => (
-                                        <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.documentKind}-${row.documentNumber}-${row.vehiclePlate}`} style={{ borderBottom: '1px solid #eee' }}>
+                                        <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.sellerName}-${row.documentKind}-${row.documentNumber}-${row.vehiclePlate}`} style={{ borderBottom: '1px solid #eee' }}>
                                           <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.description}</td>
                                           <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.paymentMethod}</td>
+                                          <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.sellerName}</td>
                                           <td style={{ padding: '6px', textAlign: 'center' }}>{row.unitCode}</td>
                                           <td style={{ padding: '6px', textAlign: 'right' }}>{row.quantity.toFixed(3)}</td>
                                           <td style={{ padding: '6px' }}>{row.documentKind}</td>
                                           <td style={{ padding: '6px' }}>{row.documentNumber}</td>
                                           {workshopMultiVehicleEnabled && <td style={{ padding: '6px' }}>{row.vehiclePlate}</td>}
+                                          <td style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>#{sessionDetail.session.id}</td>
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600 }}>{row.amount.toFixed(2)}</td>
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmount >= 0 ? '#0f766e' : '#b91c1c' }}>
                                             {row.marginAmount.toFixed(2)} ({row.marginPercent.toFixed(1)}%)
@@ -1166,7 +1177,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
 
                       {isExpanded && loadingDetail && (
                         <tr>
-                          <td colSpan={8} style={{ padding: '16px', textAlign: 'center' }}>Cargando detalles...</td>
+                          <td colSpan={10} style={{ padding: '16px', textAlign: 'center' }}>Cargando detalles...</td>
                         </tr>
                       )}
                     </Fragment>

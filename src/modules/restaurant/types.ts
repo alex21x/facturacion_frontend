@@ -75,6 +75,8 @@ export type RestaurantBootstrapResponse = {
   payment_methods: RestaurantPaymentMethod[];
   active_igv_rate_percent: number;
   restaurant_price_includes_igv: boolean;
+  restaurant_recipes_enabled?: boolean;
+  sales_seller_to_cashier_enabled?: boolean;
   document_kind_ids?: Partial<Record<'SALES_ORDER' | 'INVOICE' | 'RECEIPT', number>>;
   series_numbers: RestaurantSeriesNumber[];
 };
@@ -132,6 +134,9 @@ export type RestaurantOrderItem = {
   unit_id?: number | null;
   tax_type?: string;
   tax_rate?: number;
+  subtotal?: number;
+  tax_total?: number;
+  total?: number;
 };
 
 export type CreateRestaurantOrderPayload = {
@@ -148,8 +153,8 @@ export type CreateRestaurantOrderPayload = {
 };
 
 export type CheckoutRestaurantOrderPayload = {
-  /** 'INVOICE' (Factura) or 'RECEIPT' (Boleta) */
-  target_document_kind: 'INVOICE' | 'RECEIPT';
+  /** 'SALES_ORDER' (Nota de pedido para caja), 'INVOICE' or 'RECEIPT' */
+  target_document_kind: 'SALES_ORDER' | 'INVOICE' | 'RECEIPT';
   /** Series to use; backend auto-resolves when omitted */
   series?: string | null;
   cash_register_id?: number | null;
@@ -164,6 +169,7 @@ export type CheckoutResult = {
   number: number;
   total: number;
   status: string;
+  pending_cashier_checkout?: boolean;
 };
 
 export type RestaurantCustomerSuggestion = {
@@ -222,7 +228,8 @@ export type PreparationIngredientSummary = {
 
 export type PreparationRequirementsResponse = {
   order_id: number;
-  warehouse_id: number;
+  warehouse_id: number | null;
+  menu_items?: Array<unknown>;
   can_prepare: boolean;
   ingredients_summary: PreparationIngredientSummary[];
 };

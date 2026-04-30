@@ -13,6 +13,8 @@ export type CommercialDocumentListItem = {
   document_kind: string;
   document_kind_id?: number | null;
   document_kind_base?: string | null;
+  conversion_origin?: string | null;
+  has_restaurant_origin?: boolean | string | number;
   is_tributary_document?: boolean | string | number;
   series: string;
   number: number;

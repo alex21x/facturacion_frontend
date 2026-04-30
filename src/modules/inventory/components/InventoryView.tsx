@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
+import { createStockEntry } from '../../purchases/api';
 import {
   fetchInventoryLots,
   fetchInventoryProducts,
@@ -147,6 +148,15 @@ const EXPORT_KEY_LABELS: Record<string, string> = {
   days_to_expire: 'DiasParaVencer',
 };
 
+function numericInputValue(value: string): number | null {
+  if (value.trim() === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function humanizeInventoryNote(note: string | null | undefined): string {
   const raw = (note ?? '').trim();
   if (!raw) {
@@ -230,6 +240,17 @@ export function InventoryView({
   const [kardexMeta, setKardexMeta] = useState<KardexMeta>({ current_page: 1, per_page: 25, total: 0, total_pages: 1 });
   const [stockPage, setStockPage] = useState(1);
   const [stockPerPage] = useState(20);
+  const [adjustmentProductId, setAdjustmentProductId] = useState<number | null>(null);
+  const [adjustmentProductQuery, setAdjustmentProductQuery] = useState('');
+  const [adjustmentProductSuggestions, setAdjustmentProductSuggestions] = useState<InventoryProduct[]>([]);
+  const [adjustmentProductSearching, setAdjustmentProductSearching] = useState(false);
+  const [adjustmentProductSuggestOpen, setAdjustmentProductSuggestOpen] = useState(false);
+  const [adjustmentActiveProductIndex, setAdjustmentActiveProductIndex] = useState(-1);
+  const [adjustmentLotId, setAdjustmentLotId] = useState<number | null>(null);
+  const [adjustmentQty, setAdjustmentQty] = useState('');
+  const [adjustmentUnitCost, setAdjustmentUnitCost] = useState('');
+  const [adjustmentNotes, setAdjustmentNotes] = useState('');
+  const [adjustmentSubmitting, setAdjustmentSubmitting] = useState(false);
 
   // Inventory Pro dashboard/report state
   const [dashboardDays, setDashboardDays] = useState(30);
@@ -423,6 +444,74 @@ export function InventoryView({
     return filteredStock.slice(start, start + stockPerPage);
   }, [filteredStock, stockPage, stockPerPage]);
 
+  const adjustmentProduct = useMemo(
+    () => products.find((row) => row.id === adjustmentProductId) ?? null,
+    [products, adjustmentProductId]
+  );
+
+  const adjustmentLots = useMemo(() => {
+    if (!adjustmentProductId) {
+      return [] as InventoryLotRow[];
+    }
+
+    return lots.filter((row) => {
+      if (row.product_id !== adjustmentProductId) {
+        return false;
+      }
+
+      if (warehouseId && row.warehouse_id !== warehouseId) {
+        return false;
+      }
+
+      return Number(row.stock) > 0;
+    });
+  }, [lots, adjustmentProductId, warehouseId]);
+
+  useEffect(() => {
+    const query = adjustmentProductQuery.trim();
+    if (query.length < 1) {
+      setAdjustmentProductSuggestions([]);
+      setAdjustmentActiveProductIndex(-1);
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setAdjustmentProductSearching(true);
+      try {
+        const rows = await fetchInventoryProducts(accessToken, {
+          search: query,
+          warehouseId: warehouseId ?? undefined,
+          status: 1,
+          limit: 12,
+          autocomplete: true,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        const filtered = rows.filter((row) => row.is_stockable);
+        setAdjustmentProductSuggestions(filtered);
+        setAdjustmentActiveProductIndex(filtered.length > 0 ? 0 : -1);
+      } catch {
+        if (!cancelled) {
+          setAdjustmentProductSuggestions([]);
+          setAdjustmentActiveProductIndex(-1);
+        }
+      } finally {
+        if (!cancelled) {
+          setAdjustmentProductSearching(false);
+        }
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [accessToken, adjustmentProductQuery, warehouseId]);
+
   useEffect(() => {
     setStockPage(1);
   }, [stockQuickSearch, stockNatureFilter, stock.length]);
@@ -442,6 +531,128 @@ export function InventoryView({
   function openLotsByLocation(location: string) {
     setLotQuickSearch(location);
     setActiveTab('lotes');
+  }
+
+  function resetAdjustmentForm() {
+    setAdjustmentProductId(null);
+    setAdjustmentProductQuery('');
+    setAdjustmentProductSuggestions([]);
+    setAdjustmentProductSuggestOpen(false);
+    setAdjustmentActiveProductIndex(-1);
+    setAdjustmentLotId(null);
+    setAdjustmentQty('');
+    setAdjustmentUnitCost('');
+    setAdjustmentNotes('');
+  }
+
+  function startAdjustment(row: InventoryStockRow) {
+    setAdjustmentProductId(row.product_id);
+    setAdjustmentProductQuery(`${row.sku ? `[${row.sku}] ` : ''}${row.product_name}`);
+    setAdjustmentProductSuggestOpen(false);
+    setAdjustmentProductSuggestions([]);
+    setAdjustmentActiveProductIndex(-1);
+    setAdjustmentLotId(null);
+    setAdjustmentQty('');
+    setAdjustmentUnitCost('');
+    setAdjustmentNotes(`Regularizacion manual de stock. Stock previo visible: ${Number(row.stock).toFixed(3)}`);
+  }
+
+  function selectAdjustmentProduct(product: InventoryProduct) {
+    setAdjustmentProductId(product.id);
+    setAdjustmentProductQuery(`${product.sku ? `[${product.sku}] ` : ''}${product.name}`);
+    setAdjustmentProductSuggestOpen(false);
+    setAdjustmentProductSuggestions([]);
+    setAdjustmentActiveProductIndex(-1);
+    setAdjustmentLotId(null);
+  }
+
+  function handleAdjustmentProductKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!adjustmentProductSuggestOpen || adjustmentProductSuggestions.length === 0) {
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setAdjustmentActiveProductIndex((prev) => Math.min(prev + 1, adjustmentProductSuggestions.length - 1));
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setAdjustmentActiveProductIndex((prev) => Math.max(prev - 1, 0));
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const selected = adjustmentProductSuggestions[adjustmentActiveProductIndex >= 0 ? adjustmentActiveProductIndex : 0];
+      if (selected) {
+        selectAdjustmentProduct(selected);
+      }
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setAdjustmentProductSuggestOpen(false);
+      setAdjustmentActiveProductIndex(-1);
+    }
+  }
+
+  async function submitAdjustment() {
+    if (!warehouseId) {
+      setMessage('Selecciona un almacen activo para registrar el ajuste.');
+      return;
+    }
+
+    if (!adjustmentProductId) {
+      setMessage('Selecciona un producto para ajustar.');
+      return;
+    }
+
+    const qty = numericInputValue(adjustmentQty);
+    if (qty === null || Math.abs(qty) < 0.00000001) {
+      setMessage('La cantidad del ajuste debe ser distinta de cero.');
+      return;
+    }
+
+    if (!adjustmentNotes.trim()) {
+      setMessage('Debes registrar el motivo del ajuste para asegurar la trazabilidad.');
+      return;
+    }
+
+    if (adjustmentProduct?.lot_tracking && adjustmentLots.length > 0 && !adjustmentLotId) {
+      setMessage('Selecciona el lote para el producto trazado antes de registrar el ajuste.');
+      return;
+    }
+
+    const unitCost = numericInputValue(adjustmentUnitCost);
+
+    setAdjustmentSubmitting(true);
+    try {
+      await createStockEntry(accessToken, {
+        warehouse_id: warehouseId,
+        entry_type: 'ADJUSTMENT',
+        notes: adjustmentNotes.trim(),
+        items: [
+          {
+            product_id: adjustmentProductId,
+            qty,
+            unit_cost: unitCost ?? undefined,
+            lot_id: adjustmentLotId ?? undefined,
+          },
+        ],
+      });
+
+      setMessage('Ajuste de stock registrado correctamente.');
+      resetAdjustmentForm();
+      await Promise.all([loadInventory(), loadKardex(1)]);
+      setActiveTab('kardex');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo registrar el ajuste de stock.');
+    } finally {
+      setAdjustmentSubmitting(false);
+    }
   }
 
   async function loadKardex(page = kardexPage) {
@@ -1091,6 +1302,123 @@ export function InventoryView({
               <strong>{totalStock.toFixed(3)}</strong>
             </article>
           </div>
+          <div className="form-card inventory-search-card inventory-adjustment-card">
+            <div className="inventory-adjustment-header">
+              <div>
+                <h4>Ajuste manual de stock</h4>
+                <p>Registra regularizaciones con motivo obligatorio. El movimiento quedara trazado en kardex.</p>
+              </div>
+              <button type="button" onClick={resetAdjustmentForm} disabled={adjustmentSubmitting}>
+                Limpiar
+              </button>
+            </div>
+            <div className="grid-form inventory-adjustment-grid">
+              <label>
+                Producto
+                <div className="with-suggest">
+                  <input
+                    value={adjustmentProductQuery}
+                    onChange={(e) => {
+                      setAdjustmentProductQuery(e.target.value);
+                      setAdjustmentProductId(null);
+                      setAdjustmentLotId(null);
+                      setAdjustmentProductSuggestOpen(true);
+                    }}
+                    onFocus={() => {
+                      if (adjustmentProductSuggestions.length > 0 || adjustmentProductQuery.trim().length > 0) {
+                        setAdjustmentProductSuggestOpen(true);
+                      }
+                    }}
+                    onBlur={() => {
+                      window.setTimeout(() => setAdjustmentProductSuggestOpen(false), 120);
+                    }}
+                    onKeyDown={handleAdjustmentProductKeyDown}
+                    placeholder="Escribe nombre o SKU del producto"
+                    autoComplete="off"
+                    disabled={adjustmentSubmitting}
+                  />
+                  {adjustmentProductSearching && (
+                    <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#7a6f63' }}>
+                      Buscando...
+                    </span>
+                  )}
+                  {adjustmentProductSuggestOpen && adjustmentProductSuggestions.length > 0 && (
+                    <div className="suggest-box suggest-box--product">
+                      {adjustmentProductSuggestions.map((row, index) => (
+                        <button
+                          key={row.id}
+                          type="button"
+                          className={`suggest-item ${index === adjustmentActiveProductIndex ? 'active' : ''}`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            selectAdjustmentProduct(row);
+                          }}
+                        >
+                          <strong>{row.name}</strong>
+                          <span className="suggest-sku">{row.sku ?? 'SIN-SKU'}</span>
+                          {row.category_name && <span className="suggest-unit">{row.category_name}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </label>
+              <label>
+                Cantidad (+/-)
+                <input
+                  type="number"
+                  step="0.001"
+                  value={adjustmentQty}
+                  onChange={(e) => setAdjustmentQty(e.target.value)}
+                  placeholder="Ej: -2 o 5"
+                  disabled={adjustmentSubmitting}
+                />
+              </label>
+              <label>
+                Costo unitario
+                <input
+                  type="number"
+                  step="0.0001"
+                  min="0"
+                  value={adjustmentUnitCost}
+                  onChange={(e) => setAdjustmentUnitCost(e.target.value)}
+                  placeholder="Opcional"
+                  disabled={adjustmentSubmitting}
+                />
+              </label>
+              <label>
+                Lote
+                <select
+                  value={adjustmentLotId ?? ''}
+                  onChange={(e) => setAdjustmentLotId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={adjustmentSubmitting || adjustmentLots.length === 0}
+                >
+                  <option value="">{adjustmentLots.length === 0 ? 'Sin lotes aplicables' : 'Selecciona un lote'}</option>
+                  {adjustmentLots.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.lot_code} | Stock {Number(row.stock).toFixed(3)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label className="inventory-adjustment-notes">
+              Motivo / observacion
+              <textarea
+                value={adjustmentNotes}
+                onChange={(e) => setAdjustmentNotes(e.target.value)}
+                rows={3}
+                placeholder="Explica por que se regulariza el stock"
+                disabled={adjustmentSubmitting}
+              />
+            </label>
+            <div className="inventory-search-actions inventory-adjustment-actions">
+              <button type="button" onClick={() => void submitAdjustment()} disabled={adjustmentSubmitting || !warehouseId}>
+                {adjustmentSubmitting ? 'Registrando...' : 'Registrar ajuste'}
+              </button>
+              {!warehouseId && <small>Debes tener un almacen activo para usar esta accion.</small>}
+            </div>
+          </div>
           <div className="table-wrap">
             <h4>Stock por producto y almacen</h4>
             <table className="inventory-table inventory-stock-table">
@@ -1101,11 +1429,12 @@ export function InventoryView({
                   <th>Almacen</th>
                   <th>Ubicacion</th>
                   <th>Stock</th>
+                  <th>Accion</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredStock.length === 0 && (
-                  <tr><td colSpan={5} style={{ textAlign: 'center' }}>Sin datos</td></tr>
+                  <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin datos</td></tr>
                 )}
                 {paginatedStock.map((row) => (
                   <tr key={`${row.product_id}-${row.warehouse_id}`}>
@@ -1114,6 +1443,15 @@ export function InventoryView({
                     <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
                     <td>{productLocationById.get(row.product_id) ?? '-'}</td>
                     <td>{row.stock}</td>
+                    <td>
+                      <button
+                        type="button"
+                        onClick={() => startAdjustment(row)}
+                        disabled={adjustmentSubmitting || (warehouseId !== null && row.warehouse_id !== warehouseId)}
+                      >
+                        Ajustar
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

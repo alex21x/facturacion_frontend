@@ -997,6 +997,9 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
             unit_id: item.unit_id,
             tax_type: item.tax_type,
             tax_rate: item.tax_rate,
+            subtotal: item.subtotal,
+            tax_total: item.tax_total,
+            total: item.total,
           })),
         });
       }

@@ -51,6 +51,7 @@ import {
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import type {
   CommercialDocumentListItem,
+  CommercialDocumentProductDetailRow,
   CreateDocumentForm,
   CommercialDocumentProductDetailRow,
   PaginationMeta,
@@ -142,6 +143,7 @@ type DocumentAdvancedFilters = {
   customer: string;
   customerId: string;
   customerVehicleId: string;
+  sourceOrigin: '' | 'RESTAURANT';
   issueDateFrom: string;
   issueDateTo: string;
   series: string;
@@ -161,6 +163,7 @@ const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
   customerId: '',
   customerVehicleId: '',
+  sourceOrigin: '',
   issueDateFrom: '',
   issueDateTo: '',
   series: '',
@@ -1239,6 +1242,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         customer: typeof parsed.customer === 'string' ? parsed.customer : '',
         customerId: typeof parsed.customerId === 'string' ? parsed.customerId : '',
         customerVehicleId: typeof parsed.customerVehicleId === 'string' ? parsed.customerVehicleId : '',
+        sourceOrigin: parsed.sourceOrigin === 'RESTAURANT' ? 'RESTAURANT' : '',
         issueDateFrom: typeof parsed.issueDateFrom === 'string' ? parsed.issueDateFrom : '',
         issueDateTo: typeof parsed.issueDateTo === 'string' ? parsed.issueDateTo : '',
         series: typeof parsed.series === 'string' ? parsed.series : '',
@@ -2109,6 +2113,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             isCashierPendingQueue ? 'PENDING_CONVERSION' : documentViewFilter,
             documentKinds
           ),
+          sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
           status: documentFiltersApplied.status || undefined,
           customer: documentFiltersApplied.customer || undefined,
           customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
@@ -3557,6 +3562,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
+        sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -3606,6 +3612,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
+        sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -3662,6 +3669,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
+        sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -3705,6 +3713,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
+        sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -6352,6 +6361,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'SALES_ORDER' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('SALES_ORDER'); setDocumentsPage(1); }} disabled={loadingDocuments}>Notas de pedido</button>
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'PENDING_CONVERSION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('PENDING_CONVERSION'); setDocumentsPage(1); }} disabled={loadingDocuments}>Pendientes por convertir</button>
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'CONVERTED' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('CONVERTED'); setDocumentsPage(1); }} disabled={loadingDocuments}>Ya convertidos</button>
+          <button
+            type="button"
+            className={`doc-kind-tab${documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? ' active' : ''}`}
+            onClick={() => {
+              const next = documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? '' : 'RESTAURANT';
+              setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: next }));
+              setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: next }));
+              setDocumentsPage(1);
+            }}
+            disabled={loadingDocuments}
+          >
+            Origen restaurante
+          </button>
         </div>
 
         {/* Advanced search filters */}
@@ -6462,6 +6484,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 <option value="CANCELED">Cancelado</option>
               </select>
             </label>
+            <label>
+              <span>Origen</span>
+              <select
+                value={documentFiltersDraft.sourceOrigin}
+                onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: event.target.value as '' | 'RESTAURANT' }))}
+              >
+                <option value="">Todos</option>
+                <option value="RESTAURANT">Restaurante</option>
+              </select>
+            </label>
           </div>
           <div className="report-filter-actions">
             <button type="button" className="btn-apply" onClick={applyAdvancedDocumentFilters} disabled={loadingDocuments}>
@@ -6525,7 +6557,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               >
                 <td>{row.id}</td>
                 <td>
-                  {docKindLabelResolved(row.document_kind)} {row.series}-{row.number}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                    <span>{docKindLabelResolved(row.document_kind)} {row.series}-{row.number}</span>
+                    {toBooleanFlag(row.has_restaurant_origin) && (
+                      <span style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        width: 'fit-content',
+                        padding: '0.08rem 0.45rem',
+                        borderRadius: '9999px',
+                        fontSize: '0.68rem',
+                        fontWeight: 700,
+                        background: '#ecfeff',
+                        color: '#0e7490',
+                        border: '1px solid #67e8f9',
+                      }}>
+                        Restaurante
+                      </span>
+                    )}
+                  </div>
                 </td>
                 <td>{row.issue_at ? formatStoredDateTime(row.issue_at) : '-'}</td>
                 <td>{row.customer_name}</td>
