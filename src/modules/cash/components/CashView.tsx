@@ -165,6 +165,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       description: string;
       unitCode: string;
       paymentMethod: string;
+      sellerName: string;
       documentKind: string;
       documentNumber: string;
       vehiclePlate: string;

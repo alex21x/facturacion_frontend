@@ -53,7 +53,6 @@ import type {
   CommercialDocumentListItem,
   CommercialDocumentProductDetailRow,
   CreateDocumentForm,
-  CommercialDocumentProductDetailRow,
   PaginationMeta,
   SalesCustomerSuggestion,
   SalesCustomerVehicle,
