@@ -623,6 +623,18 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     return grouped;
   }, [readonlyFeatures]);
 
+  // Ordered + translated category list for the Módulos tab.
+  // Only restaurant (if vertical matches), sales, purchases are shown.
+  const modulosCategoryMeta = useMemo(() => {
+    const isRestaurantVertical = (activeVerticalCode ?? '').trim().toUpperCase() === 'RESTAURANT';
+    const order: { key: string; label: string }[] = [
+      ...(isRestaurantVertical ? [{ key: 'restaurant', label: 'Restaurante' }] : []),
+      { key: 'sales', label: 'Ventas' },
+      { key: 'purchases', label: 'Compras' },
+    ];
+    return order;
+  }, [activeVerticalCode]);
+
   return (
     <section className="module-panel">
       <div className="module-header">
@@ -925,7 +937,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
             <div className="cfg-card">
               <h4 className="cfg-card-title">{UI_LABELS.featuresHeader}</h4>
               <div className="cfg-feature-groups">
-                {visibleFeatureCategoryMeta.map((meta) => {
+                {modulosCategoryMeta.map((meta) => {
                   const readonlyItems = groupedReadonlyFeaturesFiltered.get(meta.key) ?? [];
                   const editableItems = groupedEditableFeatures.get(meta.key) ?? [];
                   if (readonlyItems.length === 0 && editableItems.length === 0) {
