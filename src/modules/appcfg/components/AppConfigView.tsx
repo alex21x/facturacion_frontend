@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtDateTimeShortLima } from '../../../shared/utils/lima';
 import {
   fetchCompanyVerticalSettings,
@@ -268,6 +268,8 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const [verticalSettings, setVerticalSettings] = useState<CompanyVerticalSettingsResponse | null>(null);
   const [selectedVerticalCode, setSelectedVerticalCode] = useState('');
   const [activeTab, setActiveTab] = useState<'identidad' | 'plataforma' | 'modulos' | 'comercial'>('identidad');
+  const appCfgLoadInFlightKeyRef = useRef<string | null>(null);
+  const lastCompletedAutoLoadKeyRef = useRef<string | null>(null);
 
   const isAdminUser = useMemo(() => {
     const roleCode = (currentUserRoleCode ?? '').trim().toUpperCase();
@@ -303,7 +305,17 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     []
   );
 
-  async function loadAppCfg() {
+  async function loadAppCfg(force = false) {
+    const loadKey = `${accessToken}:${branchId ?? 'ALL'}`;
+    if (!force && lastCompletedAutoLoadKeyRef.current === loadKey) {
+      return;
+    }
+
+    if (appCfgLoadInFlightKeyRef.current === loadKey) {
+      return;
+    }
+
+    appCfgLoadInFlightKeyRef.current = loadKey;
     setLoading(true);
     setMessage('');
 
@@ -398,12 +410,18 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
       const text = error instanceof Error ? error.message : 'No se pudo cargar AppCfg';
       setMessage(text);
     } finally {
+      if (!force) {
+        lastCompletedAutoLoadKeyRef.current = loadKey;
+      }
+      if (appCfgLoadInFlightKeyRef.current === loadKey) {
+        appCfgLoadInFlightKeyRef.current = null;
+      }
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadAppCfg();
+    void loadAppCfg(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, branchId]);
 
@@ -660,7 +678,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
             )}
           <p className="cfg-lead">{UI_LABELS.description}</p>
         </div>
-        <button type="button" onClick={() => void loadAppCfg()} disabled={loading}>
+        <button type="button" onClick={() => void loadAppCfg(true)} disabled={loading}>
           {UI_LABELS.refresh}
         </button>
       </div>
