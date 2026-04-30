@@ -109,23 +109,10 @@ export type MastersDashboardResponse = {
 };
 
 export type CommerceFeatureRow = {
-  feature_code:
-    | 'PRODUCT_MULTI_UOM'
-    | 'PRODUCT_UOM_CONVERSIONS'
-    | 'PRODUCT_WHOLESALE_PRICING'
-    | 'INVENTORY_PRODUCTS_BY_PROFILE'
-    | 'INVENTORY_PRODUCT_MASTERS_BY_PROFILE'
-    | 'SALES_CUSTOMER_PRICE_PROFILE'
-    | 'SALES_WORKSHOP_MULTI_VEHICLE'
-    | 'SALES_SELLER_TO_CASHIER'
-    | 'SALES_ANTICIPO_ENABLED'
-    | 'SALES_DETRACCION_ENABLED'
-    | 'SALES_RETENCION_ENABLED'
-    | 'SALES_PERCEPCION_ENABLED'
-    | 'PURCHASES_DETRACCION_ENABLED'
-    | 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
-    | 'PURCHASES_RETENCION_PROVEEDOR_ENABLED'
-    | 'PURCHASES_PERCEPCION_ENABLED';
+  feature_code: string;
+  feature_label?: string | null;
+  feature_category_key?: string | null;
+  feature_category_label?: string | null;
   is_enabled: boolean;
   config: Record<string, unknown> | null;
 };
