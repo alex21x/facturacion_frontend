@@ -203,6 +203,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Inicio',
     label: 'Acceso rapido',
     hint: 'Pantalla inicial con procesos frecuentes',
+    moduleCode: 'APPCFG',
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5M10 21v-6h4v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
