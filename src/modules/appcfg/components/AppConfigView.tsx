@@ -313,9 +313,13 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
 
+  const effectiveVerticalCode = useMemo(() => {
+    return String(verticalSettings?.active_vertical?.code ?? activeVerticalCode ?? '').trim().toUpperCase();
+  }, [verticalSettings?.active_vertical?.code, activeVerticalCode]);
+
   const isRetailVertical = useMemo(() => {
-    return String(activeVerticalCode ?? '').trim().toUpperCase() === 'RETAIL';
-  }, [activeVerticalCode]);
+    return effectiveVerticalCode === 'RETAIL';
+  }, [effectiveVerticalCode]);
 
   const adminManagedFeatureCodes = useMemo(
     () =>
