@@ -1,37 +1,43 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
-  plugins: [
-    react(),
-    {
-      name: 'admin-entry-rewrite',
-      configureServer(server) {
-        server.middlewares.use((req, _res, next) => {
-          if (req.url === '/' || req.url === '') req.url = '/admin.html';
-          next();
-        });
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const devHost = env.VITE_DEV_HOST || '127.0.0.1';
+  const apiTarget = env.VITE_API_TARGET || 'http://127.0.0.1:8000';
+
+  return {
+    plugins: [
+      react(),
+      {
+        name: 'admin-entry-rewrite',
+        configureServer(server) {
+          server.middlewares.use((req, _res, next) => {
+            if (req.url === '/' || req.url === '') req.url = '/admin.html';
+            next();
+          });
+        },
+      },
+    ],
+    server: {
+      host: devHost,
+      port: 5174,
+      watch: {
+        ignored: ['**/scripts/**'],
+      },
+      proxy: {
+        '/api': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
       },
     },
-  ],
-  server: {
-    host: '127.0.0.1',
-    port: 5174,
-    watch: {
-      ignored: ['**/scripts/**'],
-    },
-    proxy: {
-      '/api': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
+    build: {
+      outDir: 'dist-admin',
+      emptyOutDir: true,
+      rollupOptions: {
+        input: 'admin.html',
       },
     },
-  },
-  build: {
-    outDir: 'dist-admin',
-    emptyOutDir: true,
-    rollupOptions: {
-      input: 'admin.html',
-    },
-  },
+  };
 });
