@@ -32,6 +32,9 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    resolve: {
+      dedupe: ['react', 'react-dom'],
+    },
     build: {
       outDir: 'dist-admin',
       emptyOutDir: true,

@@ -3977,7 +3977,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           document_kind_id: selectedEffectiveDocumentKind?.id ?? null,
           branch_id: branchId,
           warehouse_id: warehouseId,
-          cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
+          cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser ? null : cashRegisterId,
           customer_id: Number(form.customerId),
           customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
           currency_id: Number(form.currencyId),
@@ -4032,7 +4032,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         items: payloadItems,
         branchId,
         warehouseId,
-        cashRegisterId: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
+        cashRegisterId: salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser ? null : cashRegisterId,
       });
 
       const issued = (response as { data?: unknown }).data as

@@ -1,10 +1,12 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { todayLima } from '../../../shared/utils/lima';
 import {
+  createFunctionalProfile,
   createRole,
   createUser,
   createCashRegister,
   createDocumentKind,
+  createPosStation,
   fetchAccessControl,
   fetchCommerceSettings,
   createLot,
@@ -17,8 +19,10 @@ import {
   updateCommerceSettings,
   updateCashRegister,
   updateDocumentKind,
+  updateFunctionalProfile,
   updateInventorySettings,
   updatePaymentMethod,
+  updatePosStation,
   updatePriceTier,
   updateRole,
   updateSeries,
@@ -27,6 +31,7 @@ import {
   updateWarehouse,
 } from '../api';
 import type {
+  AccessFunctionalProfileRow,
   AccessModuleRow,
   AccessRoleRow,
   AccessUserRow,
@@ -38,6 +43,7 @@ import type {
   MasterOptionsResponse,
   MastersDashboardResponse,
   PaymentMethodRow,
+  PosStationRow,
   PriceTierRow,
   SeriesRow,
   UnitRow,
@@ -52,7 +58,7 @@ type MastersViewProps = {
   activeVerticalCode: string | null;
 };
 
-type MasterSection = 'warehouse' | 'cash' | 'payment' | 'series' | 'price-tier' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
+type MasterSection = 'warehouse' | 'cash' | 'stations' | 'payment' | 'series' | 'price-tier' | 'lot' | 'units' | 'settings' | 'doc-kinds' | 'commerce' | 'access';
 
 function commerceCategoryKey(row: { feature_category_key?: string | null; feature_code: string }): string {
   const key = String(row.feature_category_key ?? '').trim().toLowerCase();
@@ -204,6 +210,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [options, setOptions] = useState<MasterOptionsResponse | null>(null);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [cashRegisters, setCashRegisters] = useState<CashRegisterRow[]>([]);
+  const [posStations, setPosStations] = useState<PosStationRow[]>([]);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [seriesRows, setSeriesRows] = useState<SeriesRow[]>([]);
   const [priceTiers, setPriceTiers] = useState<PriceTierRow[]>([]);
@@ -215,20 +222,23 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [accessModules, setAccessModules] = useState<AccessModuleRow[]>([]);
   const [accessRoles, setAccessRoles] = useState<AccessRoleRow[]>([]);
   const [accessUsers, setAccessUsers] = useState<AccessUserRow[]>([]);
+  const [accessFunctionalProfiles, setAccessFunctionalProfiles] = useState<AccessFunctionalProfileRow[]>([]);
   const [selectedRoleId, setSelectedRoleId] = useState<number | null>(null);
   const [roleEditorName, setRoleEditorName] = useState('');
-  const [roleEditorProfile, setRoleEditorProfile] = useState<'SELLER' | 'CASHIER' | 'GENERAL' | ''>('');
+  const [roleEditorProfile, setRoleEditorProfile] = useState<string>('');
   const [roleEditorPermissions, setRoleEditorPermissions] = useState<AccessRoleRow['permissions']>([]);
   const [stats, setStats] = useState<MastersDashboardResponse['stats'] | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<MasterSection>('warehouse');
+  const [accessSubTab, setAccessSubTab] = useState<'users' | 'roles' | 'catalog' | 'permissions'>('users');
   const [activeCommerceTab, setActiveCommerceTab] = useState<string>('all');
   const [sectionSearch, setSectionSearch] = useState('');
 
   const warehouseFormRef = useRef<HTMLFormElement | null>(null);
   const cashFormRef = useRef<HTMLFormElement | null>(null);
+  const stationFormRef = useRef<HTMLFormElement | null>(null);
   const paymentFormRef = useRef<HTMLFormElement | null>(null);
   const seriesFormRef = useRef<HTMLFormElement | null>(null);
   const lotFormRef = useRef<HTMLFormElement | null>(null);
@@ -250,6 +260,15 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     code: '',
     name: '',
   });
+
+  const [stationForm, setStationForm] = useState({
+    cash_register_id: null as number | null,
+    code: '',
+    name: '',
+    device_id: '',
+    device_name: '',
+  });
+  const [stationEditingId, setStationEditingId] = useState<number | null>(null);
 
   const [paymentForm, setPaymentForm] = useState({
     code: '',
@@ -285,13 +304,24 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [accessRoleForm, setAccessRoleForm] = useState({
     code: '',
     name: '',
-    functional_profile: 'GENERAL' as 'SELLER' | 'CASHIER' | 'GENERAL',
+    functional_profile: '' as string,
   });
+  const [accessRoleEditingId, setAccessRoleEditingId] = useState<number | null>(null);
+
+  const [functionalProfileForm, setFunctionalProfileForm] = useState({
+    code: '',
+    label: '',
+    status: 1,
+    sort_order: 100,
+  });
+  const [functionalProfileEditingCode, setFunctionalProfileEditingCode] = useState<string | null>(null);
 
   const [newRoleModules, setNewRoleModules] = useState<Record<string, boolean>>({});
 
   const [accessUserForm, setAccessUserForm] = useState({
     branch_id: branchId,
+    preferred_warehouse_id: null as number | null,
+    preferred_cash_register_id: null as number | null,
     username: '',
     password: '',
     first_name: '',
@@ -300,6 +330,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     phone: '',
     role_id: 0,
   });
+  const [accessUserEditingId, setAccessUserEditingId] = useState<number | null>(null);
 
   const [documentKindForm, setDocumentKindForm] = useState({
     code: '',
@@ -329,6 +360,19 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const filteredCashRegisters = useMemo(
     () => cashRegisters.filter((row) => includesSearch(row.code) || includesSearch(row.name)),
     [cashRegisters, normalizedSearch]
+  );
+
+  const filteredPosStations = useMemo(
+    () =>
+      posStations.filter(
+        (row) =>
+          includesSearch(row.code)
+          || includesSearch(row.name)
+          || includesSearch(row.device_id)
+          || includesSearch(row.device_name)
+          || includesSearch(row.cash_register_name)
+      ),
+    [posStations, normalizedSearch]
   );
 
   const filteredPaymentMethods = useMemo(
@@ -429,12 +473,36 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     [accessModules]
   );
 
+  const activeFunctionalProfiles = useMemo(
+    () => accessFunctionalProfiles.filter((row) => row.status === 1),
+    [accessFunctionalProfiles]
+  );
+
+  const functionalProfileLabelMap = useMemo(
+    () => Object.fromEntries(accessFunctionalProfiles.map((row) => [row.code, row.label])),
+    [accessFunctionalProfiles]
+  );
+
+  const accessSummary = useMemo(() => {
+    const activeRoles = accessRoles.filter((row) => row.status === 1).length;
+    const usersWithoutWarehouse = accessUsers.filter((row) => row.preferred_warehouse_id == null).length;
+    const usersWithoutCash = accessUsers.filter((row) => row.preferred_cash_register_id == null).length;
+
+    return {
+      activeRoles,
+      usersWithoutWarehouse,
+      usersWithoutCash,
+    };
+  }, [accessRoles, accessUsers]);
+
   const sectionSearchPlaceholder = useMemo(() => {
     switch (activeSection) {
       case 'warehouse':
         return 'Buscar almacen por codigo, nombre o direccion';
       case 'cash':
         return 'Buscar caja por codigo o nombre';
+      case 'stations':
+        return 'Buscar estacion por codigo, nombre, dispositivo o caja';
       case 'payment':
         return 'Buscar tipo de pago por codigo o nombre';
       case 'series':
@@ -484,6 +552,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     const sections: MasterSection[] = [
       'warehouse',
       'cash',
+      'stations',
       'payment',
       'series',
       'price-tier',
@@ -503,6 +572,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const canCreateInSection =
     activeSection === 'warehouse' ||
     activeSection === 'cash' ||
+    activeSection === 'stations' ||
     activeSection === 'payment' ||
     activeSection === 'series' ||
     (activeSection === 'price-tier' && canManagePriceTiers) ||
@@ -549,6 +619,22 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         'codigo,nombre,estado',
         ...filteredCashRegisters.map((row) =>
           [toCsvCell(row.code), toCsvCell(row.name), toCsvCell(row.status === 1 ? 'ACTIVO' : 'INACTIVO')].join(',')
+        ),
+      ];
+    }
+
+    if (activeSection === 'stations') {
+      lines = [
+        'codigo,nombre,device_id,device_name,caja,estado',
+        ...filteredPosStations.map((row) =>
+          [
+            toCsvCell(row.code),
+            toCsvCell(row.name),
+            toCsvCell(row.device_id),
+            toCsvCell(row.device_name),
+            toCsvCell(`${row.cash_register_code} - ${row.cash_register_name}`),
+            toCsvCell(row.status === 1 ? 'ACTIVO' : 'INACTIVO'),
+          ].join(',')
         ),
       ];
     }
@@ -696,6 +782,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       return;
     }
 
+    if (activeSection === 'stations') {
+      setStationEditingId(null);
+      setStationForm({ cash_register_id: null, code: '', name: '', device_id: '', device_name: '' });
+      focusFirstField(stationFormRef);
+      return;
+    }
+
     if (activeSection === 'payment') {
       setPaymentForm({ code: '', name: '' });
       focusFirstField(paymentFormRef);
@@ -751,6 +844,11 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
 
     if (activeSection === 'cash') {
       cashFormRef.current?.requestSubmit();
+      return;
+    }
+
+    if (activeSection === 'stations') {
+      stationFormRef.current?.requestSubmit();
       return;
     }
 
@@ -848,6 +946,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       setOptions(dashboard.options);
       setWarehouses(dashboard.warehouses);
       setCashRegisters(dashboard.cash_registers);
+      setPosStations(dashboard.pos_stations ?? []);
       setPaymentMethods(dashboard.payment_methods);
       setSeriesRows(dashboard.series);
       setPriceTiers(dashboard.price_tiers ?? []);
@@ -867,6 +966,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         setAccessModules(access.modules ?? []);
         setAccessRoles(access.roles ?? []);
         setAccessUsers(access.users ?? []);
+        setAccessFunctionalProfiles(access.functional_profiles ?? []);
 
         const selectedRole =
           access.roles?.find((role) => role.id === selectedRoleId)
@@ -877,6 +977,12 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         setRoleEditorProfile(selectedRole?.functional_profile ?? '');
         setRoleEditorPermissions(selectedRole?.permissions ?? []);
 
+        const defaultFunctionalProfile = (access.functional_profiles ?? []).find((row) => row.status === 1)?.code ?? '';
+        setAccessRoleForm((prev) => ({
+          ...prev,
+          functional_profile: prev.functional_profile || defaultFunctionalProfile,
+        }));
+
         setAccessUserForm((prev) => ({
           ...prev,
           role_id: prev.role_id || (access.roles?.[0]?.id ?? 0),
@@ -886,6 +992,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         setAccessModules([]);
         setAccessRoles([]);
         setAccessUsers([]);
+        setAccessFunctionalProfiles([]);
         setSelectedRoleId(null);
         setRoleEditorName('');
         setRoleEditorProfile('');
@@ -990,6 +1097,52 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo crear caja');
     }
+  }
+
+  async function saveStation(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      const payload = {
+        cash_register_id: Number(stationForm.cash_register_id),
+        code: stationForm.code,
+        name: stationForm.name,
+        device_id: stationForm.device_id,
+        device_name: stationForm.device_name || null,
+      };
+
+      if (stationEditingId) {
+        await updatePosStation(accessToken, stationEditingId, payload);
+        setMessage('Estacion POS actualizada.');
+      } else {
+        await createPosStation(accessToken, payload);
+        setMessage('Estacion POS creada.');
+      }
+
+      setStationEditingId(null);
+      setStationForm({ cash_register_id: null, code: '', name: '', device_id: '', device_name: '' });
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo guardar estacion POS');
+    }
+  }
+
+  function editStation(row: PosStationRow) {
+    setStationEditingId(row.id);
+    setStationForm({
+      cash_register_id: row.cash_register_id,
+      code: row.code,
+      name: row.name,
+      device_id: row.device_id,
+      device_name: row.device_name ?? '',
+    });
+    setMessage(`Editando estacion ${row.code}.`);
+    setError('');
+    focusFirstField(stationFormRef);
+  }
+
+  function cancelStationEdit() {
+    setStationEditingId(null);
+    setStationForm({ cash_register_id: null, code: '', name: '', device_id: '', device_name: '' });
   }
 
   async function savePayment(event: React.FormEvent<HTMLFormElement>) {
@@ -1120,6 +1273,15 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       await loadAll();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo actualizar caja');
+    }
+  }
+
+  async function toggleStation(row: PosStationRow) {
+    try {
+      await updatePosStation(accessToken, row.id, { status: row.status === 1 ? 0 : 1 });
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo actualizar estacion POS');
     }
   }
 
@@ -1270,63 +1432,213 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   async function saveAccessRole(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      const permissions = accessModules.map((module) => {
-        const enabled = newRoleModules[module.code] ?? false;
-        return {
-          module_code: module.code,
-          can_view: enabled,
-          can_create: enabled,
-          can_update: false,
-          can_delete: false,
-          can_export: enabled,
-          can_approve: false,
-        };
-      });
+      if (accessRoleEditingId) {
+        await updateRole(accessToken, accessRoleEditingId, {
+          name: accessRoleForm.name,
+          functional_profile: accessRoleForm.functional_profile || null,
+        });
+        setMessage('Perfil actualizado correctamente.');
+      } else {
+        const permissions = accessModules.map((module) => {
+          const enabled = newRoleModules[module.code] ?? false;
+          return {
+            module_code: module.code,
+            can_view: enabled,
+            can_create: enabled,
+            can_update: false,
+            can_delete: false,
+            can_export: enabled,
+            can_approve: false,
+          };
+        });
 
-      await createRole(accessToken, {
-        code: accessRoleForm.code,
-        name: accessRoleForm.name,
-        functional_profile: accessRoleForm.functional_profile,
-        permissions,
-      });
+        await createRole(accessToken, {
+          code: accessRoleForm.code,
+          name: accessRoleForm.name,
+          functional_profile: accessRoleForm.functional_profile || null,
+          permissions,
+        });
+        setMessage('Perfil creado. Puedes asignarlo al crear usuarios.');
+      }
 
-      setMessage('Perfil creado. Puedes asignarlo al crear usuarios.');
-      setAccessRoleForm({ code: '', name: '', functional_profile: 'GENERAL' });
+      setAccessRoleEditingId(null);
+      setAccessRoleForm({
+        code: '',
+        name: '',
+        functional_profile: activeFunctionalProfiles[0]?.code ?? '',
+      });
       setNewRoleModules({});
       await loadAll();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'No se pudo crear perfil');
+      setError(error instanceof Error ? error.message : accessRoleEditingId ? 'No se pudo actualizar perfil' : 'No se pudo crear perfil');
     }
+  }
+
+  function startAccessRoleEdit(row: AccessRoleRow) {
+    setAccessRoleEditingId(row.id);
+    setAccessRoleForm({
+      code: row.code,
+      name: row.name,
+      functional_profile: row.functional_profile ?? '',
+    });
+    setNewRoleModules(
+      Object.fromEntries(
+        row.permissions.map((item) => [
+          item.module_code,
+          item.can_view || item.can_create || item.can_update || item.can_delete || item.can_export || item.can_approve,
+        ])
+      )
+    );
+    accessRoleFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function resetAccessRoleEditor() {
+    setAccessRoleEditingId(null);
+    setAccessRoleForm({
+      code: '',
+      name: '',
+      functional_profile: activeFunctionalProfiles[0]?.code ?? '',
+    });
+    setNewRoleModules({});
+  }
+
+  async function toggleAccessRole(row: AccessRoleRow) {
+    try {
+      await updateRole(accessToken, row.id, {
+        status: row.status === 1 ? 0 : 1,
+      });
+      setMessage('Estado del perfil actualizado.');
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo actualizar estado del perfil');
+    }
+  }
+
+  async function saveFunctionalProfile(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      if (functionalProfileEditingCode) {
+        await updateFunctionalProfile(accessToken, functionalProfileEditingCode, {
+          label: functionalProfileForm.label,
+          status: Number(functionalProfileForm.status),
+          sort_order: Number(functionalProfileForm.sort_order),
+        });
+        setMessage('Perfil funcional actualizado.');
+      } else {
+        await createFunctionalProfile(accessToken, {
+          code: functionalProfileForm.code,
+          label: functionalProfileForm.label,
+          status: Number(functionalProfileForm.status),
+          sort_order: Number(functionalProfileForm.sort_order),
+        });
+        setMessage('Perfil funcional creado.');
+      }
+
+      setFunctionalProfileEditingCode(null);
+      setFunctionalProfileForm({ code: '', label: '', status: 1, sort_order: 100 });
+      await loadAll();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'No se pudo guardar el perfil funcional');
+    }
+  }
+
+  function startFunctionalProfileEdit(row: AccessFunctionalProfileRow) {
+    setFunctionalProfileEditingCode(row.code);
+    setFunctionalProfileForm({
+      code: row.code,
+      label: row.label,
+      status: row.status,
+      sort_order: row.sort_order,
+    });
+  }
+
+  function resetFunctionalProfileEditor() {
+    setFunctionalProfileEditingCode(null);
+    setFunctionalProfileForm({ code: '', label: '', status: 1, sort_order: 100 });
   }
 
   async function saveAccessUser(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await createUser(accessToken, {
-        branch_id: accessUserForm.branch_id,
-        username: accessUserForm.username,
-        password: accessUserForm.password,
-        first_name: accessUserForm.first_name,
-        last_name: accessUserForm.last_name || null,
-        email: accessUserForm.email || null,
-        phone: accessUserForm.phone || null,
-        role_id: Number(accessUserForm.role_id),
-      });
+      if (accessUserEditingId) {
+        await updateUser(accessToken, accessUserEditingId, {
+          branch_id: accessUserForm.branch_id,
+          preferred_warehouse_id: accessUserForm.preferred_warehouse_id,
+          preferred_cash_register_id: accessUserForm.preferred_cash_register_id,
+          first_name: accessUserForm.first_name,
+          last_name: accessUserForm.last_name || null,
+          email: accessUserForm.email || null,
+          phone: accessUserForm.phone || null,
+          role_id: Number(accessUserForm.role_id),
+          ...(accessUserForm.password.trim() ? { password: accessUserForm.password } : {}),
+        });
+        setMessage('Usuario actualizado correctamente.');
+      } else {
+        await createUser(accessToken, {
+          branch_id: accessUserForm.branch_id,
+          preferred_warehouse_id: accessUserForm.preferred_warehouse_id,
+          preferred_cash_register_id: accessUserForm.preferred_cash_register_id,
+          username: accessUserForm.username,
+          password: accessUserForm.password,
+          first_name: accessUserForm.first_name,
+          last_name: accessUserForm.last_name || null,
+          email: accessUserForm.email || null,
+          phone: accessUserForm.phone || null,
+          role_id: Number(accessUserForm.role_id),
+        });
+        setMessage('Usuario creado correctamente.');
+      }
 
-      setMessage('Usuario creado correctamente.');
-      setAccessUserForm((prev) => ({
-        ...prev,
+      setAccessUserEditingId(null);
+      setAccessUserForm({
+        branch_id: branchId,
+        preferred_warehouse_id: null,
+        preferred_cash_register_id: null,
         username: '',
         password: '',
         first_name: '',
         last_name: '',
         email: '',
         phone: '',
-      }));
+        role_id: 0,
+      });
       await loadAll();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'No se pudo crear usuario');
+      setError(error instanceof Error ? error.message : accessUserEditingId ? 'No se pudo actualizar usuario' : 'No se pudo crear usuario');
     }
+  }
+
+  function startAccessUserEdit(row: AccessUserRow) {
+    setAccessUserEditingId(row.id);
+    setAccessUserForm({
+      branch_id: row.branch_id,
+      preferred_warehouse_id: row.preferred_warehouse_id ?? null,
+      preferred_cash_register_id: row.preferred_cash_register_id ?? null,
+      username: row.username,
+      password: '',
+      first_name: row.first_name,
+      last_name: row.last_name ?? '',
+      email: row.email ?? '',
+      phone: row.phone ?? '',
+      role_id: row.role_id ?? 0,
+    });
+    accessUserFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function resetAccessUserEditor() {
+    setAccessUserEditingId(null);
+    setAccessUserForm({
+      branch_id: branchId,
+      preferred_warehouse_id: null,
+      preferred_cash_register_id: null,
+      username: '',
+      password: '',
+      first_name: '',
+      last_name: '',
+      email: '',
+      phone: '',
+      role_id: 0,
+    });
   }
 
   async function toggleAccessUser(row: AccessUserRow) {
@@ -1341,6 +1653,14 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   }
 
   function selectRoleForEditing(roleIdValue: number) {
+    if (!roleIdValue) {
+      setSelectedRoleId(null);
+      setRoleEditorName('');
+      setRoleEditorProfile('');
+      setRoleEditorPermissions([]);
+      return;
+    }
+
     const role = accessRoles.find((item) => item.id === roleIdValue) ?? null;
     setSelectedRoleId(roleIdValue);
     setRoleEditorName(role?.name ?? '');
@@ -1401,6 +1721,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         <div className="master-stats">
           <article><span>Almacenes</span><strong>{stats.warehouses_total}</strong></article>
           <article><span>Cajas</span><strong>{stats.cash_registers_total}</strong></article>
+          <article><span>Estaciones POS</span><strong>{stats.pos_stations_total ?? 0}</strong></article>
           <article><span>Pagos</span><strong>{stats.payment_methods_total}</strong></article>
           <article><span>Series</span><strong>{stats.series_total}</strong></article>
           <article><span>Escalas</span><strong>{stats.price_tiers_total ?? 0}</strong></article>
@@ -1420,6 +1741,10 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             <button type="button" className={activeSection === 'cash' ? 'active' : ''} onClick={() => setActiveSection('cash')}>
               <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
               Cajas
+            </button>
+            <button type="button" className={activeSection === 'stations' ? 'active' : ''} onClick={() => setActiveSection('stations')}>
+              <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5h12v14H6zM9 9h6M9 13h3M4 19h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              Estaciones POS
             </button>
             <button type="button" className={activeSection === 'payment' ? 'active' : ''} onClick={() => setActiveSection('payment')}>
               <svg className="master-menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h18v10H3zM7 11h3" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
@@ -1477,6 +1802,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
           <select value={activeSection} onChange={(e) => setActiveSection(e.target.value as MasterSection)}>
             <option value="warehouse">Almacenes</option>
             <option value="cash">Cajas</option>
+            <option value="stations">Estaciones POS</option>
             <option value="payment">Tipos de Pago</option>
             <option value="series">Series</option>
             <option value="price-tier">Escalas de precio</option>
@@ -1624,6 +1950,80 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                 ))}
                 {filteredCashRegisters.length === 0 && (
                   <tr><td colSpan={4}>Sin resultados para la busqueda actual.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeSection === 'stations' && (
+        <div className="master-section-grid">
+          <form ref={stationFormRef} className="grid-form master-card" onSubmit={saveStation}>
+            <h4>{stationEditingId ? 'Editar Estacion POS' : 'Nueva Estacion POS'}</h4>
+            <label>
+              Caja fija
+              <select
+                value={stationForm.cash_register_id ?? ''}
+                onChange={(e) => setStationForm((prev) => ({ ...prev, cash_register_id: e.target.value ? Number(e.target.value) : null }))}
+                required
+              >
+                <option value="">Seleccionar caja</option>
+                {cashRegisters
+                  .filter((row) => row.status === 1)
+                  .map((row) => (
+                    <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
+                  ))}
+              </select>
+            </label>
+            <label>
+              Codigo
+              <input value={stationForm.code} onChange={(e) => setStationForm((prev) => ({ ...prev, code: e.target.value }))} required />
+            </label>
+            <label>
+              Nombre
+              <input value={stationForm.name} onChange={(e) => setStationForm((prev) => ({ ...prev, name: e.target.value }))} required />
+            </label>
+            <label>
+              Device ID
+              <input value={stationForm.device_id} onChange={(e) => setStationForm((prev) => ({ ...prev, device_id: e.target.value }))} required />
+            </label>
+            <label>
+              Nombre del equipo
+              <input value={stationForm.device_name} onChange={(e) => setStationForm((prev) => ({ ...prev, device_name: e.target.value }))} />
+            </label>
+            <p className="notice" style={{ margin: 0 }}>
+              Esta estacion vincula el `device_id` del login con una caja fija del POS.
+            </p>
+            <div className="grid-inline-actions">
+              <button className="wide" type="submit">{stationEditingId ? 'Guardar cambios' : 'Crear estacion'}</button>
+              {stationEditingId && <button type="button" onClick={cancelStationEdit}>Cancelar</button>}
+            </div>
+          </form>
+
+          <div className="table-wrap master-card">
+            <h4>Estaciones POS</h4>
+            <table>
+              <thead><tr><th>Codigo</th><th>Nombre</th><th>Dispositivo</th><th>Caja</th><th>Estado</th><th></th></tr></thead>
+              <tbody>
+                {filteredPosStations.map((row) => (
+                  <tr key={row.id}>
+                    <td>{row.code}</td>
+                    <td>{row.name}</td>
+                    <td>
+                      <strong>{row.device_id}</strong>
+                      <div>{row.device_name ?? '-'}</div>
+                    </td>
+                    <td>{row.cash_register_code} - {row.cash_register_name}</td>
+                    <td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
+                    <td>
+                      <button type="button" onClick={() => editStation(row)}>Editar</button>
+                      <button type="button" onClick={() => void toggleStation(row)}>{row.status === 1 ? 'Desactivar' : 'Activar'}</button>
+                    </td>
+                  </tr>
+                ))}
+                {filteredPosStations.length === 0 && (
+                  <tr><td colSpan={6}>Sin resultados para la busqueda actual.</td></tr>
                 )}
               </tbody>
             </table>
@@ -2291,20 +2691,95 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       )}
 
       {activeSection === 'access' && (
-        <div className="master-section-grid">
-          <form ref={accessRoleFormRef} className="grid-form master-card" onSubmit={saveAccessRole}>
-            <h4>Nuevo Perfil</h4>
+        <div className="master-section-grid access-grid">
+
+          {/* ── Encabezado de sección ── */}
+          <div className="access-section-header" style={{ gridColumn: '1 / -1' }}>
+            <div className="access-section-title">
+              <div className="access-section-icon" aria-hidden="true">AC</div>
+              <div>
+                <h3>Usuarios y Perfiles de Acceso</h3>
+                <p>Administra usuarios, perfiles, permisos por modulo y contexto operativo de trabajo.</p>
+              </div>
+            </div>
+            <div className="access-section-stats">
+              <div className="access-stat">
+                <strong>{accessUsers.length}</strong>
+                Usuarios
+              </div>
+              <div className="access-stat">
+                <strong>{accessSummary.activeRoles}</strong>
+                Perfiles activos
+              </div>
+              <div className="access-stat">
+                <strong>{accessSummary.usersWithoutWarehouse}</strong>
+                Sin almacen
+              </div>
+              <div className="access-stat">
+                <strong>{accessSummary.usersWithoutCash}</strong>
+                Sin caja
+              </div>
+            </div>
+          </div>
+
+          <div className="master-card access-subtabs" style={{ gridColumn: '1 / -1' }}>
+            <button
+              type="button"
+              className={accessSubTab === 'users' ? 'active' : ''}
+              onClick={() => setAccessSubTab('users')}
+            >
+              Usuarios
+            </button>
+            <button
+              type="button"
+              className={accessSubTab === 'roles' ? 'active' : ''}
+              onClick={() => setAccessSubTab('roles')}
+            >
+              Perfiles
+            </button>
+            <button
+              type="button"
+              className={accessSubTab === 'catalog' ? 'active' : ''}
+              onClick={() => setAccessSubTab('catalog')}
+            >
+              Catalogo Funcional
+            </button>
+            <button
+              type="button"
+              className={accessSubTab === 'permissions' ? 'active' : ''}
+              onClick={() => setAccessSubTab('permissions')}
+            >
+              Permisos
+            </button>
+          </div>
+
+          <div className="access-tab-content" style={{ gridColumn: '1 / -1' }}>
+
+          {/* ── Formulario: Nuevo Perfil ── */}
+          {accessSubTab === 'roles' && (
+            <>
+          <form ref={accessRoleFormRef} className="grid-form master-card access-form-card role-card access-card-role-form" onSubmit={saveAccessRole}>
+            <div className="access-form-subtitle">
+              <h4>{accessRoleEditingId ? 'Editar Perfil' : 'Nuevo Perfil'}</h4>
+              <span className="afs-badge">Rol</span>
+            </div>
+            <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
+              El perfil funcional ahora sale de un catalogo configurable por empresa. Puedes administrarlo en la tarjeta de catalogo funcional de esta misma vista.
+            </p>
+
+            <span className="access-group-label">Identificación</span>
             <label>
-              Codigo
+              Código
               <input
                 value={accessRoleForm.code}
                 onChange={(e) => setAccessRoleForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))}
                 placeholder="Ej. VENDEDOR_EVENTO"
                 required
+                disabled={accessRoleEditingId !== null}
               />
             </label>
             <label>
-              Nombre
+              Nombre del perfil
               <input
                 value={accessRoleForm.name}
                 onChange={(e) => setAccessRoleForm((prev) => ({ ...prev, name: e.target.value }))}
@@ -2316,122 +2791,456 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
               Perfil funcional
               <select
                 value={accessRoleForm.functional_profile}
-                onChange={(e) => setAccessRoleForm((prev) => ({ ...prev, functional_profile: e.target.value as 'SELLER' | 'CASHIER' | 'GENERAL' }))}
+                onChange={(e) => setAccessRoleForm((prev) => ({ ...prev, functional_profile: e.target.value }))}
               >
-                <option value="GENERAL">General</option>
-                <option value="SELLER">Vendedor</option>
-                <option value="CASHIER">Caja</option>
+                <option value="">Sin perfil funcional</option>
+                {activeFunctionalProfiles.map((row) => (
+                  <option key={row.code} value={row.code}>{row.label}</option>
+                ))}
               </select>
             </label>
-            <fieldset style={{ border: '1px solid var(--border)', padding: '0.5rem 0.75rem', borderRadius: '4px', margin: '0.25rem 0' }}>
-              <legend style={{ fontSize: '0.8rem', padding: '0 0.25rem' }}>Modulos habilitados para este perfil</legend>
-              {accessModules.map((mod) => (
-                <label key={mod.code} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', margin: '0.2rem 0', fontWeight: 'normal', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={newRoleModules[mod.code] ?? false}
-                    onChange={(e) => setNewRoleModules((prev) => ({ ...prev, [mod.code]: e.target.checked }))}
-                  />
-                  {mod.name}
-                </label>
-              ))}
-            </fieldset>
-            <button className="wide" type="submit">Crear perfil</button>
+
+            {!accessRoleEditingId && (
+              <>
+                <span className="access-group-label">Módulos habilitados</span>
+                <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
+                  Al crear el perfil, estos checks generan el set inicial de permisos por modulo. Si mañana aparece un modulo nuevo en la configuracion maestra, se mostrara aqui automaticamente.
+                </p>
+                <div style={{ gridColumn: '1 / -1', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                  {accessModules.map((mod) => (
+                    <label
+                      key={mod.code}
+                      style={{
+                        display: 'flex', gap: '6px', alignItems: 'center',
+                        fontWeight: 'normal', cursor: 'pointer',
+                        background: newRoleModules[mod.code] ? '#edf3f9' : '#f9fafb',
+                        border: `1px solid ${newRoleModules[mod.code] ? '#c7d8ea' : '#e5e7eb'}`,
+                        borderRadius: '6px', padding: '5px 10px', fontSize: '0.82rem',
+                        color: newRoleModules[mod.code] ? '#2f5579' : '#6b7280',
+                        transition: 'all 0.15s',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={newRoleModules[mod.code] ?? false}
+                        onChange={(e) => setNewRoleModules((prev) => ({ ...prev, [mod.code]: e.target.checked }))}
+                        style={{ accentColor: '#2f5579' }}
+                      />
+                      {mod.name}
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {accessRoleEditingId && (
+              <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
+                Para ajustar permisos finos (ver, crear, editar, aprobar) usa la tabla de permisos de la parte inferior.
+              </p>
+            )}
+
+            <div className="access-form-actions">
+              <button className="wide access-button access-button-primary" type="submit" style={{ marginTop: '8px' }}>
+                <span>{accessRoleEditingId ? 'Guardar perfil' : 'Crear perfil'}</span>
+                <small>{accessRoleEditingId ? 'Actualiza nombre, perfil funcional y permisos' : 'Genera el rol con permisos iniciales'}</small>
+              </button>
+              {accessRoleEditingId && (
+                <button className="wide access-button access-button-secondary" type="button" style={{ marginTop: '8px' }} onClick={resetAccessRoleEditor}>
+                  <span>Cancelar edicion</span>
+                  <small>Volver a alta de perfil</small>
+                </button>
+              )}
+            </div>
           </form>
 
-          <form ref={accessUserFormRef} className="grid-form master-card" onSubmit={saveAccessUser}>
-            <h4>Nuevo Usuario</h4>
+          <div className="table-wrap master-card access-card-roles">
+            <div className="access-table-header">
+              <h4>Perfiles registrados</h4>
+              <span className="access-count-badge">{accessRoles.length} registros</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Codigo</th>
+                  <th>Nombre</th>
+                  <th>Perfil funcional</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {accessRoles.map((row) => (
+                  <tr key={row.id}>
+                    <td><span className="access-username">{row.code}</span></td>
+                    <td style={{ fontWeight: 500 }}>{row.name}</td>
+                    <td>{row.functional_profile ? (functionalProfileLabelMap[row.functional_profile] ?? row.functional_profile) : <span className="access-cell-dim">—</span>}</td>
+                    <td>
+                      <span className={`status-badge ${row.status === 1 ? 'active' : 'inactive'}`}>
+                        {row.status === 1 ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </td>
+                    <td>
+                      <div className="access-row-actions">
+                        <button type="button" className="access-button access-button-tertiary access-row-button" onClick={() => startAccessRoleEdit(row)}>
+                          <span>Editar</span>
+                          <small>Perfil</small>
+                        </button>
+                        <button
+                          type="button"
+                          className={`access-button ${row.status === 1 ? 'access-button-warn' : 'access-button-success'} access-row-button`}
+                          onClick={() => void toggleAccessRole(row)}
+                        >
+                          <span>{row.status === 1 ? 'Desactivar' : 'Activar'}</span>
+                          <small>{row.status === 1 ? 'Bloquea asignacion' : 'Habilita asignacion'}</small>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {accessRoles.length === 0 && (
+                  <tr><td colSpan={5} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>No hay perfiles creados.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+            </>
+          )}
+
+          {accessSubTab === 'catalog' && (
+          <form className="grid-form master-card access-form-card access-catalog-card" onSubmit={saveFunctionalProfile}>
+            <div className="access-form-subtitle">
+              <h4>{functionalProfileEditingCode ? 'Editar Catalogo Funcional' : 'Catalogo de Perfil Funcional'}</h4>
+              <span className="afs-badge">Catalogo</span>
+            </div>
+            <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
+              Este catalogo define la lista de perfil funcional disponible para asignar a los perfiles de acceso.
+            </p>
+
+            <label>
+              Codigo
+              <input
+                value={functionalProfileForm.code}
+                onChange={(e) => setFunctionalProfileForm((prev) => ({ ...prev, code: e.target.value.toUpperCase() }))}
+                disabled={functionalProfileEditingCode !== null}
+                required
+              />
+            </label>
+            <label>
+              Nombre visible
+              <input
+                value={functionalProfileForm.label}
+                onChange={(e) => setFunctionalProfileForm((prev) => ({ ...prev, label: e.target.value }))}
+                required
+              />
+            </label>
+            <label>
+              Orden
+              <input
+                type="number"
+                min={0}
+                value={functionalProfileForm.sort_order}
+                onChange={(e) => setFunctionalProfileForm((prev) => ({ ...prev, sort_order: Number(e.target.value || 0) }))}
+              />
+            </label>
+            <label>
+              Estado
+              <select
+                value={functionalProfileForm.status}
+                onChange={(e) => setFunctionalProfileForm((prev) => ({ ...prev, status: Number(e.target.value) }))}
+              >
+                <option value={1}>Activo</option>
+                <option value={0}>Inactivo</option>
+              </select>
+            </label>
+
+            <div className="access-form-actions">
+              <button className="wide access-button access-button-primary" type="submit">
+                <span>{functionalProfileEditingCode ? 'Guardar item' : 'Agregar item'}</span>
+                <small>{functionalProfileEditingCode ? 'Actualiza catalogo funcional' : 'Incorpora nuevo perfil funcional'}</small>
+              </button>
+              {functionalProfileEditingCode && (
+                <button className="wide access-button access-button-secondary" type="button" onClick={resetFunctionalProfileEditor}>
+                  <span>Cancelar edicion</span>
+                  <small>Volver a alta</small>
+                </button>
+              )}
+            </div>
+
+            <div className="table-wrap" style={{ gridColumn: '1 / -1', marginTop: '4px' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Codigo</th>
+                    <th>Nombre</th>
+                    <th>Orden</th>
+                    <th>Estado</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accessFunctionalProfiles.map((row) => (
+                    <tr key={row.code}>
+                      <td><span className="access-username">{row.code}</span></td>
+                      <td>{row.label}</td>
+                      <td>{row.sort_order}</td>
+                      <td>
+                        <span className={`status-badge ${row.status === 1 ? 'active' : 'inactive'}`}>
+                          {row.status === 1 ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td>
+                        <button type="button" className="access-button access-button-tertiary access-row-button" onClick={() => startFunctionalProfileEdit(row)}>
+                          <span>Editar</span>
+                          <small>Catalogo</small>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {accessFunctionalProfiles.length === 0 && (
+                    <tr><td colSpan={5} style={{ textAlign: 'center', color: '#9ca3af', padding: '14px' }}>No hay items en el catalogo funcional.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </form>
+          )}
+
+          {/* ── Formulario: Nuevo Usuario ── */}
+          {accessSubTab === 'users' && (
+            <>
+          <form ref={accessUserFormRef} className="grid-form master-card access-form-card user-card access-card-user-form" onSubmit={saveAccessUser}>
+            <div className="access-form-subtitle">
+              <h4>{accessUserEditingId ? 'Editar Usuario' : 'Nuevo Usuario'}</h4>
+              <span className="afs-badge user">{accessUserEditingId ? 'Edicion' : 'Cuenta'}</span>
+            </div>
+            <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
+              Desde aqui puedes crear una cuenta nueva o reconfigurar sucursal, almacen y caja de una cuenta ya creada.
+              La caja preferida es opcional y funciona como sugerencia de contexto; en Punto de Venta la caja operativa se elige al aperturar sesion.
+            </p>
+
+            <span className="access-group-label">Contexto operativo</span>
             <label>
               Sucursal
               <select
                 value={accessUserForm.branch_id ?? ''}
-                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, branch_id: e.target.value ? Number(e.target.value) : null }))}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, branch_id: e.target.value ? Number(e.target.value) : null, preferred_warehouse_id: null, preferred_cash_register_id: null }))}
               >
-                <option value="">Sin sucursal</option>
+                <option value="">— Sin sucursal —</option>
                 {(options?.branches ?? []).map((row) => (
-                  <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
+                  <option key={row.id} value={row.id}>{row.code} · {row.name}</option>
                 ))}
               </select>
             </label>
             <label>
-              Usuario
-              <input value={accessUserForm.username} onChange={(e) => setAccessUserForm((prev) => ({ ...prev, username: e.target.value }))} required />
+              Almacén preferido
+              <select
+                value={accessUserForm.preferred_warehouse_id ?? ''}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, preferred_warehouse_id: e.target.value ? Number(e.target.value) : null, preferred_cash_register_id: null }))}
+              >
+                <option value="">— Sin almacén —</option>
+                {warehouses
+                  .filter((w) => !accessUserForm.branch_id || w.branch_id === accessUserForm.branch_id)
+                  .map((w) => (
+                    <option key={w.id} value={w.id}>{w.code} · {w.name}</option>
+                  ))}
+              </select>
             </label>
             <label>
-              Clave
-              <input type="password" value={accessUserForm.password} onChange={(e) => setAccessUserForm((prev) => ({ ...prev, password: e.target.value }))} required />
+              Caja preferida (opcional)
+              <select
+                value={accessUserForm.preferred_cash_register_id ?? ''}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, preferred_cash_register_id: e.target.value ? Number(e.target.value) : null }))}
+              >
+                <option value="">— Sin caja —</option>
+                {cashRegisters
+                  .filter((cr) => !accessUserForm.branch_id || cr.branch_id === accessUserForm.branch_id)
+                  .map((cr) => (
+                    <option key={cr.id} value={cr.id}>{cr.code} · {cr.name}</option>
+                  ))}
+              </select>
             </label>
             <label>
-              Nombres
-              <input value={accessUserForm.first_name} onChange={(e) => setAccessUserForm((prev) => ({ ...prev, first_name: e.target.value }))} required />
-            </label>
-            <label>
-              Apellidos
-              <input value={accessUserForm.last_name} onChange={(e) => setAccessUserForm((prev) => ({ ...prev, last_name: e.target.value }))} />
-            </label>
-            <label>
-              Correo
-              <input type="email" value={accessUserForm.email} onChange={(e) => setAccessUserForm((prev) => ({ ...prev, email: e.target.value }))} />
-            </label>
-            <label>
-              Perfil
+              Perfil de acceso
               <select
                 value={accessUserForm.role_id}
                 onChange={(e) => setAccessUserForm((prev) => ({ ...prev, role_id: Number(e.target.value) }))}
                 required
               >
+                <option value={0} disabled>— Seleccionar perfil —</option>
                 {accessRoles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.code} - {role.name} ({role.functional_profile ?? 'GENERAL'})</option>
+                  <option key={role.id} value={role.id}>{role.code} · {role.name}</option>
                 ))}
               </select>
             </label>
-            <button className="wide" type="submit">Crear usuario</button>
+
+            <span className="access-group-label">Credenciales</span>
+            <label>
+              Usuario
+              <input
+                value={accessUserForm.username}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, username: e.target.value }))}
+                placeholder="nombre.usuario"
+                required
+                disabled={accessUserEditingId !== null}
+              />
+            </label>
+            <label>
+              {accessUserEditingId ? 'Nueva contraseña' : 'Contraseña'}
+              <input
+                type="password"
+                value={accessUserForm.password}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, password: e.target.value }))}
+                placeholder={accessUserEditingId ? 'Opcional. Deja vacio para conservar la actual' : 'Minimo 6 caracteres'}
+                required={accessUserEditingId === null}
+              />
+            </label>
+            {accessUserEditingId && (
+              <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
+                El nombre de usuario no se modifica desde esta pantalla. Aqui actualizas el contexto operativo, el perfil y los datos del usuario.
+              </p>
+            )}
+
+            <span className="access-group-label">Datos personales</span>
+            <label>
+              Nombres
+              <input
+                value={accessUserForm.first_name}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, first_name: e.target.value }))}
+                placeholder="Nombres"
+                required
+              />
+            </label>
+            <label>
+              Apellidos
+              <input
+                value={accessUserForm.last_name}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, last_name: e.target.value }))}
+                placeholder="Apellidos"
+              />
+            </label>
+            <label>
+              Correo electrónico
+              <input
+                type="email"
+                value={accessUserForm.email}
+                onChange={(e) => setAccessUserForm((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="correo@empresa.com"
+              />
+            </label>
+
+            <div className="access-form-actions">
+              <button className="wide access-button access-button-primary" type="submit" style={{ marginTop: '8px' }}>
+                <span>{accessUserEditingId ? 'Guardar cambios' : 'Crear usuario'}</span>
+                <small>{accessUserEditingId ? 'Actualiza sucursal, almacen, caja y perfil' : 'Registra la cuenta con su contexto operativo'}</small>
+              </button>
+              {accessUserEditingId && (
+                <button className="wide access-button access-button-secondary" type="button" style={{ marginTop: '8px' }} onClick={resetAccessUserEditor}>
+                  <span>Cancelar edicion</span>
+                  <small>Vuelve al modo de alta</small>
+                </button>
+              )}
+            </div>
           </form>
 
+          {/* ── Tabla de Usuarios ── */}
           <div className="table-wrap master-card" style={{ gridColumn: '1 / -1' }}>
-            <h4>Usuarios</h4>
+            <div className="access-table-header">
+              <h4>Usuarios del sistema</h4>
+              <span className="access-count-badge">
+                {accessUsers.filter((row) => includesSearch(row.username) || includesSearch(row.first_name) || includesSearch(row.role_code)).length} registros
+              </span>
+            </div>
             <table>
-              <thead><tr><th>Usuario</th><th>Nombre</th><th>Perfil</th><th>Estado</th><th></th></tr></thead>
+              <thead>
+                <tr>
+                  <th>Usuario</th>
+                  <th>Nombre completo</th>
+                  <th>Sucursal</th>
+                  <th>Almacén</th>
+                  <th>Caja</th>
+                  <th>Perfil</th>
+                  <th>Estado</th>
+                  <th></th>
+                </tr>
+              </thead>
               <tbody>
                 {accessUsers
                   .filter((row) => includesSearch(row.username) || includesSearch(row.first_name) || includesSearch(row.role_code))
-                  .map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.username}</td>
-                      <td>{`${row.first_name} ${row.last_name ?? ''}`.trim()}</td>
-                      <td>{row.role_code ?? 'SIN PERFIL'}</td>
-                      <td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
-                      <td>
-                        <button type="button" onClick={() => void toggleAccessUser(row)}>
-                          {row.status === 1 ? 'Desactivar' : 'Activar'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  .map((row) => {
+                    const branchName = (options?.branches ?? []).find((b) => b.id === row.branch_id)?.name ?? null;
+                    const warehouseName = warehouses.find((w) => w.id === row.preferred_warehouse_id)?.name ?? null;
+                    const cashName = cashRegisters.find((cr) => cr.id === row.preferred_cash_register_id)?.name ?? null;
+                    return (
+                      <tr key={row.id}>
+                        <td><span className="access-username">@{row.username}</span></td>
+                        <td style={{ fontWeight: 500 }}>{`${row.first_name} ${row.last_name ?? ''}`.trim()}</td>
+                        <td>{branchName ?? <span className="access-cell-dim">—</span>}</td>
+                        <td>{warehouseName ?? <span className="access-cell-dim">—</span>}</td>
+                        <td>{cashName ?? <span className="access-cell-dim">—</span>}</td>
+                        <td>
+                          <span className={`profile-badge${row.role_code ? '' : ' no-profile'}`}>
+                            {row.role_code ?? 'Sin perfil'}
+                          </span>
+                        </td>
+                        <td>
+                          <span className={`status-badge ${row.status === 1 ? 'active' : 'inactive'}`}>
+                            {row.status === 1 ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </td>
+                        <td>
+                          <div className="access-row-actions">
+                            <button type="button" className="access-button access-button-tertiary access-row-button" onClick={() => startAccessUserEdit(row)}>
+                              <span>Editar</span>
+                              <small>Cuenta</small>
+                            </button>
+                            <button
+                              type="button"
+                              className={`access-button ${row.status === 1 ? 'access-button-warn' : 'access-button-success'} access-row-button`}
+                              onClick={() => void toggleAccessUser(row)}
+                            >
+                              <span>{row.status === 1 ? 'Desactivar' : 'Activar'}</span>
+                              <small>{row.status === 1 ? 'Bloquea acceso' : 'Habilita acceso'}</small>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 {accessUsers.filter((row) => includesSearch(row.username) || includesSearch(row.first_name) || includesSearch(row.role_code)).length === 0 && (
-                  <tr><td colSpan={5}>Sin resultados para la busqueda actual.</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>Sin resultados para la búsqueda actual.</td></tr>
                 )}
               </tbody>
             </table>
           </div>
+            </>
+          )}
 
+          {/* ── Editor de Permisos por Perfil ── */}
+          {accessSubTab === 'permissions' && (
           <div className="master-card" style={{ gridColumn: '1 / -1' }}>
-            <h4>Permisos por perfil</h4>
+            <div className="perm-section-header">
+              <div>
+                <h4>Permisos por perfil</h4>
+                <p className="perm-hint">Selecciona un perfil para editar sus permisos de acceso a cada módulo.</p>
+              </div>
+              <button type="button" onClick={() => void saveRoleEditor()} disabled={!selectedRoleId} style={{ whiteSpace: 'nowrap' }}>
+                Guardar cambios
+              </button>
+            </div>
+
             <div className="role-permissions-toolbar">
               <label>
-                Perfil
+                Perfil a editar
                 <select
                   value={selectedRoleId ?? ''}
                   onChange={(e) => selectRoleForEditing(Number(e.target.value))}
                 >
+                  <option value="">— Seleccionar perfil —</option>
                   {accessRoles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.code} - {role.name} ({role.functional_profile ?? 'GENERAL'})</option>
+                    <option key={role.id} value={role.id}>{role.code} · {role.name} ({role.functional_profile ? (functionalProfileLabelMap[role.functional_profile] ?? role.functional_profile) : 'Sin perfil'})</option>
                   ))}
                 </select>
               </label>
-              <button type="button" onClick={() => void saveRoleEditor()} disabled={!selectedRoleId}>
-                Guardar permisos perfil
-              </button>
             </div>
 
             <div className="role-permissions-fields">
@@ -2444,29 +3253,28 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                   disabled={!selectedRoleId}
                 />
               </label>
-
               <label>
-                Perfil funcional del rol
+                Perfil funcional
                 <select
                   value={roleEditorProfile}
-                  onChange={(e) => setRoleEditorProfile(e.target.value as 'SELLER' | 'CASHIER' | 'GENERAL' | '')}
+                  onChange={(e) => setRoleEditorProfile(e.target.value)}
                   disabled={!selectedRoleId}
                 >
                   <option value="">No definido</option>
-                  <option value="GENERAL">General</option>
-                  <option value="SELLER">Vendedor</option>
-                  <option value="CASHIER">Caja</option>
+                  {activeFunctionalProfiles.map((row) => (
+                    <option key={row.code} value={row.code}>{row.label}</option>
+                  ))}
                 </select>
               </label>
             </div>
 
-            <table>
+            <table className="perm-table">
               <thead>
                 <tr>
                   <th>Modulo</th>
                   <th>Ver</th>
                   <th>Crear</th>
-                  <th>Actualizar</th>
+                  <th>Editar</th>
                   <th>Eliminar</th>
                   <th>Exportar</th>
                   <th>Aprobar</th>
@@ -2476,19 +3284,21 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                 {roleEditorPermissions.map((row) => (
                   <tr key={row.module_code}>
                     <td>{accessModuleMap[row.module_code] ?? row.module_code}</td>
-                    <td><input type="checkbox" checked={row.can_view} onChange={(e) => updateRolePermission(row.module_code, 'can_view', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={row.can_create} onChange={(e) => updateRolePermission(row.module_code, 'can_create', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={row.can_update} onChange={(e) => updateRolePermission(row.module_code, 'can_update', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={row.can_delete} onChange={(e) => updateRolePermission(row.module_code, 'can_delete', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={row.can_export} onChange={(e) => updateRolePermission(row.module_code, 'can_export', e.target.checked)} /></td>
-                    <td><input type="checkbox" checked={row.can_approve} onChange={(e) => updateRolePermission(row.module_code, 'can_approve', e.target.checked)} /></td>
+                    <td><input className="perm-check" type="checkbox" checked={row.can_view}   onChange={(e) => updateRolePermission(row.module_code, 'can_view',   e.target.checked)} /></td>
+                    <td><input className="perm-check" type="checkbox" checked={row.can_create} onChange={(e) => updateRolePermission(row.module_code, 'can_create', e.target.checked)} /></td>
+                    <td><input className="perm-check" type="checkbox" checked={row.can_update} onChange={(e) => updateRolePermission(row.module_code, 'can_update', e.target.checked)} /></td>
+                    <td><input className="perm-check" type="checkbox" checked={row.can_delete} onChange={(e) => updateRolePermission(row.module_code, 'can_delete', e.target.checked)} /></td>
+                    <td><input className="perm-check" type="checkbox" checked={row.can_export} onChange={(e) => updateRolePermission(row.module_code, 'can_export', e.target.checked)} /></td>
+                    <td><input className="perm-check" type="checkbox" checked={row.can_approve} onChange={(e) => updateRolePermission(row.module_code, 'can_approve', e.target.checked)} /></td>
                   </tr>
                 ))}
                 {roleEditorPermissions.length === 0 && (
-                  <tr><td colSpan={7}>Selecciona un perfil para editar permisos.</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center', color: '#9ca3af', padding: '20px' }}>Selecciona un perfil para ver y editar sus permisos.</td></tr>
                 )}
               </tbody>
             </table>
+          </div>
+          )}
           </div>
         </div>
       )}
