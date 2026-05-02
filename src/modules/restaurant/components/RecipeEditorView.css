@@ -1,0 +1,194 @@
+/* =========================================================
+   RecipeEditorView.css — scoped styles for recipe editor
+   ========================================================= */
+
+/* ── Menu product search wrap ── */
+.recipe-editor-search-wrap {
+  padding: 0 0 20px;
+  max-width: 560px;
+}
+
+/* ── Selected product chip ── */
+.recipe-selected-product {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  color: #166534;
+}
+
+/* ── Suggestions dropdown ── */
+.recipe-suggest-list {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e8e0d6;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.10);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.recipe-suggest-list--inline {
+  max-height: 180px;
+}
+
+.recipe-suggest-item {
+  padding: 8px 14px;
+  font-size: 0.83rem;
+  cursor: pointer;
+  color: #3d3530;
+  line-height: 1.4;
+  transition: background 0.12s;
+}
+
+.recipe-suggest-item:hover {
+  background: #fdf6ee;
+}
+
+.recipe-suggest-item__sku {
+  color: #7a6f63;
+  font-size: 0.78rem;
+}
+
+.recipe-suggest-item__cat {
+  color: #9a8d83;
+  font-size: 0.78rem;
+}
+
+/* ── Recipe editor body ── */
+.recipe-editor-body {
+  padding: 0 0 32px;
+}
+
+.recipe-editor-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.recipe-editor-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #3d3530;
+  margin: 0;
+}
+
+/* ── Lines grid ── */
+.recipe-lines-grid {
+  display: grid;
+  grid-template-columns: 1fr 100px 90px 80px 36px;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.recipe-lines-grid--header {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #7a6f63;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0 2px 4px;
+  border-bottom: 1px solid #ede8e1;
+}
+
+.recipe-lines-grid--row {
+  background: #fdf8f4;
+  border: 1px solid #ede8e1;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+/* ── Small inputs ── */
+.restaurant-input--sm {
+  padding: 6px 10px !important;
+  font-size: 0.82rem !important;
+  border-radius: 7px !important;
+}
+
+.restaurant-input--num {
+  text-align: right;
+}
+
+/* ── Ingredient chip (after selection) ── */
+.recipe-ingredient-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 0.82rem;
+  color: #9a3412;
+  min-height: 34px;
+}
+
+.recipe-ingredient-chip span {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.recipe-ingredient-chip__clear {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #c2410c;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.recipe-ingredient-chip__clear:hover {
+  background: #fee2e2;
+}
+
+/* ── Remove line button ── */
+.recipe-remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: #b91c1c;
+  padding: 4px;
+  border-radius: 6px;
+  line-height: 1;
+  justify-self: center;
+}
+
+.recipe-remove-btn:hover {
+  background: #fee2e2;
+}
+
+/* ── Responsive ── */
+@media (max-width: 700px) {
+  .recipe-lines-grid {
+    grid-template-columns: 1fr 80px 70px 64px 30px;
+    gap: 5px;
+  }
+  .recipe-lines-grid--header span:nth-child(4) {
+    display: none;
+  }
+  .recipe-lines-grid--row > *:nth-child(4) {
+    display: none;
+  }
+}

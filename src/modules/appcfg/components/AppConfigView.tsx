@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtDateTimeShortLima } from '../../../shared/utils/lima';
 import {
   fetchCompanyVerticalSettings,
@@ -161,39 +161,6 @@ const UI_LABELS = {
   fallbackSource: 'Fallback empresa/sucursal',
 };
 
-const FEATURE_LABELS: Record<string, string> = {
-  DOC_KIND_CREDIT_NOTE: 'Notas de crédito',
-  DOC_KIND_CREDIT_NOTE_: 'Notas de crédito',
-  DOC_KIND_DEBIT_NOTE: 'Notas de débito',
-  DOC_KIND_DEBIT_NOTE_: 'Notas de débito',
-  RESTAURANT_MENU_IGV_INCLUDED: 'Menú con IGV incluido',
-  PRODUCT_MULTI_UOM: 'Múltiples unidades por producto',
-  PRODUCT_UOM_CONVERSIONS: 'Conversión de unidades',
-  PRODUCT_WHOLESALE_PRICING: 'Precios por volumen',
-  INVENTORY_PRODUCTS_BY_PROFILE: 'Productos según perfil',
-  INVENTORY_PRODUCT_MASTERS_BY_PROFILE: 'Catálogo según perfil',
-  SALES_CUSTOMER_PRICE_PROFILE: 'Precios por cliente',
-  SALES_WORKSHOP_MULTI_VEHICLE: 'Taller: clientes con multiples vehiculos',
-  SALES_SELLER_TO_CASHIER: 'Flujo vendedor a caja',
-  SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL: 'Editar emitidos antes de respuesta final SUNAT',
-  SALES_ANTICIPO_ENABLED: 'Cobro con anticipo',
-  SALES_TAX_BRIDGE: 'Envío a SUNAT',
-  SALES_TAX_BRIDGE_DEBUG_VIEW: 'Ver diagnóstico SUNAT',
-  SALES_GLOBAL_DISCOUNT_ENABLED: 'Descuento global en ventas',
-  SALES_ITEM_DISCOUNT_ENABLED: 'Descuento por item en ventas',
-  SALES_FREE_ITEMS_ENABLED: 'Operaciones gratuitas en ventas',
-  SALES_DETRACCION_ENABLED: 'Usar detracción en ventas',
-  SALES_RETENCION_ENABLED: 'Usar retención en ventas',
-  SALES_PERCEPCION_ENABLED: 'Usar percepción en ventas',
-  PURCHASES_GLOBAL_DISCOUNT_ENABLED: 'Descuento global en compras',
-  PURCHASES_ITEM_DISCOUNT_ENABLED: 'Descuento por item en compras',
-  PURCHASES_FREE_ITEMS_ENABLED: 'Operaciones gratuitas en compras',
-  PURCHASES_DETRACCION_ENABLED: 'Usar detracción en compras',
-  PURCHASES_RETENCION_COMPRADOR_ENABLED: 'Retención compra por comprador',
-  PURCHASES_RETENCION_PROVEEDOR_ENABLED: 'Retención compra por proveedor',
-  PURCHASES_PERCEPCION_ENABLED: 'Usar percepción en compras',
-};
-
 function humanizeFeatureCode(code: string): string {
   return code
     .replace(/_+/g, ' ')
@@ -202,38 +169,33 @@ function humanizeFeatureCode(code: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-function featureLabel(code: string): string {
-  return FEATURE_LABELS[code] ?? humanizeFeatureCode(code);
-}
-
 function featureRowLabel(row: { feature_code: string; feature_label?: string | null }): string {
   const label = (row.feature_label ?? '').trim();
   if (label !== '' && label.toUpperCase() !== row.feature_code.toUpperCase()) {
     return label;
   }
 
-  return featureLabel(row.feature_code);
+  return humanizeFeatureCode(row.feature_code);
 }
 
-type FeatureCategory = 'documentos' | 'restaurante' | 'inventario' | 'ventas' | 'compras' | 'otros';
+function featureCategoryKey(row: { feature_category_key?: string | null; feature_code: string }): string {
+  const key = String(row.feature_category_key ?? '').trim().toLowerCase();
+  if (key !== '') {
+    return key;
+  }
 
-const FEATURE_CATEGORY_META: Array<{ key: FeatureCategory; label: string }> = [
-  { key: 'documentos', label: 'Documentos' },
-  { key: 'restaurante', label: 'Restaurante' },
-  { key: 'inventario', label: 'Inventario y Productos' },
-  { key: 'ventas', label: 'Ventas' },
-  { key: 'compras', label: 'Compras' },
-  { key: 'otros', label: 'Otros' },
-];
+  const code = String(row.feature_code ?? '').trim().toUpperCase();
+  const firstToken = code.split('_')[0]?.toLowerCase() ?? '';
+  return firstToken !== '' ? firstToken : 'general';
+}
 
-function featureCategoryByCode(code: string): FeatureCategory {
-  const key = code.toUpperCase();
-  if (key.startsWith('DOC_KIND_')) return 'documentos';
-  if (key.startsWith('RESTAURANT_')) return 'restaurante';
-  if (key.startsWith('PRODUCT_') || key.startsWith('INVENTORY_')) return 'inventario';
-  if (key.startsWith('SALES_')) return 'ventas';
-  if (key.startsWith('PURCHASES_')) return 'compras';
-  return 'otros';
+function featureCategoryLabel(row: { feature_category_label?: string | null; feature_category_key?: string | null; feature_code: string }): string {
+  const apiLabel = String(row.feature_category_label ?? '').trim();
+  if (apiLabel !== '') {
+    return apiLabel;
+  }
+
+  return humanizeFeatureCode(featureCategoryKey(row));
 }
 
 function verticalSourceLabel(source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null): string {
@@ -306,37 +268,54 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const [verticalSettings, setVerticalSettings] = useState<CompanyVerticalSettingsResponse | null>(null);
   const [selectedVerticalCode, setSelectedVerticalCode] = useState('');
   const [activeTab, setActiveTab] = useState<'identidad' | 'plataforma' | 'modulos' | 'comercial'>('identidad');
+  const appCfgLoadInFlightKeyRef = useRef<string | null>(null);
+  const lastCompletedAutoLoadKeyRef = useRef<string | null>(null);
 
   const isAdminUser = useMemo(() => {
     const roleCode = (currentUserRoleCode ?? '').trim().toUpperCase();
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
 
-  const isRetailVertical = useMemo(() => {
-    return String(activeVerticalCode ?? '').trim().toUpperCase() === 'RETAIL';
-  }, [activeVerticalCode]);
-
   const adminManagedFeatureCodes = useMemo(
     () =>
       new Set([
+        // Ventas — todos gestionados desde Admin
+        'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
+        'SALES_ANTICIPO_ENABLED',
+        'SALES_CUSTOMER_PRICE_PROFILE',
+        'SALES_DETRACCION_ENABLED',
+        'SALES_FREE_ITEMS_ENABLED',
         'SALES_GLOBAL_DISCOUNT_ENABLED',
         'SALES_ITEM_DISCOUNT_ENABLED',
-        'SALES_FREE_ITEMS_ENABLED',
-        'SALES_DETRACCION_ENABLED',
-        'SALES_RETENCION_ENABLED',
         'SALES_PERCEPCION_ENABLED',
+        'SALES_RETENCION_ENABLED',
+        'SALES_SELLER_TO_CASHIER',
+        'SALES_TAX_BRIDGE',
+        'SALES_TAX_BRIDGE_DEBUG_VIEW',
+        'SALES_WORKSHOP_MULTI_VEHICLE',
+        // Compras — todos gestionados desde Admin
+        'PURCHASES_DETRACCION_ENABLED',
+        'PURCHASES_FREE_ITEMS_ENABLED',
         'PURCHASES_GLOBAL_DISCOUNT_ENABLED',
         'PURCHASES_ITEM_DISCOUNT_ENABLED',
-        'PURCHASES_FREE_ITEMS_ENABLED',
-        'PURCHASES_DETRACCION_ENABLED',
+        'PURCHASES_PERCEPCION_ENABLED',
         'PURCHASES_RETENCION_COMPRADOR_ENABLED',
         'PURCHASES_RETENCION_PROVEEDOR_ENABLED',
-        'PURCHASES_PERCEPCION_ENABLED',
       ]),
     []
   );
 
-  async function loadAppCfg() {
+  async function loadAppCfg(force = false) {
+    const loadKey = `${accessToken}:${branchId ?? 'ALL'}`;
+    if (!force && lastCompletedAutoLoadKeyRef.current === loadKey) {
+      return;
+    }
+
+    if (appCfgLoadInFlightKeyRef.current === loadKey) {
+      return;
+    }
+
+    appCfgLoadInFlightKeyRef.current = loadKey;
     setLoading(true);
     setMessage('');
 
@@ -431,12 +410,18 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
       const text = error instanceof Error ? error.message : 'No se pudo cargar AppCfg';
       setMessage(text);
     } finally {
+      if (!force) {
+        lastCompletedAutoLoadKeyRef.current = loadKey;
+      }
+      if (appCfgLoadInFlightKeyRef.current === loadKey) {
+        appCfgLoadInFlightKeyRef.current = null;
+      }
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    void loadAppCfg();
+    void loadAppCfg(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, branchId]);
 
@@ -471,9 +456,10 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     try {
       const payload = commerceFeatures
         .filter((row) => {
-          // Exclude only the known superadmin-managed commercial toggles.
-          // Keep SALES_TAX_BRIDGE and SALES_TAX_BRIDGE_DEBUG_VIEW writable here.
-          return !adminManagedFeatureCodes.has(row.feature_code);
+          // Exclude all admin-managed flags from save, EXCEPT tax bridge which is
+          // configured via the comercial tab form even though it shows as readonly in modules.
+          const isTaxBridge = row.feature_code === 'SALES_TAX_BRIDGE' || row.feature_code === 'SALES_TAX_BRIDGE_DEBUG_VIEW';
+          return !adminManagedFeatureCodes.has(row.feature_code) || isTaxBridge;
         })
         .map((row) => {
         const feature_code = row.feature_code;
@@ -604,10 +590,28 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const commerceFeatureCodes = new Set(commerceFeatures.map((row) => row.feature_code));
   const readonlyFeatures = features.filter((row) => !commerceFeatureCodes.has(row.feature_code));
   const editableFeatures = commerceFeatures;
+
+  const categoryMetaByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of [...readonlyFeatures, ...editableFeatures]) {
+      const key = featureCategoryKey(row);
+      if (!map.has(key)) {
+        map.set(key, featureCategoryLabel(row));
+      }
+    }
+    return map;
+  }, [readonlyFeatures, editableFeatures]);
+
+  const visibleFeatureCategoryMeta = useMemo(() => {
+    return Array.from(categoryMetaByKey.entries())
+      .map(([key, label]) => ({ key, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [categoryMetaByKey]);
+
   const groupedReadonlyFeatures = useMemo(() => {
-    const grouped = new Map<FeatureCategory, FeatureToggleRow[]>();
+    const grouped = new Map<string, FeatureToggleRow[]>();
     for (const row of readonlyFeatures) {
-      const category = featureCategoryByCode(row.feature_code);
+      const category = featureCategoryKey(row);
       const current = grouped.get(category) ?? [];
       current.push(row);
       grouped.set(category, current);
@@ -616,37 +620,38 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   }, [readonlyFeatures]);
 
   const groupedEditableFeatures = useMemo(() => {
-    const grouped = new Map<FeatureCategory, CommerceSettingsFeature[]>();
+    const grouped = new Map<string, CommerceSettingsFeature[]>();
     for (const row of editableFeatures) {
-      if (isRetailVertical && featureCategoryByCode(row.feature_code) === 'restaurante') {
-        continue;
-      }
-      const category = featureCategoryByCode(row.feature_code);
+      const category = featureCategoryKey(row);
       const current = grouped.get(category) ?? [];
       current.push(row);
       grouped.set(category, current);
     }
     return grouped;
-  }, [editableFeatures, isRetailVertical]);
+  }, [editableFeatures]);
 
   const groupedReadonlyFeaturesFiltered = useMemo(() => {
-    const grouped = new Map<FeatureCategory, FeatureToggleRow[]>();
+    const grouped = new Map<string, FeatureToggleRow[]>();
     for (const row of readonlyFeatures) {
-      const category = featureCategoryByCode(row.feature_code);
-      if (isRetailVertical && category === 'restaurante') {
-        continue;
-      }
+      const category = featureCategoryKey(row);
       const current = grouped.get(category) ?? [];
       current.push(row);
       grouped.set(category, current);
     }
     return grouped;
-  }, [readonlyFeatures, isRetailVertical]);
+  }, [readonlyFeatures]);
 
-  const visibleFeatureCategoryMeta = useMemo(
-    () => FEATURE_CATEGORY_META.filter((meta) => !(isRetailVertical && meta.key === 'restaurante')),
-    [isRetailVertical]
-  );
+  // Ordered + translated category list for the Módulos tab.
+  // Only restaurant (if vertical matches), sales, purchases are shown.
+  const modulosCategoryMeta = useMemo(() => {
+    const isRestaurantVertical = (activeVerticalCode ?? '').trim().toUpperCase() === 'RESTAURANT';
+    const order: { key: string; label: string }[] = [
+      ...(isRestaurantVertical ? [{ key: 'restaurant', label: 'Restaurante' }] : []),
+      { key: 'sales', label: 'Ventas' },
+      { key: 'purchases', label: 'Compras' },
+    ];
+    return order;
+  }, [activeVerticalCode]);
 
   return (
     <section className="module-panel">
@@ -673,7 +678,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
             )}
           <p className="cfg-lead">{UI_LABELS.description}</p>
         </div>
-        <button type="button" onClick={() => void loadAppCfg()} disabled={loading}>
+        <button type="button" onClick={() => void loadAppCfg(true)} disabled={loading}>
           {UI_LABELS.refresh}
         </button>
       </div>
@@ -950,7 +955,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
             <div className="cfg-card">
               <h4 className="cfg-card-title">{UI_LABELS.featuresHeader}</h4>
               <div className="cfg-feature-groups">
-                {visibleFeatureCategoryMeta.map((meta) => {
+                {modulosCategoryMeta.map((meta) => {
                   const readonlyItems = groupedReadonlyFeaturesFiltered.get(meta.key) ?? [];
                   const editableItems = groupedEditableFeatures.get(meta.key) ?? [];
                   if (readonlyItems.length === 0 && editableItems.length === 0) {
@@ -992,8 +997,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                         ))}
 
                         {editableItems.map((row) => {
-                          const featureCat = featureCategoryByCode(row.feature_code);
-                          const isManagedByAdminPortal = featureCat === 'ventas' || featureCat === 'compras';
+                          const isManagedByAdminPortal = adminManagedFeatureCodes.has(row.feature_code);
                           const enabled = commerceFeaturesForm[row.feature_code] ?? false;
 
                           return (

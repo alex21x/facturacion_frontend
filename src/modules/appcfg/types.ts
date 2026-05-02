@@ -13,6 +13,8 @@ export type ModuleRow = {
 export type FeatureToggleRow = {
   feature_code: string;
   feature_label?: string | null;
+  feature_category_key?: string | null;
+  feature_category_label?: string | null;
   is_enabled: boolean;
   company_enabled: boolean | null;
   branch_enabled: boolean | null;
@@ -57,6 +59,21 @@ export type OperationalCashRegister = {
   status: number;
 };
 
+export type OperationalStation = {
+  id: number;
+  company_id: number;
+  cash_register_id: number;
+  branch_id: number | null;
+  warehouse_id: number | null;
+  code: string;
+  name: string;
+  device_id: string;
+  device_name: string | null;
+  status: number;
+  cash_register_code: string;
+  cash_register_name: string;
+};
+
 export type PlatformLimits = {
   max_companies_enabled: number;
 };
@@ -82,6 +99,7 @@ export type OperationalContextResponse = {
     code: string;
     name: string;
   } | null;
+  station?: OperationalStation | null;
   branches: OperationalBranch[];
   warehouses: OperationalWarehouse[];
   cash_registers: OperationalCashRegister[];
@@ -90,6 +108,11 @@ export type OperationalContextResponse = {
     branch_id: number | null;
     warehouse_id: number | null;
     cash_register_id: number | null;
+  };
+  selection_locks?: {
+    branch: boolean;
+    warehouse: boolean;
+    cash_register: boolean;
   };
   limits: {
     platform: PlatformLimits;
@@ -166,6 +189,8 @@ export type CompanyOperationalLimitMatrixResponse = {
 export type CommerceSettingsFeature = {
   feature_code: string;
   feature_label?: string | null;
+  feature_category_key?: string | null;
+  feature_category_label?: string | null;
   is_enabled: boolean;
   config: unknown;
   vertical_source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null;
@@ -363,6 +388,8 @@ export type CompanyCommerceAdminMatrixCompany = {
 
 export type CompanyCommerceAdminMatrixResponse = {
   feature_codes: string[];
+  feature_labels?: Record<string, string>;
+  feature_categories?: Record<string, { key: string; label: string }>;
   companies: CompanyCommerceAdminMatrixCompany[];
 };
 

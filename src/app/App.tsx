@@ -3,7 +3,7 @@ import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
 import { fetchHomeMetricsSummary, fetchOperationalContext } from '../modules/appcfg/api';
-import type { CompanyVerticalSettingsResponse, OperationalContextResponse } from '../modules/appcfg/types';
+import type { OperationalContextResponse } from '../modules/appcfg/types';
 import quickAppcfgImg from '../assets/quickhome/icons/appcfg.png';
 import quickCashImg from '../assets/quickhome/icons/cash.png';
 import quickComandasImg from '../assets/quickhome/icons/comandas.png';
@@ -51,6 +51,7 @@ type ModuleTab =
   | 'restaurant-orders'
   | 'comandas'
   | 'tables'
+  | 'restaurant-recipes'
   | 'sales'
   | 'daily-summary'
   | 'gre-guides'
@@ -104,6 +105,7 @@ const QUICK_ACCESS_PRIORITY: ModuleTab[] = [
 ];
 
 const QUICK_ACCESS_FEATURED: ModuleTab[] = ['sales', 'cash', 'purchases', 'inventory'];
+const RESTAURANT_TABS = new Set<ModuleTab>(['restaurant-orders', 'comandas', 'tables', 'restaurant-recipes']);
 
 const QUICK_ACCESS_META: Partial<Record<ModuleTab, { badge: string; flow: string; emoji: string }>> = {
   sales: { badge: 'Venta rapida', flow: 'Emitir comprobante en segundos', emoji: 'POS' },
@@ -123,6 +125,8 @@ const BUSINESS_PULSE_CACHE_TTL_MS = 2 * 60 * 1000;
 const SALES_FLAGS_CACHE_KEY = 'facturacion.salesFlagsCache.v1';
 const SALES_FLAGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
+const OPERATIONAL_CONTEXT_CACHE_KEY = 'facturacion.operationalContextCache.v1';
+const OPERATIONAL_CONTEXT_CACHE_TTL_MS = 30 * 60 * 1000;
 
 const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
   'restaurant-orders': quickRestaurantOrdersImg,
@@ -151,6 +155,7 @@ const loadCashView = () => import('../modules/cash/components/CashView');
 const RestaurantOrderView = lazy(() => import('../modules/restaurant/components/RestaurantOrderView').then((m) => ({ default: m.RestaurantOrderView })));
 const ComandasView = lazy(() => import('../modules/restaurant/components/ComandasView').then((m) => ({ default: m.ComandasView })));
 const TablesView = lazy(() => import('../modules/restaurant/components/TablesView').then((m) => ({ default: m.TablesView })));
+const RecipeEditorView = lazy(() => import('../modules/restaurant/components/RecipeEditorView').then((m) => ({ default: m.RecipeEditorView })));
 const loadSalesView = () => import('../modules/sales/components/SalesView');
 const CashView = lazy(() => loadCashView().then((m) => ({ default: m.CashView })));
 const SalesView = lazy(() => loadSalesView().then((m) => ({ default: m.SalesView })));
@@ -198,6 +203,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Inicio',
     label: 'Acceso rapido',
     hint: 'Pantalla inicial con procesos frecuentes',
+    moduleCode: 'APPCFG',
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 10.5 12 3l9 7.5M5 9.5V21h14V9.5M10 21v-6h4v6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -262,6 +268,19 @@ const MENU_ITEMS: Array<{
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 10h18M6 10V6h12v4M7 10v8m10-8v8M4 18h16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'restaurant-recipes',
+    group: 'catalogo',
+    kicker: 'Restaurante',
+    label: 'Recetas',
+    hint: 'Ingredientes y cantidades por plato',
+    onlyVerticals: ['RESTAURANT'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2M12 12h4M12 16h4M8 12h.01M8 16h.01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -491,7 +510,7 @@ const MENU_ITEMS: Array<{
 ];
 
 const HIDDEN_TABS_BY_VERTICAL: Partial<Record<string, ModuleTab[]>> = {
-  RETAIL: ['comandas', 'tables'],
+  RETAIL: ['comandas', 'tables', 'restaurant-recipes'],
   RESTAURANT: ['sales', 'gre-guides', 'products'],
   SERVICES: ['inventory', 'purchases', 'gre-guides'],
   WORKSHOP: ['daily-summary', 'gre-guides'],
@@ -578,6 +597,7 @@ function resolveInitialActiveTab(): ModuleTab {
     'restaurant-orders',
     'comandas',
     'tables',
+    'restaurant-recipes',
     'sales',
     'daily-summary',
     'gre-guides',
@@ -587,6 +607,7 @@ function resolveInitialActiveTab(): ModuleTab {
     'reports',
     'restaurant-menu',
     'restaurant-supplies',
+    'restaurant-recipes',
     'products',
     'customers',
     'masters',
@@ -610,10 +631,11 @@ export function App() {
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | null>(null);
   const [selectedCashRegisterId, setSelectedCashRegisterId] = useState<number | null>(null);
   const [isContextPickerOpen, setIsContextPickerOpen] = useState(false);
+  const [isContextLoading, setIsContextLoading] = useState(false);
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [taxTraceabilityEnabled, setTaxTraceabilityEnabled] = useState(false);
-  const [activeVertical, setActiveVertical] = useState<CompanyVerticalSettingsResponse['active_vertical'] | null>(null);
+  const [activeVertical, setActiveVertical] = useState<OperationalContextResponse['active_vertical'] | null>(null);
   const [businessPulseRange, setBusinessPulseRange] = useState<BusinessPulseRange>('DAY');
   const [businessPulseData, setBusinessPulseData] = useState<BusinessPulseDataset>(BUSINESS_PULSE_EMPTY);
   const [businessPulseLoading, setBusinessPulseLoading] = useState(false);
@@ -630,6 +652,67 @@ export function App() {
   const moduleExecutionRef = useRef<HTMLDivElement | null>(null);
   const shouldScrollToModuleRef = useRef(false);
   const hasHydratedOperationalContextRef = useRef(false);
+  const operationalContextInFlightKeyRef = useRef<string | null>(null);
+  const operationalContextLastCompletedKeyRef = useRef<string | null>(null);
+
+  const operationalContextScope = session
+    ? `${authScope}:${session.user.company_id}`
+    : null;
+
+  useEffect(() => {
+    if (!operationalContextScope || typeof window === 'undefined') {
+      return;
+    }
+
+    const roleCode = (session?.user?.role_code ?? '').toUpperCase();
+    const roleProfile = (session?.user?.role_profile ?? '').toUpperCase();
+    const isAdmin = roleCode.includes('ADMIN');
+    const isCashier = roleProfile === 'CASHIER' || roleCode.includes('CAJA') || roleCode.includes('CAJER') || roleCode.includes('CASHIER');
+    const isSeller = roleProfile === 'SELLER' || roleCode.includes('VENDED') || roleCode.includes('SELLER');
+    const shouldSkipCashCacheHydration = salesFlowMode === 'DIRECT_CASHIER' && isSeller && !isCashier && !isAdmin;
+
+    try {
+      const raw = window.localStorage.getItem(OPERATIONAL_CONTEXT_CACHE_KEY);
+      if (!raw) {
+        return;
+      }
+
+      const parsed = JSON.parse(raw) as {
+        scope?: string;
+        generatedAt?: number;
+        active_vertical?: OperationalContextResponse['active_vertical'];
+        selected_branch_id?: number | null;
+        selected_warehouse_id?: number | null;
+        selected_cash_register_id?: number | null;
+      };
+
+      const generatedAt = Number(parsed.generatedAt ?? 0);
+      const isFresh = Number.isFinite(generatedAt)
+        && (Date.now() - generatedAt) <= OPERATIONAL_CONTEXT_CACHE_TTL_MS;
+
+      if (parsed.scope !== operationalContextScope || !isFresh) {
+        return;
+      }
+
+      if (parsed.active_vertical) {
+        setActiveVertical(parsed.active_vertical);
+      }
+
+      if (selectedBranchId === null && typeof parsed.selected_branch_id === 'number') {
+        setSelectedBranchId(parsed.selected_branch_id);
+      }
+
+      if (selectedWarehouseId === null && typeof parsed.selected_warehouse_id === 'number') {
+        setSelectedWarehouseId(parsed.selected_warehouse_id);
+      }
+
+      if (!shouldSkipCashCacheHydration && selectedCashRegisterId === null && typeof parsed.selected_cash_register_id === 'number') {
+        setSelectedCashRegisterId(parsed.selected_cash_register_id);
+      }
+    } catch {
+      // Ignore cache parsing issues.
+    }
+  }, [operationalContextScope, selectedBranchId, selectedCashRegisterId, selectedWarehouseId, session?.user?.role_code, session?.user?.role_profile, salesFlowMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -693,18 +776,11 @@ export function App() {
       || normalizedRoleCode.includes('VENDED')
       || normalizedRoleCode.includes('SELLER');
 
-    const preloadTimer = window.setTimeout(() => {
-      // Preload only operational core modules, without touching other module chunks.
-      const preloaders: Array<Promise<unknown>> = [loadSalesView()];
-      if (isAdmin || isCashier || !isSeller) {
-        preloaders.push(loadCashView());
-      }
-      void Promise.allSettled(preloaders);
-    }, 700);
-
-    return () => {
-      window.clearTimeout(preloadTimer);
-    };
+    // Keep initial startup lean: avoid preloading heavy cross-module chunks.
+    void isAdmin;
+    void isCashier;
+    void isSeller;
+    return undefined;
   }, [session?.accessToken, session?.user?.role_code, session?.user?.role_profile]);
 
   const fullName = useMemo(() => {
@@ -720,6 +796,12 @@ export function App() {
   const isAdminUser = normalizedRoleCode.includes('ADMIN');
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
+  const shouldRequireManualCashSelection =
+    salesFlowMode === 'DIRECT_CASHIER'
+    && isSellerUser
+    && !isCashierUser
+    && !isAdminUser
+    && !Boolean(context?.selection_locks?.cash_register);
   const shouldHideCashModule = salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser && !isCashierUser && !isAdminUser;
   const inventoryPermissions = session?.user?.permissions?.INVENTORY;
   const canEditPurchaseEntries = Boolean(inventoryPermissions?.can_update) && Boolean(inventoryPermissions?.can_approve);
@@ -1075,12 +1157,26 @@ export function App() {
     warehouseId?: number | null,
     cashRegisterId?: number | null
   ): Promise<void> {
+    const requestKey = `${branchId ?? 'ALL'}:${warehouseId ?? 'ALL'}:${cashRegisterId ?? 'ALL'}`;
+
+    if (operationalContextInFlightKeyRef.current === requestKey) {
+      return;
+    }
+
+    if (operationalContextLastCompletedKeyRef.current === requestKey && hasHydratedOperationalContextRef.current) {
+      return;
+    }
+
     try {
+      operationalContextInFlightKeyRef.current = requestKey;
+      setIsContextLoading(true);
       const nextContext = await fetchOperationalContext(accessToken, {
         branchId,
         warehouseId,
         cashRegisterId,
       });
+
+      const nextCashSelectionLocked = Boolean(nextContext.selection_locks?.cash_register);
 
       setContext(nextContext);
 
@@ -1096,33 +1192,87 @@ export function App() {
         nextContext.warehouses[0]?.id ??
         null;
       const nextCashRegisterId =
-        cashRegisterId ??
-        nextContext.selected.cash_register_id ??
-        nextContext.cash_registers.find((row) => (row.branch_id === nextBranchId || row.branch_id === null) && (row.warehouse_id === nextWarehouseId || row.warehouse_id === null))?.id ??
-        nextContext.cash_registers[0]?.id ??
-        null;
+        nextCashSelectionLocked
+          ? (nextContext.selected.cash_register_id ?? null)
+          : (shouldRequireManualCashSelection && (cashRegisterId === null || cashRegisterId === undefined)
+            ? null
+            : (cashRegisterId ??
+            nextContext.selected.cash_register_id ??
+            nextContext.cash_registers.find((row) => (row.branch_id === nextBranchId || row.branch_id === null) && (row.warehouse_id === nextWarehouseId || row.warehouse_id === null))?.id ??
+            nextContext.cash_registers[0]?.id ??
+            null));
 
       setSelectedBranchId(nextBranchId);
       setSelectedWarehouseId(nextWarehouseId);
       setSelectedCashRegisterId(nextCashRegisterId);
       setActiveVertical(nextContext.active_vertical ?? null);
+
+      try {
+        if (typeof window !== 'undefined' && operationalContextScope) {
+          window.localStorage.setItem(
+            OPERATIONAL_CONTEXT_CACHE_KEY,
+            JSON.stringify({
+              scope: operationalContextScope,
+              generatedAt: Date.now(),
+              active_vertical: nextContext.active_vertical ?? null,
+              selected_branch_id: nextBranchId,
+              selected_warehouse_id: nextWarehouseId,
+              selected_cash_register_id: nextCashRegisterId,
+            }),
+          );
+        }
+      } catch {
+        // Ignore localStorage write issues.
+      }
+
       hasHydratedOperationalContextRef.current = true;
+      operationalContextLastCompletedKeyRef.current = requestKey;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar contexto operativo';
       setErrorMessage(message);
+    } finally {
+      if (operationalContextInFlightKeyRef.current === requestKey) {
+        operationalContextInFlightKeyRef.current = null;
+      }
+      setIsContextLoading(false);
     }
   }
 
   useEffect(() => {
-    if (!session) {
+    if (!session?.accessToken) {
       return;
     }
 
-    hasHydratedOperationalContextRef.current = false;
+    // Ensure vertical-aware menu is hydrated on startup after hard refresh.
+    if (!hasHydratedOperationalContextRef.current && !isContextLoading && !activeVertical?.code) {
+      void loadOperationalContext(
+        session.accessToken,
+        selectedBranchId,
+        selectedWarehouseId,
+        selectedCashRegisterId,
+      );
+      return;
+    }
 
-    void loadOperationalContext(session.accessToken);
+    // Avoid null-branch startup stalls: use auth payload immediately.
+    const initialBranch = session.user.branch_id ? Number(session.user.branch_id) : null;
+    if (selectedBranchId === null && initialBranch !== null) {
+      setSelectedBranchId(initialBranch);
+    }
+
+    // Defer full context bootstrap to when a module actually needs it.
+    if (hasHydratedOperationalContextRef.current || activeTab === 'home' || RESTAURANT_TABS.has(activeTab)) {
+      return;
+    }
+
+    void loadOperationalContext(
+      session.accessToken,
+      selectedBranchId,
+      selectedWarehouseId,
+      selectedCashRegisterId,
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.accessToken]);
+  }, [session?.accessToken, activeTab, activeVertical?.code, isContextLoading, selectedBranchId, selectedCashRegisterId, selectedWarehouseId]);
 
   useEffect(() => {
     if (!session || !context || !hasHydratedOperationalContextRef.current) {
@@ -1139,6 +1289,23 @@ export function App() {
       return;
     }
 
+    // For restaurant tabs, keep context local and avoid reloading unrelated modules/cash context.
+    if (RESTAURANT_TABS.has(activeTab)) {
+      const nextWarehouseId = context.warehouses
+        .find((row) => row.branch_id === selectedBranchId || row.branch_id === null)?.id
+        ?? null;
+
+      if (selectedWarehouseId !== nextWarehouseId) {
+        setSelectedWarehouseId(nextWarehouseId);
+      }
+
+      if (selectedCashRegisterId !== null) {
+        setSelectedCashRegisterId(null);
+      }
+
+      return;
+    }
+
     void loadOperationalContext(
       session.accessToken,
       selectedBranchId,
@@ -1146,7 +1313,7 @@ export function App() {
       selectedCashRegisterId
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBranchId]);
+  }, [selectedBranchId, activeTab]);
 
   useEffect(() => {
     if (!session) {
@@ -1556,27 +1723,69 @@ export function App() {
                     {selectedCashRegisterId ? ` C ${selectedCashRegisterId}` : ' C -'}
                   </span>
 
-                  {context && (
-                    <div className="active-context-actions" role="group" aria-label="Contexto operativo">
-                      <button
-                        type="button"
-                        className="context-toggle-btn"
-                        onClick={() => setIsContextPickerOpen((prev) => !prev)}
-                      >
-                        {isContextPickerOpen ? 'Ocultar contexto' : 'Cambiar contexto'}
-                      </button>
+                  <div className="active-context-actions" role="group" aria-label="Contexto operativo">
+                    <button
+                      type="button"
+                      className="context-toggle-btn"
+                      onClick={() => {
+                        const nextOpen = !isContextPickerOpen;
+                        setIsContextPickerOpen(nextOpen);
 
-                      {isContextPickerOpen && (
-                        <div className="active-context-popover">
+                        if (
+                          nextOpen
+                          && session?.accessToken
+                          && !context
+                          && !isContextLoading
+                        ) {
+                          void loadOperationalContext(
+                            session.accessToken,
+                            selectedBranchId,
+                            selectedWarehouseId,
+                            selectedCashRegisterId,
+                          );
+                        }
+                      }}
+                    >
+                      {isContextPickerOpen ? 'Ocultar contexto' : 'Cambiar contexto'}
+                    </button>
+
+                    {isContextPickerOpen && (
+                      <div className="active-context-popover">
+                        {!context && (
+                          <p className="notice" style={{ margin: 0 }}>
+                            {isContextLoading ? 'Cargando contexto operativo...' : 'Contexto no disponible por el momento.'}
+                          </p>
+                        )}
+
+                        {context && (
+                          <>
+                          {context.station && (
+                            <p className="notice" style={{ margin: 0 }}>
+                              Estacion activa: {context.station.code} - {context.station.name}. Caja fija: {context.station.cash_register_code} - {context.station.cash_register_name}.
+                            </p>
+                          )}
                           <label>
                             <span>Sucursal</span>
                             <select
                               value={selectedBranchId ?? ''}
+                              disabled={Boolean(context.selection_locks?.branch)}
                               onChange={(e) => {
                                 const value = e.target.value ? Number(e.target.value) : null;
                                 setSelectedBranchId(value);
-                                setSelectedWarehouseId(null);
-                                setSelectedCashRegisterId(null);
+
+                                const nextWarehouse = context?.warehouses.find((row) => row.branch_id === value || row.branch_id === null)?.id ?? null;
+                                const nextCash = context?.cash_registers.find((row) => (
+                                  (row.branch_id === value || row.branch_id === null)
+                                  && (nextWarehouse === null || row.warehouse_id === null || row.warehouse_id === nextWarehouse)
+                                ))?.id ?? null;
+
+                                // Keep branch switch lightweight and avoid transient null-context requests.
+                                setSelectedWarehouseId(nextWarehouse);
+                                setSelectedCashRegisterId(
+                                  RESTAURANT_TABS.has(activeTab)
+                                    ? null
+                                    : (context.selection_locks?.cash_register ? (context.selected.cash_register_id ?? null) : (shouldRequireManualCashSelection ? null : nextCash))
+                                );
                               }}
                             >
                               <option value="">Seleccionar</option>
@@ -1592,6 +1801,7 @@ export function App() {
                             <span>Almacen</span>
                             <select
                               value={selectedWarehouseId ?? ''}
+                              disabled={Boolean(context.selection_locks?.warehouse)}
                               onChange={(e) => setSelectedWarehouseId(e.target.value ? Number(e.target.value) : null)}
                             >
                               <option value="">Seleccionar</option>
@@ -1609,6 +1819,7 @@ export function App() {
                             <span>Caja</span>
                             <select
                               value={selectedCashRegisterId ?? ''}
+                              disabled={Boolean(context.selection_locks?.cash_register)}
                               onChange={(e) => setSelectedCashRegisterId(e.target.value ? Number(e.target.value) : null)}
                             >
                               <option value="">Seleccionar</option>
@@ -1621,10 +1832,12 @@ export function App() {
                                 ))}
                             </select>
                           </label>
+
+                            </>
+                          )}
                         </div>
                       )}
                     </div>
-                  )}
                 </div>
               </header>
               )}
@@ -1658,6 +1871,12 @@ export function App() {
                   <TablesView
                     accessToken={session.accessToken}
                     branchId={selectedBranchId}
+                  />
+                )}
+                {activeTab === 'restaurant-recipes' && (
+                  <RecipeEditorView
+                    accessToken={session.accessToken}
+                    warehouseId={selectedWarehouseId}
                   />
                 )}
                 {activeTab === 'sales' && (

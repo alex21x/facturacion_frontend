@@ -82,6 +82,7 @@ export async function fetchSalesBootstrap(
     warehouseId?: number | null;
     cashRegisterId?: number | null;
     includeDocuments?: boolean;
+    sourceOrigin?: 'RESTAURANT' | null;
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
@@ -121,6 +122,9 @@ export async function fetchSalesBootstrap(
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);
+  }
+  if (context?.sourceOrigin) {
+    query.set('source_origin', context.sourceOrigin);
   }
   if (context?.customer) {
     query.set('customer', context.customer);
@@ -222,6 +226,7 @@ export async function fetchCommercialDocuments(
     branchId?: number | null;
     warehouseId?: number | null;
     cashRegisterId?: number | null;
+    sourceOrigin?: 'RESTAURANT' | null;
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
@@ -262,6 +267,9 @@ export async function fetchCommercialDocuments(
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);
+  }
+  if (context?.sourceOrigin) {
+    query.set('source_origin', context.sourceOrigin);
   }
   if (context?.customer && context.customer.trim() !== '') {
     query.set('customer', context.customer.trim());
@@ -675,6 +683,7 @@ export async function exportCommercialDocumentsExcel(
     branchId?: number | null;
     warehouseId?: number | null;
     cashRegisterId?: number | null;
+    sourceOrigin?: 'RESTAURANT' | null;
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
@@ -713,6 +722,9 @@ export async function exportCommercialDocumentsExcel(
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);
+  }
+  if (context?.sourceOrigin) {
+    query.set('source_origin', context.sourceOrigin);
   }
   if (context?.customer && context.customer.trim() !== '') {
     query.set('customer', context.customer.trim());
@@ -771,6 +783,7 @@ export async function exportCommercialDocumentsJson(
     branchId?: number | null;
     warehouseId?: number | null;
     cashRegisterId?: number | null;
+    sourceOrigin?: 'RESTAURANT' | null;
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
@@ -810,6 +823,9 @@ export async function exportCommercialDocumentsJson(
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);
+  }
+  if (context?.sourceOrigin) {
+    query.set('source_origin', context.sourceOrigin);
   }
   if (context?.customer && context.customer.trim() !== '') {
     query.set('customer', context.customer.trim());

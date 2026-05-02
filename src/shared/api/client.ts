@@ -166,18 +166,24 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
       throw new Error(`Error ${response.status}: respuesta inesperada del servidor.`);
     }
 
-    if (response.status === 403) {
-      throw new Error('No tienes permiso para acceder a esta sección.');
-    }
-
     const parsed = tryParseJsonObject(text);
+    const serverMessage = typeof parsed?.message === 'string' ? parsed.message : null;
+
+    if (response.status === 403) {
+      const moduleCode = typeof parsed?.module_code === 'string' ? parsed.module_code : null;
+      const action = typeof parsed?.action === 'string' ? parsed.action : null;
+      const rbacHint = moduleCode ? ` [${moduleCode}${action ? `:${action}` : ''}]` : '';
+      const detail = serverMessage && serverMessage.trim() !== ''
+        ? serverMessage
+        : `Solicitud bloqueada en ${path}`;
+      throw new Error(`No tienes permiso para acceder a esta sección.${rbacHint} (${detail})`);
+    }
 
     const validationMessage = extractFirstValidationError(parsed);
     if (response.status === 422 && validationMessage) {
       throw new Error(validationMessage);
     }
 
-    const serverMessage = typeof parsed?.message === 'string' ? parsed.message : null;
     const isTechnical = serverMessage
       ? /SQLSTATE|ERROR:|Exception|at line \d+|vendor\/|->|php/i.test(serverMessage)
       : false;

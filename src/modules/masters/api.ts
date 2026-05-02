@@ -1,6 +1,7 @@
 import { apiClient } from '../../shared/api/client';
 import type {
   AccessControlResponse,
+  AccessFunctionalProfileRow,
   CashRegisterRow,
   CommerceSettingsResponse,
   DocumentKindRow,
@@ -8,6 +9,7 @@ import type {
   LotRow,
   MasterOptionsResponse,
   PaymentMethodRow,
+  PosStationRow,
   PriceTierRow,
   SeriesRow,
   UnitRow,
@@ -72,6 +74,15 @@ export async function fetchCashRegisters(accessToken: string): Promise<CashRegis
   return response.data;
 }
 
+export async function fetchPosStations(accessToken: string): Promise<PosStationRow[]> {
+  const response = await apiClient.request<{ data: PosStationRow[] }>('/api/masters/pos-stations', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return response.data;
+}
+
 export async function createCashRegister(
   accessToken: string,
   payload: { branch_id?: number | null; code: string; name: string; status?: number }
@@ -85,6 +96,36 @@ export async function createCashRegister(
 
 export async function updateCashRegister(accessToken: string, id: number, payload: Partial<CashRegisterRow>) {
   return apiClient.request(`/api/masters/cash-registers/${id}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function createPosStation(
+  accessToken: string,
+  payload: {
+    cash_register_id: number;
+    code: string;
+    name: string;
+    device_id: string;
+    device_name?: string | null;
+    status?: number;
+  }
+) {
+  return apiClient.request('/api/masters/pos-stations', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updatePosStation(
+  accessToken: string,
+  id: number,
+  payload: Partial<PosStationRow> & { cash_register_id?: number | null }
+) {
+  return apiClient.request(`/api/masters/pos-stations/${id}`, {
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
@@ -306,7 +347,7 @@ export async function createRole(
     code: string;
     name: string;
     status?: number;
-    functional_profile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+    functional_profile?: string | null;
     permissions: Array<{
       module_code: string;
       can_view: boolean;
@@ -331,7 +372,7 @@ export async function updateRole(
   payload: {
     name?: string;
     status?: number;
-    functional_profile?: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+    functional_profile?: string | null;
     permissions?: Array<{
       module_code: string;
       can_view: boolean;
@@ -350,10 +391,53 @@ export async function updateRole(
   });
 }
 
+export async function fetchFunctionalProfiles(accessToken: string): Promise<AccessFunctionalProfileRow[]> {
+  const response = await apiClient.request<{ functional_profiles: AccessFunctionalProfileRow[] }>('/api/masters/functional-profiles', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return response.functional_profiles ?? [];
+}
+
+export async function createFunctionalProfile(
+  accessToken: string,
+  payload: {
+    code: string;
+    label: string;
+    status?: number;
+    sort_order?: number;
+  }
+) {
+  return apiClient.request('/api/masters/functional-profiles', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateFunctionalProfile(
+  accessToken: string,
+  code: string,
+  payload: {
+    label?: string;
+    status?: number;
+    sort_order?: number;
+  }
+) {
+  return apiClient.request(`/api/masters/functional-profiles/${encodeURIComponent(code)}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function createUser(
   accessToken: string,
   payload: {
     branch_id?: number | null;
+    preferred_warehouse_id?: number | null;
+    preferred_cash_register_id?: number | null;
     username: string;
     password: string;
     first_name: string;
@@ -376,6 +460,8 @@ export async function updateUser(
   id: number,
   payload: {
     branch_id?: number | null;
+    preferred_warehouse_id?: number | null;
+    preferred_cash_register_id?: number | null;
     password?: string;
     first_name?: string;
     last_name?: string | null;

@@ -28,8 +28,24 @@ export type CashRegisterRow = {
   id: number;
   company_id: number;
   branch_id: number | null;
+  warehouse_id?: number | null;
   code: string;
   name: string;
+  status: number;
+};
+
+export type PosStationRow = {
+  id: number;
+  company_id: number;
+  cash_register_id: number;
+  branch_id: number | null;
+  warehouse_id: number | null;
+  code: string;
+  name: string;
+  device_id: string;
+  device_name: string | null;
+  cash_register_code: string;
+  cash_register_name: string;
   status: number;
 };
 
@@ -90,6 +106,7 @@ export type MastersDashboardResponse = {
   options: MasterOptionsResponse;
   warehouses: WarehouseRow[];
   cash_registers: CashRegisterRow[];
+  pos_stations: PosStationRow[];
   payment_methods: PaymentMethodRow[];
   series: SeriesRow[];
   price_tiers: PriceTierRow[];
@@ -100,6 +117,7 @@ export type MastersDashboardResponse = {
   stats: {
     warehouses_total: number;
     cash_registers_total: number;
+    pos_stations_total?: number;
     payment_methods_total: number;
     series_total: number;
     price_tiers_total: number;
@@ -109,23 +127,10 @@ export type MastersDashboardResponse = {
 };
 
 export type CommerceFeatureRow = {
-  feature_code:
-    | 'PRODUCT_MULTI_UOM'
-    | 'PRODUCT_UOM_CONVERSIONS'
-    | 'PRODUCT_WHOLESALE_PRICING'
-    | 'INVENTORY_PRODUCTS_BY_PROFILE'
-    | 'INVENTORY_PRODUCT_MASTERS_BY_PROFILE'
-    | 'SALES_CUSTOMER_PRICE_PROFILE'
-    | 'SALES_WORKSHOP_MULTI_VEHICLE'
-    | 'SALES_SELLER_TO_CASHIER'
-    | 'SALES_ANTICIPO_ENABLED'
-    | 'SALES_DETRACCION_ENABLED'
-    | 'SALES_RETENCION_ENABLED'
-    | 'SALES_PERCEPCION_ENABLED'
-    | 'PURCHASES_DETRACCION_ENABLED'
-    | 'PURCHASES_RETENCION_COMPRADOR_ENABLED'
-    | 'PURCHASES_RETENCION_PROVEEDOR_ENABLED'
-    | 'PURCHASES_PERCEPCION_ENABLED';
+  feature_code: string;
+  feature_label?: string | null;
+  feature_category_key?: string | null;
+  feature_category_label?: string | null;
   is_enabled: boolean;
   config: Record<string, unknown> | null;
 };
@@ -156,13 +161,22 @@ export type AccessRoleRow = {
   code: string;
   name: string;
   status: number;
-  functional_profile: 'SELLER' | 'CASHIER' | 'GENERAL' | null;
+  functional_profile: string | null;
   permissions: RolePermissionRow[];
+};
+
+export type AccessFunctionalProfileRow = {
+  code: string;
+  label: string;
+  status: number;
+  sort_order: number;
 };
 
 export type AccessUserRow = {
   id: number;
   branch_id: number | null;
+  preferred_warehouse_id?: number | null;
+  preferred_cash_register_id?: number | null;
   username: string;
   first_name: string;
   last_name: string | null;
@@ -177,4 +191,5 @@ export type AccessControlResponse = {
   modules: AccessModuleRow[];
   roles: AccessRoleRow[];
   users: AccessUserRow[];
+  functional_profiles?: AccessFunctionalProfileRow[];
 };
