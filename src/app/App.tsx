@@ -127,6 +127,7 @@ const SALES_FLAGS_CACHE_TTL_MS = 5 * 60 * 1000;
 const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
 const OPERATIONAL_CONTEXT_CACHE_KEY = 'facturacion.operationalContextCache.v1';
 const OPERATIONAL_CONTEXT_CACHE_TTL_MS = 30 * 60 * 1000;
+const LAST_SUCCESSFUL_DEVICE_ID_KEY = 'facturacion.auth.lastDeviceId';
 
 const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
   'restaurant-orders': quickRestaurantOrdersImg,
@@ -656,8 +657,19 @@ export function App() {
   const operationalContextLastCompletedKeyRef = useRef<string | null>(null);
 
   const operationalContextScope = session
-    ? `${authScope}:${session.user.company_id}`
+    ? `${authScope}:${session.user.company_id}:${session.user.id}:${session.deviceId}`
     : null;
+
+  useEffect(() => {
+    hasHydratedOperationalContextRef.current = false;
+    operationalContextInFlightKeyRef.current = null;
+    operationalContextLastCompletedKeyRef.current = null;
+    setContext(null);
+    setActiveVertical(null);
+    setSelectedBranchId(null);
+    setSelectedWarehouseId(null);
+    setSelectedCashRegisterId(null);
+  }, [session?.accessToken, session?.deviceId]);
 
   useEffect(() => {
     if (!operationalContextScope || typeof window === 'undefined') {
@@ -802,7 +814,8 @@ export function App() {
     && !isCashierUser
     && !isAdminUser
     && !Boolean(context?.selection_locks?.cash_register);
-  const shouldHideCashModule = salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser && !isCashierUser && !isAdminUser;
+  // In POS seller-cashier operations, sellers may still need to open/close their own cash session.
+  const shouldHideCashModule = false;
   const inventoryPermissions = session?.user?.permissions?.INVENTORY;
   const canEditPurchaseEntries = Boolean(inventoryPermissions?.can_update) && Boolean(inventoryPermissions?.can_approve);
 
@@ -1120,6 +1133,12 @@ export function App() {
         deviceId: response.device_id,
         user: response.user,
       };
+
+      try {
+        window.localStorage.setItem(LAST_SUCCESSFUL_DEVICE_ID_KEY, response.device_id);
+      } catch {
+        // Ignore localStorage write issues.
+      }
 
       saveAuthSession(nextSession, authScope);
       setSession(nextSession);

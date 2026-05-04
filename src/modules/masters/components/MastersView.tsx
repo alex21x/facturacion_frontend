@@ -257,6 +257,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
 
   const [cashForm, setCashForm] = useState({
     branch_id: branchId,
+    warehouse_id: null as number | null,
     code: '',
     name: '',
   });
@@ -777,7 +778,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     }
 
     if (activeSection === 'cash') {
-      setCashForm({ branch_id: branchId, code: '', name: '' });
+      setCashForm({ branch_id: branchId, warehouse_id: null, code: '', name: '' });
       focusFirstField(cashFormRef);
       return;
     }
@@ -1092,7 +1093,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     try {
       await createCashRegister(accessToken, cashForm);
       setMessage('Caja creada.');
-      setCashForm({ branch_id: branchId, code: '', name: '' });
+      setCashForm({ branch_id: branchId, warehouse_id: null, code: '', name: '' });
       await loadAll();
     } catch (error) {
       setError(error instanceof Error ? error.message : 'No se pudo crear caja');
@@ -1930,6 +1931,21 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
               </select>
             </label>
             <label>
+              Almacén
+              <select
+                value={cashForm.warehouse_id ?? ''}
+                onChange={(e) => setCashForm((prev) => ({ ...prev, warehouse_id: e.target.value ? Number(e.target.value) : null }))}
+                required
+              >
+                <option value="">Seleccionar almacén</option>
+                {warehouses
+                  .filter((row) => row.status === 1)
+                  .map((row) => (
+                    <option key={row.id} value={row.id}>{row.code} - {row.name}</option>
+                  ))}
+              </select>
+            </label>
+            <label>
               Codigo
               <input value={cashForm.code} onChange={(e) => setCashForm((prev) => ({ ...prev, code: e.target.value }))} required />
             </label>
@@ -1986,7 +2002,14 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             </label>
             <label>
               Device ID
-              <input value={stationForm.device_id} onChange={(e) => setStationForm((prev) => ({ ...prev, device_id: e.target.value }))} required />
+              <input
+                value={stationForm.device_id}
+                onChange={(e) => setStationForm((prev) => ({ ...prev, device_id: e.target.value.toUpperCase() }))}
+                placeholder="CAJA-001"
+                pattern="^CAJA-[0-9]{3}$"
+                title="Formato requerido: CAJA-001"
+                required
+              />
             </label>
             <label>
               Nombre del equipo
@@ -2004,16 +2027,14 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
           <div className="table-wrap master-card">
             <h4>Estaciones POS</h4>
             <table>
-              <thead><tr><th>Codigo</th><th>Nombre</th><th>Dispositivo</th><th>Caja</th><th>Estado</th><th></th></tr></thead>
+              <thead><tr><th>Codigo</th><th>Nombre</th><th>Device ID</th><th>Equipo</th><th>Caja</th><th>Estado</th><th></th></tr></thead>
               <tbody>
                 {filteredPosStations.map((row) => (
                   <tr key={row.id}>
                     <td>{row.code}</td>
                     <td>{row.name}</td>
-                    <td>
-                      <strong>{row.device_id}</strong>
-                      <div>{row.device_name ?? '-'}</div>
-                    </td>
+                    <td><strong>{row.device_id}</strong></td>
+                    <td>{row.device_name ?? '-'}</td>
                     <td>{row.cash_register_code} - {row.cash_register_name}</td>
                     <td>{row.status === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
                     <td>
@@ -2023,7 +2044,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                   </tr>
                 ))}
                 {filteredPosStations.length === 0 && (
-                  <tr><td colSpan={6}>Sin resultados para la busqueda actual.</td></tr>
+                  <tr><td colSpan={7}>Sin resultados para la busqueda actual.</td></tr>
                 )}
               </tbody>
             </table>

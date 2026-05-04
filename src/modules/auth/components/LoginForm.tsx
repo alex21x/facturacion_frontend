@@ -9,8 +9,7 @@ type LoginFormProps = {
 export function LoginForm({ onSubmit, isLoading }: LoginFormProps) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('Admin123*');
-  const [deviceId, setDeviceId] = useState('PC-CAJA-01');
-  const [deviceName, setDeviceName] = useState('Caja Principal');
+  const [deviceId, setDeviceId] = useState('CAJA-001');
 
   return (
     <form
@@ -21,7 +20,6 @@ export function LoginForm({ onSubmit, isLoading }: LoginFormProps) {
           username,
           password,
           device_id: deviceId,
-          device_name: deviceName,
         });
       }}
     >
@@ -43,11 +41,6 @@ export function LoginForm({ onSubmit, isLoading }: LoginFormProps) {
       <label>
         Device ID
         <input value={deviceId} onChange={(e) => setDeviceId(e.target.value)} required />
-      </label>
-
-      <label>
-        Device Name
-        <input value={deviceName} onChange={(e) => setDeviceName(e.target.value)} />
       </label>
 
       <button disabled={isLoading} type="submit">

@@ -144,6 +144,9 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     const normalized = refType.trim().toUpperCase();
     const labels: Record<string, string> = {
       MANUAL: 'Manual',
+      COMMERCIAL_DOCUMENT: 'Comprobante',
+      RECEIPT: 'Boleta',
+      INVOICE: 'Factura',
       SALE: 'Venta',
       SALES: 'Venta',
       PURCHASE: 'Compra',
@@ -157,6 +160,17 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       REFUND: 'Devolucion',
     };
     return labels[normalized] ?? 'Manual';
+  }
+
+  function formatReferenceValue(m: CashMovement): string {
+    if (m.ref_type && ['COMMERCIAL_DOCUMENT', 'RECEIPT', 'INVOICE'].includes(m.ref_type.toUpperCase())) {
+      if (m.document_number && m.document_number.trim() !== '') {
+        return `${formatReferenceType(m.ref_type)} ${m.document_number}`;
+      }
+      return m.ref_id ? `${formatReferenceType(m.ref_type)} #${m.ref_id}` : formatReferenceType(m.ref_type);
+    }
+
+    return `${formatReferenceType(m.ref_type)}${m.ref_id ? ` #${m.ref_id}` : ''}`;
   }
 
   const soldProducts = useMemo(() => {
@@ -783,6 +797,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                   <thead>
                     <tr>
                       <th>Fecha</th>
+                      <th>Usuario</th>
                       <th>Tipo</th>
                       <th>Monto</th>
                       <th>Descripcion</th>
@@ -792,18 +807,19 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                   </thead>
                   <tbody>
                     {movements.length === 0 && (
-                      <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin movimientos</td></tr>
+                      <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin movimientos</td></tr>
                     )}
                     {movements.map((m) => (
                       <tr key={m.id}>
                         <td>{m.movement_at}</td>
+                        <td>{m.user_name?.trim() || '-'}</td>
                         <td style={{ color: m.movement_type === 'IN' ? 'var(--color-ok)' : 'var(--color-err)' }}>
                           {formatMovementType(m.movement_type)}
                         </td>
                         <td>{Number(m.amount).toFixed(2)}</td>
                         <td>{m.description}</td>
                         <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
-                        <td>{formatReferenceType(m.ref_type)}{m.ref_id ? ` #${m.ref_id}` : ''}</td>
+                        <td>{formatReferenceValue(m)}</td>
                       </tr>
                     ))}
                   </tbody>

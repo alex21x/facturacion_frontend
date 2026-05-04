@@ -10,6 +10,8 @@ export type SeriesNumber = {
 
 export type CommercialDocumentListItem = {
   id: number;
+  created_by?: number | null;
+  created_by_user_name?: string | null;
   document_kind: string;
   document_kind_id?: number | null;
   document_kind_base?: string | null;
