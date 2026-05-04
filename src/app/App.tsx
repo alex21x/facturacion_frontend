@@ -128,6 +128,7 @@ const SALES_FLAGS_CACHE_TTL_MS = 30 * 1000;
 const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
 const OPERATIONAL_CONTEXT_CACHE_KEY = 'facturacion.operationalContextCache.v1';
 const OPERATIONAL_CONTEXT_CACHE_TTL_MS = 30 * 60 * 1000;
+const LAST_SUCCESSFUL_DEVICE_ID_KEY = 'facturacion.auth.lastDeviceId';
 
 const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
   'restaurant-orders': quickRestaurantOrdersImg,
@@ -657,13 +658,31 @@ export function App() {
   const operationalContextLastCompletedKeyRef = useRef<string | null>(null);
 
   const operationalContextScope = session
-    ? `${authScope}:${session.user.company_id}`
+    ? `${authScope}:${session.user.company_id}:${session.user.id}:${session.deviceId}`
     : null;
+
+  useEffect(() => {
+    hasHydratedOperationalContextRef.current = false;
+    operationalContextInFlightKeyRef.current = null;
+    operationalContextLastCompletedKeyRef.current = null;
+    setContext(null);
+    setActiveVertical(null);
+    setSelectedBranchId(null);
+    setSelectedWarehouseId(null);
+    setSelectedCashRegisterId(null);
+  }, [session?.accessToken, session?.deviceId]);
 
   useEffect(() => {
     if (!operationalContextScope || typeof window === 'undefined') {
       return;
     }
+
+    const roleCode = (session?.user?.role_code ?? '').toUpperCase();
+    const roleProfile = (session?.user?.role_profile ?? '').toUpperCase();
+    const isAdmin = roleCode.includes('ADMIN');
+    const isCashier = roleProfile === 'CASHIER' || roleCode.includes('CAJA') || roleCode.includes('CAJER') || roleCode.includes('CASHIER');
+    const isSeller = roleProfile === 'SELLER' || roleCode.includes('VENDED') || roleCode.includes('SELLER');
+    const shouldSkipCashCacheHydration = salesFlowMode === 'DIRECT_CASHIER' && isSeller && !isCashier && !isAdmin;
 
     try {
       const raw = window.localStorage.getItem(OPERATIONAL_CONTEXT_CACHE_KEY);
@@ -700,13 +719,13 @@ export function App() {
         setSelectedWarehouseId(parsed.selected_warehouse_id);
       }
 
-      if (selectedCashRegisterId === null && typeof parsed.selected_cash_register_id === 'number') {
+      if (!shouldSkipCashCacheHydration && selectedCashRegisterId === null && typeof parsed.selected_cash_register_id === 'number') {
         setSelectedCashRegisterId(parsed.selected_cash_register_id);
       }
     } catch {
       // Ignore cache parsing issues.
     }
-  }, [operationalContextScope, selectedBranchId, selectedCashRegisterId, selectedWarehouseId]);
+  }, [operationalContextScope, selectedBranchId, selectedCashRegisterId, selectedWarehouseId, session?.user?.role_code, session?.user?.role_profile, salesFlowMode]);
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -790,7 +809,14 @@ export function App() {
   const isAdminUser = normalizedRoleCode.includes('ADMIN');
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
-  const shouldHideCashModule = salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser && !isCashierUser && !isAdminUser;
+  const shouldRequireManualCashSelection =
+    salesFlowMode === 'DIRECT_CASHIER'
+    && isSellerUser
+    && !isCashierUser
+    && !isAdminUser
+    && !Boolean(context?.selection_locks?.cash_register);
+  // In POS seller-cashier operations, sellers may still need to open/close their own cash session.
+  const shouldHideCashModule = false;
   const inventoryPermissions = session?.user?.permissions?.INVENTORY;
   const canEditPurchaseEntries = Boolean(inventoryPermissions?.can_update) && Boolean(inventoryPermissions?.can_approve);
 
@@ -1109,6 +1135,12 @@ export function App() {
         user: response.user,
       };
 
+      try {
+        window.localStorage.setItem(LAST_SUCCESSFUL_DEVICE_ID_KEY, response.device_id);
+      } catch {
+        // Ignore localStorage write issues.
+      }
+
       saveAuthSession(nextSession, authScope);
       setSession(nextSession);
     } catch (error) {
@@ -1164,6 +1196,8 @@ export function App() {
         cashRegisterId,
       });
 
+      const nextCashSelectionLocked = Boolean(nextContext.selection_locks?.cash_register);
+
       setContext(nextContext);
 
       const nextBranchId =
@@ -1178,11 +1212,15 @@ export function App() {
         nextContext.warehouses[0]?.id ??
         null;
       const nextCashRegisterId =
-        cashRegisterId ??
-        nextContext.selected.cash_register_id ??
-        nextContext.cash_registers.find((row) => (row.branch_id === nextBranchId || row.branch_id === null) && (row.warehouse_id === nextWarehouseId || row.warehouse_id === null))?.id ??
-        nextContext.cash_registers[0]?.id ??
-        null;
+        nextCashSelectionLocked
+          ? (nextContext.selected.cash_register_id ?? null)
+          : (shouldRequireManualCashSelection && (cashRegisterId === null || cashRegisterId === undefined)
+            ? null
+            : (cashRegisterId ??
+            nextContext.selected.cash_register_id ??
+            nextContext.cash_registers.find((row) => (row.branch_id === nextBranchId || row.branch_id === null) && (row.warehouse_id === nextWarehouseId || row.warehouse_id === null))?.id ??
+            nextContext.cash_registers[0]?.id ??
+            null));
 
       setSelectedBranchId(nextBranchId);
       setSelectedWarehouseId(nextWarehouseId);
@@ -1741,10 +1779,16 @@ export function App() {
 
                         {context && (
                           <>
+                          {context.station && (
+                            <p className="notice" style={{ margin: 0 }}>
+                              Estacion activa: {context.station.code} - {context.station.name}. Caja fija: {context.station.cash_register_code} - {context.station.cash_register_name}.
+                            </p>
+                          )}
                           <label>
                             <span>Sucursal</span>
                             <select
                               value={selectedBranchId ?? ''}
+                              disabled={Boolean(context.selection_locks?.branch)}
                               onChange={(e) => {
                                 const value = e.target.value ? Number(e.target.value) : null;
                                 setSelectedBranchId(value);
@@ -1757,7 +1801,11 @@ export function App() {
 
                                 // Keep branch switch lightweight and avoid transient null-context requests.
                                 setSelectedWarehouseId(nextWarehouse);
-                                setSelectedCashRegisterId(RESTAURANT_TABS.has(activeTab) ? null : nextCash);
+                                setSelectedCashRegisterId(
+                                  RESTAURANT_TABS.has(activeTab)
+                                    ? null
+                                    : (context.selection_locks?.cash_register ? (context.selected.cash_register_id ?? null) : (shouldRequireManualCashSelection ? null : nextCash))
+                                );
                               }}
                             >
                               <option value="">Seleccionar</option>
@@ -1773,6 +1821,7 @@ export function App() {
                             <span>Almacen</span>
                             <select
                               value={selectedWarehouseId ?? ''}
+                              disabled={Boolean(context.selection_locks?.warehouse)}
                               onChange={(e) => setSelectedWarehouseId(e.target.value ? Number(e.target.value) : null)}
                             >
                               <option value="">Seleccionar</option>
@@ -1790,6 +1839,7 @@ export function App() {
                             <span>Caja</span>
                             <select
                               value={selectedCashRegisterId ?? ''}
+                              disabled={Boolean(context.selection_locks?.cash_register)}
                               onChange={(e) => setSelectedCashRegisterId(e.target.value ? Number(e.target.value) : null)}
                             >
                               <option value="">Seleccionar</option>

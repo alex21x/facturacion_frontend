@@ -35,6 +35,7 @@ export type CashMovement = {
   description: string | null;
   ref_type: string | null;
   ref_id: number | null;
+  document_number?: string | null;
   user_id: number;
   user_name: string | null;
   movement_at: string;

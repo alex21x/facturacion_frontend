@@ -3626,6 +3626,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => ({
         ID: row.id,
+        Usuario: row.created_by_user_name ?? '',
         Documento: docKindLabelResolved(row.document_kind),
         Serie: row.series,
         Numero: row.number,
@@ -3729,6 +3730,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const detailRows = rows as Array<Record<string, unknown>>;
       const sheetRows = detailRows.map((row) => ({
         ID: Number(row.id ?? 0),
+        Usuario: String(row.created_by_user_name ?? ''),
         Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
         Serie: String(row.series ?? ''),
         Numero: String(row.number ?? ''),
@@ -3977,7 +3979,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           document_kind_id: selectedEffectiveDocumentKind?.id ?? null,
           branch_id: branchId,
           warehouse_id: warehouseId,
-          cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
+          cash_register_id: salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser ? null : cashRegisterId,
           customer_id: Number(form.customerId),
           customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
           currency_id: Number(form.currencyId),
@@ -4032,7 +4034,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         items: payloadItems,
         branchId,
         warehouseId,
-        cashRegisterId: salesFlowMode === 'SELLER_TO_CASHIER' ? null : cashRegisterId,
+        cashRegisterId: salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser ? null : cashRegisterId,
       });
 
       const issued = (response as { data?: unknown }).data as
@@ -6520,6 +6522,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <thead>
             <tr>
               <th>ID</th>
+              <th>Usuario</th>
               <th>Documento</th>
               <th>Fecha emision</th>
               <th>Cliente</th>
@@ -6555,6 +6558,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 ].filter(Boolean).join(' ')}
               >
                 <td>{row.id}</td>
+                <td>{row.created_by_user_name?.trim() || '-'}</td>
                 <td>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                     <span>{docKindLabelResolved(row.document_kind)} {row.series}-{row.number}</span>

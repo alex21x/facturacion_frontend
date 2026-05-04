@@ -1105,6 +1105,7 @@ export function buildCashReportHtml80mm(
   const productMap = new Map<string, {
     documentKind: string;
     documentNumber: string;
+    sellerName: string;
     vehiclePlate: string;
     vehicleBrand: string;
     vehicleModel: string;
@@ -1118,6 +1119,7 @@ export function buildCashReportHtml80mm(
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
+    const sellerName = (doc.user_name || '').trim() || 'N/A';
     const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
     const vehiclePlate = vehicleSnapshot.plate;
     const vehicleBrand = vehicleSnapshot.brand;
@@ -1126,7 +1128,7 @@ export function buildCashReportHtml80mm(
     for (const item of doc.items ?? []) {
       const description = (item.description || '').trim() || 'Producto sin descripcion';
       const unitCode = (item.unit_code || '').trim() || '-';
-      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${sellerName.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
       const current = productMap.get(key);
 
       if (current) {
@@ -1138,6 +1140,7 @@ export function buildCashReportHtml80mm(
         productMap.set(key, {
           documentKind,
           documentNumber,
+          sellerName,
           vehiclePlate,
           vehicleBrand,
           vehicleModel,
@@ -1152,12 +1155,14 @@ export function buildCashReportHtml80mm(
     }
   }
 
-  const productRowsData = Array.from(productMap.values()).sort((a, b) => b.amount - a.amount);
+  // Keep chronological document order from backend to match session movements and avoid confusion.
+  const productRowsData = Array.from(productMap.values());
   const productRows = productRowsData
     .map(
       (row) => `
         <tr>
           <td style="font-size:8px">${escapeHtml(row.description)}</td>
+          <td style="font-size:8px">${escapeHtml(row.sellerName)}</td>
           <td style="font-size:8px">${escapeHtml(row.paymentMethod)}</td>
           <td class="ta-r" style="font-size:8px">${row.quantity.toFixed(2)}</td>
           <td style="font-size:8px">${escapeHtml(row.documentKind)}</td>
@@ -1265,10 +1270,10 @@ export function buildCashReportHtml80mm(
           <div class="section">
             <div class="section-title">PRODUCTOS VENDIDOS</div>
             <table class="product-table">
-              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Usuario</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
               <tbody>
                 ${productRows}
-                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
+                <tr class="total-row"><td colspan="3">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
               </tbody>
             </table>
           </div>` : ''}
@@ -1299,6 +1304,7 @@ export function buildCashReportHtmlA4(
   const productMap = new Map<string, {
     documentKind: string;
     documentNumber: string;
+    sellerName: string;
     vehiclePlate: string;
     vehicleBrand: string;
     vehicleModel: string;
@@ -1312,6 +1318,7 @@ export function buildCashReportHtmlA4(
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
+    const sellerName = (doc.user_name || '').trim() || 'N/A';
     const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
     const vehiclePlate = vehicleSnapshot.plate;
     const vehicleBrand = vehicleSnapshot.brand;
@@ -1320,7 +1327,7 @@ export function buildCashReportHtmlA4(
     for (const item of doc.items ?? []) {
       const description = (item.description || '').trim() || 'Producto sin descripcion';
       const unitCode = (item.unit_code || '').trim() || '-';
-      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${sellerName.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
       const current = productMap.get(key);
 
       if (current) {
@@ -1332,6 +1339,7 @@ export function buildCashReportHtmlA4(
         productMap.set(key, {
           documentKind,
           documentNumber,
+          sellerName,
           vehiclePlate,
           vehicleBrand,
           vehicleModel,
@@ -1346,12 +1354,14 @@ export function buildCashReportHtmlA4(
     }
   }
 
-  const productRowsData = Array.from(productMap.values()).sort((a, b) => b.amount - a.amount);
+  // Keep chronological document order from backend to match session movements and avoid confusion.
+  const productRowsData = Array.from(productMap.values());
   const productRows = productRowsData
     .map(
       (row) => `
       <tr>
         <td>${escapeHtml(row.description)}</td>
+        <td>${escapeHtml(row.sellerName)}</td>
         <td>${escapeHtml(row.paymentMethod)}</td>
         <td class="ta-c">${escapeHtml(row.unitCode)}</td>
         <td class="ta-r">${row.quantity.toFixed(3)}</td>
@@ -1447,10 +1457,10 @@ export function buildCashReportHtmlA4(
           <div class="section">
             <div class="section-title">Productos vendidos en la sesion</div>
             <table class="cash-products-table">
-              <thead><tr><th style="width:${data.showVehicleInfo ? '24%' : '30%'}">Producto</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '8%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '10%' : '10%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:18%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '8%' : '10%'}">Total</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '10%'}">Margen</th></tr></thead>
+              <thead><tr><th style="width:${data.showVehicleInfo ? '19%' : '24%'}">Producto</th><th style="width:${data.showVehicleInfo ? '11%' : '13%'}">Usuario</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '8%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '10%' : '10%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:15%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '10%'}">Total</th><th class="ta-r" style="width:${data.showVehicleInfo ? '5%' : '10%'}">Margen</th></tr></thead>
               <tbody>
-                ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '9' : '8'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
-                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>
+                ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '10' : '9'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
+                <tr class="total-row"><td colspan="4">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>
               </tbody>
             </table>
           </div>

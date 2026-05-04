@@ -7390,8 +7390,405 @@ th {
   background: #f8f8f5;
   color: #5f5a51;
   padding: 4px 10px;
+}
+
+/* ── Access section redesign ─────────────────────────────────────────── */
+.access-grid {
+  grid-template-columns: minmax(360px, 1fr) minmax(360px, 1fr);
+  gap: 14px;
+}
+
+.access-card-role-form { grid-column: 1; grid-row: 2; }
+.access-card-user-form { grid-column: 2; grid-row: 2; }
+.access-card-roles { grid-column: 1; grid-row: 3; }
+.access-catalog-card { grid-column: 2; grid-row: 3; }
+
+.access-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, #fbfcfd 0%, #f6f8fb 100%);
+  border: 1px solid #dde3ea;
+  border-radius: 12px;
+}
+.access-section-title {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.access-section-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  background: linear-gradient(145deg, #263445 0%, #394b61 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 0.83rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  flex-shrink: 0;
+}
+.access-section-title h3 {
+  margin: 0;
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+.access-section-title p {
+  margin: 3px 0 0;
+  font-size: 0.76rem;
+  color: #64748b;
+}
+.access-section-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 6px;
+  min-width: min(520px, 100%);
+}
+.access-stat {
+  background: #fff;
+  border: 1px solid #e2e7ee;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.7rem;
+  color: #475569;
+  text-align: center;
+}
+.access-stat strong {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0f172a;
+  line-height: 1.2;
+}
+.access-form-card {
+  position: relative;
+  padding-top: 16px !important;
+}
+.access-form-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  border-radius: 12px 12px 0 0;
+}
+.access-form-card.role-card::before { background: linear-gradient(90deg, #334155, #64748b); }
+.access-form-card.user-card::before { background: linear-gradient(90deg, #1f6f78, #2d8892); }
+.access-form-card.access-catalog-card::before { background: linear-gradient(90deg, #5b6573, #7a8799); }
+.access-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #e3e8ef;
+  background: #fbfcfd;
+}
+.access-subtabs button {
+  border: 1px solid #d8e0ea;
+  background: #f9fbfd;
+  color: #4b5b6f;
+  border-radius: 999px;
+  padding: 6px 13px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.16s ease;
+}
+.access-subtabs button:hover {
+  border-color: #b7c4d4;
+  color: #2f3f53;
+  background: #f5f8fb;
+}
+.access-subtabs button.active {
+  background: linear-gradient(180deg, #2f4159 0%, #243449 100%);
+  border-color: #243449;
+  color: #ffffff;
+}
+.access-tab-content {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.access-tab-content .access-card-role-form,
+.access-tab-content .access-card-user-form,
+.access-tab-content .access-card-roles,
+.access-tab-content .access-catalog-card {
+  grid-column: 1 / -1;
+  grid-row: auto;
+}
+
+.access-tab-content .table-wrap.master-card {
+  margin-top: 0;
+}
+.access-form-subtitle {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #f0eeea;
+  margin-bottom: 2px;
+}
+.access-form-subtitle h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #1f2937;
+  flex: 1;
+}
+.afs-badge {
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.afs-badge.user { background: #e7f3f2; color: #0f766e; }
+.access-group-label {
+  grid-column: 1 / -1;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #8a96a6;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed #e5e7eb;
+}
+.access-group-label:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+.access-inline-note {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #e6ebf1;
+  color: #687588;
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+.access-form-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.access-button {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+}
+.access-button:hover {
+  transform: none;
+}
+.access-button span {
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+.access-button small {
+  display: none;
+}
+.access-button-primary {
+  background: linear-gradient(135deg, #2c4d72 0%, #254464 100%);
+  color: #fff;
+  box-shadow: 0 4px 10px rgba(36, 68, 100, 0.2);
+}
+.access-button-secondary {
+  background: #ffffff;
+  color: #48586b;
+  border-color: #d4dce7;
+}
+.access-button-tertiary {
+  background: #f5f8fb;
+  color: #3b4d62;
+  border-color: #dfe5ee;
+}
+.access-button-warn {
+  background: #f6f8fb;
+  color: #4d6076;
+  border-color: #d8e0ea;
+}
+.access-button-success {
+  background: #edf3f9;
+  color: #2f5579;
+  border-color: #c7d8ea;
+}
+.access-row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+.access-row-button {
+  min-width: 92px;
+}
+.access-card-roles,
+.access-catalog-card {
+  align-self: start;
+}
+.access-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.access-table-header h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+.access-count-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6b7280;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 3px 11px;
+}
+.access-username {
+  font-family: 'Courier New', monospace;
+  font-size: 0.76rem;
+  color: #2f5579;
+  font-weight: 600;
+  background: #edf3f9;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.status-badge {
+  display: inline-block;
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.status-badge.active  { background: #e9f2fb; color: #24517a; }
+.status-badge.inactive { background: #edf1f6; color: #66707d; }
+.profile-badge {
+  display: inline-block;
+  font-size: 0.64rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #eef3f8;
+  color: #4b5e73;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.profile-badge.no-profile { background: #f9fafb; color: #9ca3af; }
+.access-cell-dim { color: #d1d5db; font-size: 0.8rem; }
+.btn-activate {
+  background: #dcfce7;
+  color: #15803d;
+  border: 1px solid #bbf7d0;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-activate:hover { background: #bbf7d0; }
+.btn-deactivate {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-deactivate:hover { background: #fed7aa; }
+.perm-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid #f0eeea;
+}
+.perm-section-header h4 { margin: 0; font-size: 0.95rem; font-weight: 700; }
+.perm-hint { font-size: 0.78rem; color: #9ca3af; margin: 0; }
+.perm-table th {
   font-size: 0.7rem;
   font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: #6b7280;
+  background: #f9fafb;
+  text-align: center;
+  padding: 8px 6px;
+}
+.perm-table th:first-child { text-align: left; min-width: 140px; }
+.perm-table td { text-align: center; padding: 7px 6px; vertical-align: middle; }
+.perm-table td:first-child { text-align: left; font-size: 0.85rem; font-weight: 500; color: #374151; }
+.perm-table tr:nth-child(even) td { background: #fafaf8; }
+.perm-table tr:hover td { background: #f0f0f8; }
+.perm-check { width: 16px; height: 16px; cursor: pointer; accent-color: #6366f1; }
+/* ── end access section ──────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+  .access-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .access-section-header {
+    padding: 14px;
+  }
+
+  .access-section-stats {
+    width: 100%;
+    min-width: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .access-subtabs {
+    justify-content: stretch;
+  }
+
+  .access-subtabs button {
+    flex: 1;
+    text-align: center;
+  }
+
+  .access-row-actions {
+    justify-content: stretch;
+  }
+
+  .access-row-button {
+    width: 100%;
+  }
 }
 
 .gre-chip.is-active {

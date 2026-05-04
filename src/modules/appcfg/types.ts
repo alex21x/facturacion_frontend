@@ -59,6 +59,21 @@ export type OperationalCashRegister = {
   status: number;
 };
 
+export type OperationalStation = {
+  id: number;
+  company_id: number;
+  cash_register_id: number;
+  branch_id: number | null;
+  warehouse_id: number | null;
+  code: string;
+  name: string;
+  device_id: string;
+  device_name: string | null;
+  status: number;
+  cash_register_code: string;
+  cash_register_name: string;
+};
+
 export type PlatformLimits = {
   max_companies_enabled: number;
 };
@@ -84,6 +99,7 @@ export type OperationalContextResponse = {
     code: string;
     name: string;
   } | null;
+  station?: OperationalStation | null;
   branches: OperationalBranch[];
   warehouses: OperationalWarehouse[];
   cash_registers: OperationalCashRegister[];
@@ -92,6 +108,11 @@ export type OperationalContextResponse = {
     branch_id: number | null;
     warehouse_id: number | null;
     cash_register_id: number | null;
+  };
+  selection_locks?: {
+    branch: boolean;
+    warehouse: boolean;
+    cash_register: boolean;
   };
   limits: {
     platform: PlatformLimits;
