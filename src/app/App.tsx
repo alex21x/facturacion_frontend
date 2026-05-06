@@ -1482,6 +1482,7 @@ export function App() {
                   <CashView
                     accessToken={session.accessToken}
                     cashRegisterId={selectedCashRegisterId}
+                    salesFlowMode={salesFlowMode}
                   />
                 )}
                 {activeTab === 'restaurant-orders' && (

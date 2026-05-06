@@ -669,10 +669,11 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     <textarea
                       rows={3}
                       value={taxBridgeDebugRolesInput}
-                      onChange={(e) => setTaxBridgeDebugRolesInput(e.target.value)}
+                      readOnly
+                      disabled
                       placeholder="ADMIN,SOPORTE,VENDEDOR"
                     />
-                    <small>{UI_LABELS.taxBridgeDebugRolesHint}</small>
+                    <small>Solo lectura. Esta configuración se administra desde el portal administrativo.</small>
                   </label>
                 </div>
               </div>

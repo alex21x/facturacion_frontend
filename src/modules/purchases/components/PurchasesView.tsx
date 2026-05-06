@@ -16,9 +16,13 @@ import {
   purchaseStatusLabel,
   resolveDefaultCashPaymentMethodId,
   resolveDefaultPurchaseTaxCategory,
+  normalizePurchasePriceTaxMode,
+  resolvePurchaseUnitCostGross,
+  resolvePurchaseUnitCostNet,
   stockToneClass,
   todayAsInputDate,
   type PurchaseEntryDraft as EntryRowDraft,
+  type PurchasePriceTaxMode as PriceTaxMode,
 } from '../utils/purchase-helpers';
 import type {
   CreateStockEntryItemPayload,
@@ -53,7 +57,6 @@ type SupplierSuggestion = {
 };
 
 type PurchasesWorkspaceMode = 'ENTRY' | 'REPORT';
-type PriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
 const INTERNAL_UNIT_COST_DECIMALS = 6;
 
 type PurchasesReportFilters = {
@@ -77,7 +80,7 @@ const initialPagination: PurchasesPagination = {
   total_pages: 1,
 };
 
-function buildEmptyRow(seed: number): EntryRowDraft {
+function buildEmptyRow(seed: number, priceTaxMode: PriceTaxMode = 'INCLUSIVE'): EntryRowDraft {
   return {
     key: `row-${seed}-${Date.now()}`,
     product_id: null,
@@ -92,24 +95,12 @@ function buildEmptyRow(seed: number): EntryRowDraft {
     expires_at: '',
     tax_category_id: undefined,
     tax_rate: undefined,
+    price_tax_mode: priceTaxMode,
   };
 }
 
 function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
-}
-
-function normalizePurchaseUnitCost(unitCost: number, taxRate: number, priceTaxMode: PriceTaxMode): number {
-  if (priceTaxMode !== 'INCLUSIVE' || taxRate <= 0) {
-    return unitCost;
-  }
-
-  const divisor = 1 + taxRate / 100;
-  if (divisor <= 0) {
-    return unitCost;
-  }
-
-  return unitCost / divisor;
 }
 
 export function PurchasesView({
@@ -755,7 +746,8 @@ export function PurchasesView({
 
   function resetEntryFormState() {
     setRows([]);
-    setDraftItem(buildEmptyRow(1));
+    setPriceTaxMode('INCLUSIVE');
+    setDraftItem(buildEmptyRow(1, 'INCLUSIVE'));
     setReferenceNo('');
     setSupplierReference('');
     setSupplierAddress('');
@@ -785,6 +777,7 @@ export function PurchasesView({
     }
 
     const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
+    const defaultRowPriceTaxMode = normalizePurchasePriceTaxMode(metadata.price_tax_mode, 'INCLUSIVE');
 
     setWorkspaceMode('ENTRY');
     setEditingEntryId(Number(entry.id));
@@ -802,21 +795,36 @@ export function PurchasesView({
     setHasPercepcion(Boolean(metadata.has_percepcion));
     setPercepcionTypeCode(String(metadata.percepcion_type_code ?? ''));
     setSunatOperationTypeCode(String(metadata.sunat_operation_type_code ?? ''));
-    setRows(items.map((item, idx) => ({
-      key: `edit-${entry.id}-${idx + 1}`,
-      product_id: Number(item.product_id),
-      lot_id: item.lot_id ?? null,
-      product_query: item.product_name,
-      qty: String(Number(item.qty ?? 0)),
-      unit_cost: Number(item.unit_cost ?? 0).toFixed(INTERNAL_UNIT_COST_DECIMALS),
-      discount_total: Number(item.discount_total ?? item.metadata?.discount_total ?? 0).toFixed(2),
-      is_free_operation: Boolean(item.metadata?.is_free_operation),
-      lot_code: item.lot_code ?? '',
-      manufacture_at: '',
-      expires_at: '',
-      tax_category_id: item.tax_category_id ?? undefined,
-      tax_rate: Number(item.tax_rate ?? 0),
-    })));
+    setPriceTaxMode(defaultRowPriceTaxMode);
+    setRows(items.map((item, idx) => {
+      const itemMetadata = (item.metadata ?? {}) as Record<string, unknown>;
+      const taxRate = Number(item.tax_rate ?? 0);
+      const storedNetUnitCost = Number(item.unit_cost ?? 0);
+      const storedInputUnitCost = Number(itemMetadata.unit_cost_input ?? Number.NaN);
+      const visibleUnitCost = Number.isFinite(storedInputUnitCost)
+        ? storedInputUnitCost
+        : (defaultRowPriceTaxMode === 'INCLUSIVE'
+          ? resolvePurchaseUnitCostGross(storedNetUnitCost, taxRate)
+          : storedNetUnitCost);
+
+      return {
+        key: `edit-${entry.id}-${idx + 1}`,
+        product_id: Number(item.product_id),
+        lot_id: item.lot_id ?? null,
+        product_query: item.product_name,
+        qty: String(Number(item.qty ?? 0)),
+        unit_cost: visibleUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS),
+        discount_total: Number(item.discount_total ?? itemMetadata.discount_total ?? 0).toFixed(2),
+        is_free_operation: Boolean(itemMetadata.is_free_operation),
+        lot_code: item.lot_code ?? '',
+        manufacture_at: '',
+        expires_at: '',
+        tax_category_id: item.tax_category_id ?? undefined,
+        tax_rate: taxRate,
+        price_tax_mode: defaultRowPriceTaxMode,
+      };
+    }));
+    setDraftItem(buildEmptyRow(items.length + 1, defaultRowPriceTaxMode));
     setGlobalDiscountAmount(Number(metadata.discount_total ?? 0));
     setDueDate(String(metadata.due_date ?? '').trim() || asInputDate(entry.issue_at) || todayAsInputDate());
     setMessage(`Editando ingreso #${entry.id}. Al guardar se recalculara el impacto en inventario.`);
@@ -1016,20 +1024,19 @@ export function PurchasesView({
 
     setMessage('');
 
-    const resolvedTaxRate = Number(resolvedDraft.tax_rate ?? 0);
     const resolvedUnitCost = Number(resolvedDraft.unit_cost ?? 0);
-    const normalizedUnitCost = normalizePurchaseUnitCost(resolvedUnitCost, resolvedTaxRate, priceTaxMode);
 
     setRows((prev) => [
       ...prev,
       {
         ...resolvedDraft,
-        unit_cost: normalizedUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS),
+        unit_cost: resolvedUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS),
+        price_tax_mode: priceTaxMode,
         key: `item-${Date.now()}-${prev.length + 1}`,
       },
     ]);
 
-    const nextDraft = buildEmptyRow(rows.length + 2);
+    const nextDraft = buildEmptyRow(rows.length + 2, priceTaxMode);
     nextDraft.tax_category_id = resolvedDraft.tax_category_id;
     nextDraft.tax_rate = resolvedDraft.tax_rate;
     nextDraft.lot_code = lotTrackingEnabled ? resolvedDraft.lot_code : '';
@@ -1099,22 +1106,36 @@ export function PurchasesView({
     }
 
     const payloadItems: CreateStockEntryItemPayload[] = rows
-      .map((row) => ({
-        product_id: Number(row.product_id ?? 0),
-        qty: Number(row.qty),
-        unit_cost: row.unit_cost !== '' ? Number(row.unit_cost) : undefined,
-        lot_id: lotTrackingEnabled && row.lot_id ? Number(row.lot_id) : undefined,
-        lot_code: lotTrackingEnabled && row.lot_code.trim() !== '' ? row.lot_code.trim() : undefined,
-        manufacture_at: expiryTrackingEnabled && row.manufacture_at.trim() !== '' ? row.manufacture_at.trim() : undefined,
-        expires_at: expiryTrackingEnabled && row.expires_at.trim() !== '' ? row.expires_at.trim() : undefined,
-        tax_category_id: row.tax_category_id ? Number(row.tax_category_id) : undefined,
-        tax_rate: row.tax_rate ? Number(row.tax_rate) : undefined,
-        metadata: {
-          discount_total: purchaseItemDiscountEnabled ? clampPurchaseDiscount(Number(row.discount_total) || 0, computePurchaseLineAmounts(row).grossTotal) : 0,
-          is_free_operation: purchaseFreeOperationEnabled ? Boolean(row.is_free_operation) : false,
-          gratuitas: purchaseFreeOperationEnabled && row.is_free_operation ? Number(computePurchaseLineAmounts(row).gratuitaTotal.toFixed(2)) : 0,
-        },
-      }))
+      .map((row) => {
+        const resolvedPriceTaxMode = priceTaxMode;
+        const resolvedInputUnitCost = row.unit_cost !== '' ? Number(row.unit_cost) : 0;
+        const resolvedTaxRate = row.tax_rate ? Number(row.tax_rate) : 0;
+        const resolvedUnitCostNet = resolvePurchaseUnitCostNet(resolvedInputUnitCost, resolvedTaxRate, resolvedPriceTaxMode);
+        const resolvedUnitCostGross = resolvePurchaseUnitCostGross(resolvedUnitCostNet, resolvedTaxRate);
+        const lineAmounts = computePurchaseLineAmounts({ ...row, price_tax_mode: resolvedPriceTaxMode });
+
+        return {
+          product_id: Number(row.product_id ?? 0),
+          qty: Number(row.qty),
+          unit_cost: Number.isFinite(resolvedUnitCostNet) ? resolvedUnitCostNet : undefined,
+          lot_id: lotTrackingEnabled && row.lot_id ? Number(row.lot_id) : undefined,
+          lot_code: lotTrackingEnabled && row.lot_code.trim() !== '' ? row.lot_code.trim() : undefined,
+          manufacture_at: expiryTrackingEnabled && row.manufacture_at.trim() !== '' ? row.manufacture_at.trim() : undefined,
+          expires_at: expiryTrackingEnabled && row.expires_at.trim() !== '' ? row.expires_at.trim() : undefined,
+          tax_category_id: row.tax_category_id ? Number(row.tax_category_id) : undefined,
+          tax_rate: row.tax_rate ? Number(row.tax_rate) : undefined,
+          metadata: {
+            discount_total: purchaseItemDiscountEnabled ? clampPurchaseDiscount(Number(row.discount_total) || 0, lineAmounts.grossTotal) : 0,
+            is_free_operation: purchaseFreeOperationEnabled ? Boolean(row.is_free_operation) : false,
+            gratuitas: purchaseFreeOperationEnabled && row.is_free_operation ? Number(lineAmounts.gratuitaTotal.toFixed(2)) : 0,
+            price_tax_mode: resolvedPriceTaxMode,
+            unit_cost_input: Number(resolvedInputUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS)),
+            unit_cost_net: Number(resolvedUnitCostNet.toFixed(INTERNAL_UNIT_COST_DECIMALS)),
+            unit_cost_gross: Number(resolvedUnitCostGross.toFixed(INTERNAL_UNIT_COST_DECIMALS)),
+            tax_rate_snapshot: Number(resolvedTaxRate.toFixed(2)),
+          },
+        };
+      })
       .filter((row) => row.product_id > 0 && Number.isFinite(row.qty) && (entryType === 'ADJUSTMENT' ? Math.abs(row.qty) > 0 : row.qty > 0));
 
     if (payloadItems.length === 0) {
@@ -1375,32 +1396,39 @@ export function PurchasesView({
           ];
         }
 
-        return details.map((item) => ({
-          IngresoID: entry.id,
-          Tipo: entryTypeLabel(entry.entry_type),
-          Estado: purchaseStatusLabel(entry.status, entry.status_label),
-          Fecha: formatDateTime(entry.issue_at),
-          Referencia: entry.reference_no ?? entry.supplier_reference ?? '',
-          MetodoPago: entry.payment_method ?? '',
-          Items: Number(entry.total_items ?? 0),
-          CantidadTotal: Number(entry.total_qty ?? 0),
-          TotalIngreso: details.length > 0 ? computedTotal : Number(entry.total_amount ?? 0),
-          OpGravada: entrySummary.gravada,
-          OpExonerada: entrySummary.exonerada,
-          OpInafecta: entrySummary.inafecta,
-          OpNoTributaria: entrySummary.noTributaria,
-          IGVTotal: entrySummary.tax,
-          Producto: item.product_name,
-          Lote: item.lot_code ?? '',
-          Cantidad: Number(item.qty),
-          CostoUnitario: Number(item.unit_cost),
-          Subtotal: Number(item.subtotal),
-          TipoIGV: item.tax_label,
-          TasaIGV: Number(item.tax_rate),
-          MontoIGV: Number(item.tax_amount),
-          TotalLinea: Number(item.line_total),
-          NotaLinea: item.notes ?? '',
-        }));
+        return details.map((item) => {
+          const itemMetadata = (item.metadata ?? {}) as Record<string, unknown>;
+
+          return {
+            IngresoID: entry.id,
+            Tipo: entryTypeLabel(entry.entry_type),
+            Estado: purchaseStatusLabel(entry.status, entry.status_label),
+            Fecha: formatDateTime(entry.issue_at),
+            Referencia: entry.reference_no ?? entry.supplier_reference ?? '',
+            MetodoPago: entry.payment_method ?? '',
+            Items: Number(entry.total_items ?? 0),
+            CantidadTotal: Number(entry.total_qty ?? 0),
+            TotalIngreso: details.length > 0 ? computedTotal : Number(entry.total_amount ?? 0),
+            OpGravada: entrySummary.gravada,
+            OpExonerada: entrySummary.exonerada,
+            OpInafecta: entrySummary.inafecta,
+            OpNoTributaria: entrySummary.noTributaria,
+            IGVTotal: entrySummary.tax,
+            Producto: item.product_name,
+            Lote: item.lot_code ?? '',
+            Cantidad: Number(item.qty),
+            ModoCosto: String(itemMetadata.price_tax_mode ?? entry.metadata?.price_tax_mode ?? 'EXCLUSIVE'),
+            CostoIngresado: Number(itemMetadata.unit_cost_input ?? item.unit_cost),
+            CostoUnitario: Number(item.unit_cost),
+            CostoUnitarioConIGV: Number(itemMetadata.unit_cost_gross ?? item.unit_cost),
+            Subtotal: Number(item.subtotal),
+            TipoIGV: item.tax_label,
+            TasaIGV: Number(item.tax_rate),
+            MontoIGV: Number(item.tax_amount),
+            TotalLinea: Number(item.line_total),
+            NotaLinea: item.notes ?? '',
+          };
+        });
       });
 
       const XLSX = await import('xlsx');
@@ -1665,13 +1693,17 @@ export function PurchasesView({
                   <input
                     type="checkbox"
                     checked={priceTaxMode === 'INCLUSIVE'}
-                    onChange={(e) => setPriceTaxMode(e.target.checked ? 'INCLUSIVE' : 'EXCLUSIVE')}
+                    onChange={(e) => {
+                      const nextMode = e.target.checked ? 'INCLUSIVE' : 'EXCLUSIVE';
+                      setPriceTaxMode(nextMode);
+                      setDraftItem((prev) => ({ ...prev, price_tax_mode: nextMode }));
+                    }}
                   />
                   Incluye IGV en costos
                 </label>
               </div>
               <span className="sales-igv-toggle-row-hint">
-                {priceTaxMode === 'INCLUSIVE' ? 'Costos ingresados ya incluyen IGV' : 'IGV se calcula sobre el costo base'}
+                {priceTaxMode === 'INCLUSIVE' ? 'Modo por defecto para items nuevos: el costo ingresado ya incluye IGV' : 'Modo por defecto para items nuevos: el IGV se calcula sobre el costo base'}
               </span>
             </div>
             <label className="sales-field-address">
@@ -2054,123 +2086,125 @@ export function PurchasesView({
 
             <div className="table-wrap sales-cart-wrap purchases-lines-wrap">
               <div className="sales-cart-table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Producto</th>
-                    <th>Stock actual</th>
-                    <th>Cantidad</th>
-                    <th>Costo unitario</th>
-                    {lotTrackingEnabled && <th>Lote</th>}
-                    {expiryTrackingEnabled && <th>Fabricacion</th>}
-                    {expiryTrackingEnabled && <th>Vencimiento</th>}
-                    <th>Tipo IGV</th>
-                    {(purchaseItemDiscountEnabled || purchaseFreeOperationEnabled) && (
-                      <th>{purchaseItemDiscountEnabled ? 'Descuento' : 'Gratis'}</th>
-                    )}
-                    <th>Subtotal</th>
-                    <th>IGV</th>
-                    <th>Total</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.length === 0 && (
+                <table>
+                  <thead>
                     <tr>
-                      <td colSpan={9 + (lotTrackingEnabled ? 1 : 0) + (expiryTrackingEnabled ? 2 : 0)}>Aun no agregaste items.</td>
+                      <th>Producto</th>
+                      <th>Stock actual</th>
+                      <th>Cantidad</th>
+                      <th>Costo unitario</th>
+                      {lotTrackingEnabled && <th>Lote</th>}
+                      {expiryTrackingEnabled && <th>Fabricacion</th>}
+                      {expiryTrackingEnabled && <th>Vencimiento</th>}
+                      <th>Tipo IGV</th>
+                      {(purchaseItemDiscountEnabled || purchaseFreeOperationEnabled) && (
+                        <th>{purchaseItemDiscountEnabled ? 'Descuento' : 'Gratis'}</th>
+                      )}
+                      <th>Subtotal</th>
+                      <th>IGV</th>
+                      <th>Total</th>
+                      <th></th>
                     </tr>
-                  )}
-                  {rows.map((row) => {
-                    const qty = Number(row.qty) || 0;
-                    const line = computePurchaseLineAmounts(row);
-                    const taxAmount = line.taxAmount;
-                    const lineTotal = line.finalTotal;
-                    const productStock = row.product_id ? (stockByProductId.get(row.product_id) ?? 0) : 0;
-
-                    return (
-                      <tr key={row.key}>
-                        <td>{row.product_query || '-'}</td>
-                        <td>
-                          <span className={`stock-chip ${stockToneClass(productStock)}`}>{productStock.toFixed(3)}</span>
-                        </td>
-                        <td>
-                          <input
-                            className="cell-input"
-                            type="number"
-                            step="0.001"
-                            value={row.qty}
-                            onChange={(e) => updateRow(row.key, { qty: e.target.value })}
-                            placeholder={entryType === 'ADJUSTMENT' ? 'Ej: -2 o 5' : 'Ej: 10'}
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="cell-input"
-                            type="number"
-                            step="0.000001"
-                            min="0"
-                            value={row.unit_cost}
-                            onChange={(e) => updateRow(row.key, { unit_cost: e.target.value })}
-                            placeholder="0.0000"
-                          />
-                        </td>
-                        {lotTrackingEnabled && <td>{row.lot_code || '-'}</td>}
-                        {expiryTrackingEnabled && <td>{row.manufacture_at || '-'}</td>}
-                        {expiryTrackingEnabled && <td>{row.expires_at || '-'}</td>}
-                        <td>
-                          {(lookups?.tax_categories ?? []).find((cat) => cat.id === row.tax_category_id)?.label ?? 'Sin IGV'}
-                        </td>
-                        {(purchaseItemDiscountEnabled || purchaseFreeOperationEnabled) && (
-                          <td>
-                            <div className="sales-table-line-meta purchases-table-line-meta">
-                              {purchaseItemDiscountEnabled && (
-                                <input
-                                  className="cell-input"
-                                  type="number"
-                                  step="0.01"
-                                  min="0"
-                                  value={row.discount_total}
-                                  onChange={(e) => updateRow(row.key, { discount_total: e.target.value })}
-                                  disabled={row.is_free_operation}
-                                />
-                              )}
-                              {purchaseFreeOperationEnabled && (
-                                <label className="sales-inline-check">
-                                  <input
-                                    type="checkbox"
-                                    checked={row.is_free_operation}
-                                    onChange={(e) => updateRow(row.key, {
-                                      is_free_operation: e.target.checked,
-                                      discount_total: e.target.checked ? '0' : row.discount_total,
-                                    })}
-                                  />
-                                  Gratis
-                                </label>
-                              )}
-                            </div>
-                          </td>
-                        )}
-                        <td>{line.subtotal.toFixed(2)}</td>
-                        <td>{taxAmount.toFixed(2)}</td>
-                        <td>{lineTotal.toFixed(2)}</td>
-                        <td>
-                          <button type="button" onClick={() => removeRow(row.key)}>
-                            Quitar
-                          </button>
-                        </td>
+                  </thead>
+                  <tbody>
+                    {rows.length === 0 && (
+                      <tr>
+                        <td colSpan={9 + (lotTrackingEnabled ? 1 : 0) + (expiryTrackingEnabled ? 2 : 0)}>Aun no agregaste items.</td>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    )}
+                    {rows.map((row) => {
+                      const line = computePurchaseLineAmounts(row);
+                      const taxAmount = line.taxAmount;
+                      const lineTotal = line.finalTotal;
+                      const productStock = row.product_id ? (stockByProductId.get(row.product_id) ?? 0) : 0;
+
+                      return (
+                        <tr key={row.key}>
+                          <td>{row.product_query || '-'}</td>
+                          <td>
+                            <span className={`stock-chip ${stockToneClass(productStock)}`}>{productStock.toFixed(3)}</span>
+                          </td>
+                          <td>
+                            <input
+                              className="cell-input"
+                              type="number"
+                              step="0.001"
+                              value={row.qty}
+                              onChange={(e) => updateRow(row.key, { qty: e.target.value })}
+                              placeholder={entryType === 'ADJUSTMENT' ? 'Ej: -2 o 5' : 'Ej: 10'}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              className="cell-input"
+                              type="number"
+                              step="0.000001"
+                              min="0"
+                              value={row.unit_cost}
+                              onChange={(e) => updateRow(row.key, { unit_cost: e.target.value })}
+                              placeholder="0.0000"
+                            />
+                          </td>
+                          {lotTrackingEnabled && <td>{row.lot_code || '-'}</td>}
+                          {expiryTrackingEnabled && <td>{row.manufacture_at || '-'}</td>}
+                          {expiryTrackingEnabled && <td>{row.expires_at || '-'}</td>}
+                          <td>
+                            {(lookups?.tax_categories ?? []).find((cat) => cat.id === row.tax_category_id)?.label ?? 'Sin IGV'}
+                          </td>
+                          {(purchaseItemDiscountEnabled || purchaseFreeOperationEnabled) && (
+                            <td>
+                              <div className="sales-table-line-meta purchases-table-line-meta">
+                                {purchaseItemDiscountEnabled && (
+                                  <input
+                                    className="cell-input"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    value={row.discount_total}
+                                    onChange={(e) => updateRow(row.key, { discount_total: e.target.value })}
+                                    disabled={row.is_free_operation}
+                                  />
+                                )}
+                                {purchaseFreeOperationEnabled && (
+                                  <label className="sales-inline-check">
+                                    <input
+                                      type="checkbox"
+                                      checked={row.is_free_operation}
+                                      onChange={(e) => updateRow(row.key, {
+                                        is_free_operation: e.target.checked,
+                                        discount_total: e.target.checked ? '0' : row.discount_total,
+                                      })}
+                                    />
+                                    Gratis
+                                  </label>
+                                )}
+                              </div>
+                            </td>
+                          )}
+                          <td>{line.subtotal.toFixed(2)}</td>
+                          <td>{taxAmount.toFixed(2)}</td>
+                          <td>{lineTotal.toFixed(2)}</td>
+                          <td>
+                            <button type="button" onClick={() => removeRow(row.key)}>
+                              Quitar
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
             </div>
           </section>
 
           <aside className="sales-concepts-side" aria-live="polite">
             <header className="sales-section-head">
-              <h4>Montos de la compra</h4>
-              <p>Vista previa consolidada en tiempo real.</p>
+              <h4>Montos del comprobante</h4>
+              <p className="sales-live-caption">
+                <span className="sales-live-dot" aria-hidden="true" />
+                Resumen automatico al escribir.
+              </p>
             </header>
 
             <div className="sales-summary">
@@ -2258,7 +2292,7 @@ export function PurchasesView({
                   Cancelar edicion
                 </button>
               )}
-              <p className="shortcut-hint">La seleccion de IGV viene desde base de datos y se aplica por linea.</p>
+              <p className="shortcut-hint">El modo de costo IGV se define para todo el comprobante; el tipo IGV sigue aplicando por linea.</p>
             </div>
           </aside>
         </div>

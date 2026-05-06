@@ -4,6 +4,17 @@ import { clearAuthSession, loadAuthSession, saveAuthSession } from '../../module
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 
 let refreshingPromise: Promise<string | null> | null = null;
+const inFlightGetRequests = new Map<string, Promise<unknown>>();
+const recentGetResponses = new Map<string, { expiresAt: number; data: unknown }>();
+const GET_RESPONSE_CACHE_TTL_MS = 1000;
+
+function pruneRecentGetResponses(now: number): void {
+  recentGetResponses.forEach((entry, key) => {
+    if (entry.expiresAt <= now) {
+      recentGetResponses.delete(key);
+    }
+  });
+}
 
 function toHeadersObject(headers?: HeadersInit): Record<string, string> {
   if (!headers) {
@@ -120,94 +131,135 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
   const session = loadAuthSession();
   const authHeader = baseHeaders.Authorization ?? (session ? `Bearer ${session.accessToken}` : undefined);
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...baseHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-  });
+  const method = String(init?.method ?? 'GET').toUpperCase();
+  const canDeduplicateGet = method === 'GET' && !init?.body && !isAuthRoute(path);
+  const dedupKey = canDeduplicateGet
+    ? `${method}:${path}::${authHeader ?? ''}`
+    : null;
 
-  if (response.status === 401 && allowRetry && !isAuthRoute(path) && authHeader) {
-    const newAccessToken = await refreshAccessToken();
+  if (dedupKey) {
+    const now = Date.now();
+    pruneRecentGetResponses(now);
 
-    if (newAccessToken) {
-      return request<T>(
-        path,
-        {
-          ...init,
-          headers: {
-            ...baseHeaders,
-            Authorization: `Bearer ${newAccessToken}`,
-          },
-        },
-        false,
-      );
+    const cached = recentGetResponses.get(dedupKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.data as T;
+    }
+
+    const inFlight = inFlightGetRequests.get(dedupKey);
+    if (inFlight) {
+      return (await inFlight) as T;
     }
   }
 
-  if (!response.ok) {
-    const text = await response.text();
-    const contentType = response.headers.get('content-type') ?? '';
-    const isHtml = contentType.includes('text/html') || /<html|<!doctype/i.test(text);
+  const executeRequest = async (): Promise<T> => {
+    const response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        'Content-Type': 'application/json',
+        ...baseHeaders,
+        ...(authHeader ? { Authorization: authHeader } : {}),
+      },
+    });
 
-    if (response.status === 401 && !isAuthRoute(path)) {
-      clearAuthSession();
-      throw new Error('Sesion expirada o invalida. Inicia sesion nuevamente.');
+    if (response.status === 401 && allowRetry && !isAuthRoute(path) && authHeader) {
+      const newAccessToken = await refreshAccessToken();
+
+      if (newAccessToken) {
+        return request<T>(
+          path,
+          {
+            ...init,
+            headers: {
+              ...baseHeaders,
+              Authorization: `Bearer ${newAccessToken}`,
+            },
+          },
+          false,
+        );
+      }
     }
 
-    if (response.status === 429) {
-      throw new Error('Demasiadas solicitudes seguidas. Espera unos segundos y vuelve a intentar.');
-    }
+    if (!response.ok) {
+      const text = await response.text();
+      const contentType = response.headers.get('content-type') ?? '';
+      const isHtml = contentType.includes('text/html') || /<html|<!doctype/i.test(text);
 
-    if (isHtml) {
-      throw new Error(`Error ${response.status}: respuesta inesperada del servidor.`);
-    }
+      if (response.status === 401 && !isAuthRoute(path)) {
+        clearAuthSession();
+        throw new Error('Sesion expirada o invalida. Inicia sesion nuevamente.');
+      }
 
-    const parsed = tryParseJsonObject(text);
-    const serverMessage = typeof parsed?.message === 'string' ? parsed.message : null;
+      if (response.status === 429) {
+        throw new Error('Demasiadas solicitudes seguidas. Espera unos segundos y vuelve a intentar.');
+      }
 
-    if (response.status === 403) {
-      const moduleCode = typeof parsed?.module_code === 'string' ? parsed.module_code : null;
-      const action = typeof parsed?.action === 'string' ? parsed.action : null;
-      const rbacHint = moduleCode ? ` [${moduleCode}${action ? `:${action}` : ''}]` : '';
-      const detail = serverMessage && serverMessage.trim() !== ''
-        ? serverMessage
-        : `Solicitud bloqueada en ${path}`;
-      throw new Error(`No tienes permiso para acceder a esta sección.${rbacHint} (${detail})`);
-    }
+      if (isHtml) {
+        throw new Error(`Error ${response.status}: respuesta inesperada del servidor.`);
+      }
 
-    const validationMessage = extractFirstValidationError(parsed);
-    if (response.status === 422 && validationMessage) {
-      throw new Error(validationMessage);
-    }
+      const parsed = tryParseJsonObject(text);
+      const serverMessage = typeof parsed?.message === 'string' ? parsed.message : null;
 
-    const isTechnical = serverMessage
-      ? /SQLSTATE|ERROR:|Exception|at line \d+|vendor\/|->|php/i.test(serverMessage)
-      : false;
+      if (response.status === 403) {
+        const moduleCode = typeof parsed?.module_code === 'string' ? parsed.module_code : null;
+        const action = typeof parsed?.action === 'string' ? parsed.action : null;
+        const rbacHint = moduleCode ? ` [${moduleCode}${action ? `:${action}` : ''}]` : '';
+        const detail = serverMessage && serverMessage.trim() !== ''
+          ? serverMessage
+          : `Solicitud bloqueada en ${path}`;
+        throw new Error(`No tienes permiso para acceder a esta sección.${rbacHint} (${detail})`);
+      }
 
-    if (response.status === 422) {
-      if (serverMessage && !isTechnical && serverMessage.toLowerCase() !== 'validation failed') {
+      const validationMessage = extractFirstValidationError(parsed);
+      if (response.status === 422 && validationMessage) {
+        throw new Error(validationMessage);
+      }
+
+      const isTechnical = serverMessage
+        ? /SQLSTATE|ERROR:|Exception|at line \d+|vendor\/|->|php/i.test(serverMessage)
+        : false;
+
+      if (response.status === 422) {
+        if (serverMessage && !isTechnical && serverMessage.toLowerCase() !== 'validation failed') {
+          throw new Error(serverMessage);
+        }
+
+        const compactText = text.replace(/\s+/g, ' ').trim();
+        if (compactText && !/<[a-z][\s\S]*>/i.test(compactText)) {
+          throw new Error(`Error de validacion (422): ${compactText.slice(0, 220)}`);
+        }
+
+        throw new Error('Error de validacion (422). Revisa los campos obligatorios.');
+      }
+
+      if (serverMessage && !isTechnical) {
         throw new Error(serverMessage);
       }
 
-      const compactText = text.replace(/\s+/g, ' ').trim();
-      if (compactText && !/<[a-z][\s\S]*>/i.test(compactText)) {
-        throw new Error(`Error de validacion (422): ${compactText.slice(0, 220)}`);
-      }
-
-      throw new Error('Error de validacion (422). Revisa los campos obligatorios.');
+      throw new Error(`Error en el servidor (${response.status}). Contacta al administrador.`);
     }
 
-    if (serverMessage && !isTechnical) {
-      throw new Error(serverMessage);
-    }
+    return (await response.json()) as T;
+  };
 
-    throw new Error(`Error en el servidor (${response.status}). Contacta al administrador.`);
+  if (!dedupKey) {
+    return executeRequest();
   }
 
-  return (await response.json()) as T;
+  const promise = executeRequest();
+  inFlightGetRequests.set(dedupKey, promise as Promise<unknown>);
+
+  try {
+    const data = await promise;
+    recentGetResponses.set(dedupKey, {
+      data,
+      expiresAt: Date.now() + GET_RESPONSE_CACHE_TTL_MS,
+    });
+    return data;
+  } finally {
+    inFlightGetRequests.delete(dedupKey);
+  }
 }
 
 async function requestRaw(path: string, init?: RequestInit, allowRetry = true): Promise<Response> {

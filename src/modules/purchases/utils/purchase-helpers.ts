@@ -2,6 +2,8 @@ import { fmtDateTimeFullLima, todayLima } from '../../../shared/utils/lima';
 import type { PurchasesLookups, StockEntryRow, StockEntryType } from '../types';
 import type { CompanyProfile } from '../../company/types';
 
+export type PurchasePriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
+
 export type PurchaseEntryDraft = {
   key: string;
   product_id: number | null;
@@ -16,7 +18,44 @@ export type PurchaseEntryDraft = {
   expires_at: string;
   tax_category_id?: number;
   tax_rate?: number;
+  price_tax_mode: PurchasePriceTaxMode;
 };
+
+export function normalizePurchasePriceTaxMode(
+  value: unknown,
+  fallback: PurchasePriceTaxMode = 'EXCLUSIVE'
+): PurchasePriceTaxMode {
+  if (String(value ?? '').trim().toUpperCase() === 'INCLUSIVE') {
+    return 'INCLUSIVE';
+  }
+
+  return fallback;
+}
+
+export function resolvePurchaseUnitCostNet(
+  unitCostInput: number,
+  taxRate: number,
+  priceTaxMode: PurchasePriceTaxMode
+): number {
+  if (priceTaxMode !== 'INCLUSIVE' || taxRate <= 0) {
+    return unitCostInput;
+  }
+
+  const divisor = 1 + taxRate / 100;
+  if (divisor <= 0) {
+    return unitCostInput;
+  }
+
+  return unitCostInput / divisor;
+}
+
+export function resolvePurchaseUnitCostGross(unitCostNet: number, taxRate: number): number {
+  if (!Number.isFinite(unitCostNet) || unitCostNet <= 0 || taxRate <= 0) {
+    return Math.max(unitCostNet, 0);
+  }
+
+  return unitCostNet * (1 + taxRate / 100);
+}
 
 export function todayAsInputDate(): string {
   return todayLima();
@@ -286,9 +325,12 @@ export function clampPurchaseDiscount(value: number, maxValue: number): number {
 
 export function computePurchaseLineAmounts(row: PurchaseEntryDraft) {
   const qty = Number(row.qty) || 0;
-  const unitCost = Number(row.unit_cost) || 0;
-  const subtotal = qty * unitCost;
+  const unitCostInput = Number(row.unit_cost) || 0;
   const taxRate = Number(row.tax_rate) || 0;
+  const priceTaxMode = normalizePurchasePriceTaxMode(row.price_tax_mode, 'EXCLUSIVE');
+  const unitCostNet = resolvePurchaseUnitCostNet(unitCostInput, taxRate, priceTaxMode);
+  const unitCostGross = resolvePurchaseUnitCostGross(unitCostNet, taxRate);
+  const subtotal = qty * unitCostNet;
   const taxAmount = subtotal * (taxRate / 100);
   const grossTotal = subtotal + taxAmount;
   const isFreeOperation = Boolean(row.is_free_operation);
@@ -297,6 +339,10 @@ export function computePurchaseLineAmounts(row: PurchaseEntryDraft) {
     : clampPurchaseDiscount(Number(row.discount_total) || 0, grossTotal);
 
   return {
+    unitCostInput,
+    unitCostNet,
+    unitCostGross,
+    priceTaxMode,
     subtotal,
     taxAmount,
     grossTotal,

@@ -560,6 +560,41 @@ type SunatToastState = {
   detail: string;
 };
 
+type ActionConfirmTone = 'neutral' | 'warn' | 'danger';
+
+type ActionConfirmRequest = {
+  title: string;
+  message: string;
+  tone?: ActionConfirmTone;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  reasonLabel?: string;
+  reasonPlaceholder?: string;
+  passwordLabel?: string;
+  passwordRequired?: boolean;
+  warningNote?: string;
+  initialReason?: string;
+};
+
+type ActionConfirmState = {
+  title: string;
+  message: string;
+  tone: ActionConfirmTone;
+  confirmLabel: string;
+  cancelLabel: string;
+  reasonLabel: string;
+  reasonPlaceholder: string;
+  passwordLabel: string;
+  passwordRequired: boolean;
+  warningNote: string;
+};
+
+type ActionConfirmResult = {
+  confirmed: boolean;
+  reason: string;
+  password: string;
+};
+
 type StockValidationSummary = {
   blocked: boolean;
   insufficientLines: Array<{ description: string; requested: number; available: number }>;
@@ -638,6 +673,60 @@ function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFil
   }
 
   return 'ALL';
+}
+
+const SUNAT_OPERATION_WINDOW_DAYS = 3;
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+function parseDateOnlyToUtc(value: string | null | undefined): Date | null {
+  const raw = String(value ?? '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function daysFromDateToTodayLima(value: string | null | undefined): number | null {
+  const sourceDate = parseDateOnlyToUtc(value);
+  const todayDate = parseDateOnlyToUtc(todayLima());
+
+  if (!sourceDate || !todayDate) {
+    return null;
+  }
+
+  return Math.floor((todayDate.getTime() - sourceDate.getTime()) / ONE_DAY_IN_MS);
+}
+
+function renderDaysLabel(days: number): string {
+  return days === 1 ? '1 dia' : `${days} dias`;
+}
+
+function buildSunatIndividualSendWindowWarning(row: CommercialDocumentListItem): string {
+  const daysSinceIssue = daysFromDateToTodayLima(row.issue_at);
+  if (daysSinceIssue === null || daysSinceIssue <= SUNAT_OPERATION_WINDOW_DAYS) {
+    return '';
+  }
+
+  return `Este comprobante fue emitido hace ${renderDaysLabel(daysSinceIssue)}. El envio individual SUNAT suele permitirse hasta ${SUNAT_OPERATION_WINDOW_DAYS} dias calendario desde la emision; fuera de plazo puede ser rechazado.`;
+}
+
+function buildSunatIndividualVoidWindowWarning(row: CommercialDocumentListItem): string {
+  const daysSinceIssue = daysFromDateToTodayLima(row.issue_at);
+  if (daysSinceIssue === null || daysSinceIssue <= SUNAT_OPERATION_WINDOW_DAYS) {
+    return '';
+  }
+
+  return `Advertencia operativa: la baja individual de factura se valida por SUNAT en ventana de ${SUNAT_OPERATION_WINDOW_DAYS} dias desde la aceptacion. Este documento fue emitido hace ${renderDaysLabel(daysSinceIssue)} y SUNAT puede rechazar la baja fuera de ventana. RA/RC aplica solo a boletas.`;
 }
 
 function resolveSunatUiState(row: CommercialDocumentListItem): SunatUiState {
@@ -1371,6 +1460,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         ? allowVoidForSeller
         : false;
   const canVoidDocumentsInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID', true) && canVoidByProfile;
+  const voidPasswordRequired = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REQUIRE_PASSWORD', false);
   const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
   const allowNegativeStockEnabled = Boolean(lookups?.inventory_settings?.allow_negative_stock);
   const lowStockAlertThreshold = lookups?.inventory_settings?.low_stock_alert_threshold ?? 5;
@@ -1560,6 +1650,70 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const documentsRequestSeqRef = useRef(0);
   const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
   const stockLoadedScopeRef = useRef('');
+  const actionConfirmResolverRef = useRef<((result: ActionConfirmResult) => void) | null>(null);
+  const [actionConfirmState, setActionConfirmState] = useState<ActionConfirmState | null>(null);
+  const [actionConfirmReason, setActionConfirmReason] = useState('');
+  const [actionConfirmPassword, setActionConfirmPassword] = useState('');
+  const [actionConfirmError, setActionConfirmError] = useState('');
+
+  function closeActionConfirm(result: ActionConfirmResult) {
+    const resolver = actionConfirmResolverRef.current;
+    actionConfirmResolverRef.current = null;
+    setActionConfirmState(null);
+    setActionConfirmReason('');
+    setActionConfirmPassword('');
+    setActionConfirmError('');
+    resolver?.(result);
+  }
+
+  async function requestActionConfirm(request: ActionConfirmRequest): Promise<ActionConfirmResult> {
+    return new Promise((resolve) => {
+      if (actionConfirmResolverRef.current) {
+        actionConfirmResolverRef.current({ confirmed: false, reason: '', password: '' });
+      }
+
+      actionConfirmResolverRef.current = resolve;
+      setActionConfirmReason(request.initialReason ?? '');
+      setActionConfirmPassword('');
+      setActionConfirmError('');
+      setActionConfirmState({
+        title: request.title,
+        message: request.message,
+        tone: request.tone ?? 'neutral',
+        confirmLabel: request.confirmLabel ?? 'Confirmar',
+        cancelLabel: request.cancelLabel ?? 'Cancelar',
+        reasonLabel: request.reasonLabel ?? 'Motivo (opcional)',
+        reasonPlaceholder: request.reasonPlaceholder ?? '',
+        passwordLabel: request.passwordLabel ?? 'Clave',
+        passwordRequired: request.passwordRequired ?? false,
+        warningNote: request.warningNote ?? '',
+      });
+    });
+  }
+
+  function submitActionConfirm() {
+    if (!actionConfirmState) {
+      return;
+    }
+
+    if (actionConfirmState.passwordRequired && actionConfirmPassword.trim() === '') {
+      setActionConfirmError('Debe ingresar su clave para continuar.');
+      return;
+    }
+
+    closeActionConfirm({
+      confirmed: true,
+      reason: actionConfirmReason,
+      password: actionConfirmPassword,
+    });
+  }
+
+  useEffect(() => () => {
+    if (actionConfirmResolverRef.current) {
+      actionConfirmResolverRef.current({ confirmed: false, reason: '', password: '' });
+      actionConfirmResolverRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!sunatToast) {
@@ -3769,22 +3923,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         max: 20000,
       });
 
-      const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => ({
-        ID: row.id,
-        Usuario: salesFlowMode === 'SELLER_TO_CASHIER'
-          ? resolveDocumentActorTrace(row).compact
-          : (row.created_by_user_name ?? ''),
-        Documento: docKindLabelResolved(row.document_kind),
-        Serie: row.series,
-        Numero: row.number,
-        FechaEmision: row.issue_at,
-        Cliente: row.customer_name,
-        Vehiculo: formatReportDocumentVehicle(row),
-        FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
-        Estado: commercialStatusLabel(row.status),
-        Total: Number(row.total ?? 0),
-        Saldo: Number(row.balance_due ?? 0),
-      }));
+      const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => {
+        const trace = resolveDocumentActorTrace(row);
+
+        return {
+          ID: row.id,
+          Solicita: trace.seller,
+          Emite: trace.issuer,
+          Actor: trace.compact,
+          Documento: docKindLabelResolved(row.document_kind),
+          Serie: row.series,
+          Numero: row.number,
+          DocumentoAfectado: String(row.source_document_number ?? '').trim(),
+          FechaEmision: row.issue_at,
+          Cliente: row.customer_name,
+          Vehiculo: formatReportDocumentVehicle(row),
+          FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
+          Estado: commercialStatusLabel(row.status),
+          EstadoSunat: String(row.sunat_status ?? ''),
+          EstadoBajaSunat: String(row.sunat_void_status ?? ''),
+          DescuentoItem: Number(row.item_discount_total ?? 0),
+          DescuentoGlobal: Number(row.global_discount_total ?? 0),
+          Total: Number(row.total ?? 0),
+          Saldo: Number(row.balance_due ?? 0),
+        };
+      });
 
       const XLSX = await import('xlsx');
       const workbook = XLSX.utils.book_new();
@@ -3876,8 +4039,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const detailRows = rows as Array<Record<string, unknown>>;
       const sheetRows = detailRows.map((row) => ({
+        ...(() => {
+          const issuer = String(row.created_by_user_name ?? '').trim();
+          const seller = String(row.origin_seller_user_name ?? '').trim();
+          const actor = seller && issuer && seller.toUpperCase() !== issuer.toUpperCase()
+            ? `Solicita: ${seller} | Emite: ${issuer}`
+            : (issuer || seller || '-');
+          return {
+            Solicita: seller || issuer || '-',
+            Emite: issuer || seller || '-',
+            Actor: actor,
+          };
+        })(),
         ID: Number(row.id ?? 0),
-        Usuario: String(row.created_by_user_name ?? ''),
         Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
         Serie: String(row.series ?? ''),
         Numero: String(row.number ?? ''),
@@ -3885,7 +4059,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         Cliente: String(row.customer_name ?? ''),
         Vehiculo: formatReportDocumentVehicle(row as CommercialDocumentProductDetailRow),
         FormaPago: String(row.payment_method_name ?? ''),
-        Estado: String(row.status ?? ''),
+        Estado: String(row.status_label ?? row.status ?? ''),
+        EstadoSunat: String(row.sunat_status ?? ''),
+        EstadoBajaSunat: String(row.sunat_void_status ?? ''),
         Producto: String(row.product_description ?? ''),
         Unidad: String(row.unit_code ?? ''),
         Cantidad: Number(row.qty ?? 0),
@@ -4560,21 +4736,65 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     const isReceipt = isReceiptDocument(row);
     const docLabel = docKindLabelResolved(row.document_kind);
-    const accepted = window.confirm(`Se anulara ${docLabel} ${row.series}-${row.number}. Desea continuar?`);
-    if (!accepted) {
+    const confirmResult = await requestActionConfirm({
+      title: `Anular ${docLabel} ${row.series}-${row.number}`,
+      message: 'Esta accion cambia el estado del comprobante a anulado y no se puede deshacer desde esta pantalla.',
+      tone: 'danger',
+      confirmLabel: 'Anular documento',
+      reasonLabel: 'Motivo de anulacion (opcional)',
+      reasonPlaceholder: 'Ej. error de digitacion o solicitud del cliente',
+      warningNote: buildSunatIndividualSendWindowWarning(row),
+    });
+    if (!confirmResult.confirmed) {
       return;
     }
-
-    const reason = window.prompt('Motivo de anulacion (opcional):', '') ?? '';
+    const reason = confirmResult.reason.trim();
 
     setLoading(true);
     setMessage('');
     try {
-      const response = await voidCommercialDocument(accessToken, row.id, {
+      const basePayload = {
         reason: reason.trim() || undefined,
         notes: reason.trim() || undefined,
         void_at: nowLimaIso(),
-      });
+      };
+
+      let response;
+      try {
+        response = await voidCommercialDocument(accessToken, row.id, basePayload);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
+        const needsPassword = /ingresar su clave|clave para confirmar la anulacion/i.test(text);
+
+        if (!needsPassword) {
+          throw error;
+        }
+
+        const passwordConfirmResult = await requestActionConfirm({
+          title: `Confirmacion con clave: ${docLabel} ${row.series}-${row.number}`,
+          message: 'La politica activa exige clave para confirmar la anulacion.',
+          tone: 'warn',
+          confirmLabel: 'Validar y anular',
+          reasonLabel: 'Motivo de anulacion (opcional)',
+          reasonPlaceholder: 'Puedes ajustar el motivo antes de confirmar',
+          passwordLabel: 'Clave de usuario',
+          passwordRequired: true,
+          initialReason: reason,
+        });
+        if (!passwordConfirmResult.confirmed) {
+          return;
+        }
+
+        const validatedReason = passwordConfirmResult.reason.trim();
+
+        response = await voidCommercialDocument(accessToken, row.id, {
+          reason: validatedReason || undefined,
+          notes: validatedReason || undefined,
+          void_at: nowLimaIso(),
+          void_password: passwordConfirmResult.password,
+        });
+      }
+
       const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
       const summaryType = isReceipt ? 'RA' : 'baja SUNAT';
       const summaryInfo = linkedSummaryId && isReceipt ? ` Asignado automaticamente a ${summaryType} #${linkedSummaryId}.` : '';
@@ -4594,10 +4814,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
-    const accepted = window.confirm(
-      `Se agregara Boleta ${row.series}-${row.number} al resumen diario de declaracion (RC). Desea continuar?`
-    );
-    if (!accepted) {
+    const confirmResult = await requestActionConfirm({
+      title: `Agregar Boleta ${row.series}-${row.number} a resumen RC`,
+      message: 'La boleta se incluira en el resumen diario de declaracion para procesamiento SUNAT.',
+      tone: 'warn',
+      confirmLabel: 'Agregar a resumen RC',
+      warningNote: 'Usa este flujo para documentos en ventana operativa y con datos tributarios completos.',
+    });
+    if (!confirmResult.confirmed) {
       return;
     }
 
@@ -4617,21 +4841,26 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }
 
   async function handleSunatVoidCommunication(row: CommercialDocumentListItem) {
-    const accepted = window.confirm(
-      `Se enviara comunicacion de baja SUNAT para ${row.series}-${row.number}. Desea continuar?`
-    );
-    if (!accepted) {
+    const confirmResult = await requestActionConfirm({
+      title: `Comunicacion de baja SUNAT ${row.series}-${row.number}`,
+      message: 'Se enviara una baja individual al puente SUNAT para este comprobante.',
+      tone: 'danger',
+      confirmLabel: 'Enviar baja SUNAT',
+      reasonLabel: 'Motivo de baja SUNAT (opcional)',
+      reasonPlaceholder: 'Ej. anulacion por error de emision',
+      warningNote: buildSunatIndividualVoidWindowWarning(row),
+    });
+    if (!confirmResult.confirmed) {
       return;
     }
-
-    const reason = window.prompt('Motivo de baja SUNAT (opcional):', '') ?? '';
+    const reason = confirmResult.reason.trim();
 
     setLoading(true);
     setMessage('');
     try {
       const response = await sendSunatVoidCommunication(accessToken, row.id, {
-        reason: reason.trim() || undefined,
-        notes: reason.trim() || undefined,
+        reason: reason || undefined,
+        notes: reason || undefined,
       });
 
       const responseSummary = summarizeSunatDiagnostic(response.sunat_error_code, response.sunat_error_message, response.bridge_response);
@@ -5197,6 +5426,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </span>
               <span className="sales-mode-chip" style={{ background: canVoidDocumentsInCurrentMode ? '#d1fae5' : '#fee2e2', color: canVoidDocumentsInCurrentMode ? '#065f46' : '#991b1b' }}>
                 Anulacion: {canVoidDocumentsInCurrentMode ? 'Habilitada' : 'Deshabilitada'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: voidPasswordRequired ? '#fef3c7' : '#ecfeff', color: voidPasswordRequired ? '#92400e' : '#155e75' }}>
+                Clave para anular: {voidPasswordRequired ? 'Requerida' : 'Opcional'}
               </span>
               <span className={featureSourceBadgeClass(documentVoidSource)}>
                 Fuente anulacion: {featureSourceLabel(documentVoidSource)}
@@ -6407,6 +6639,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       {salesWorkspaceMode === 'REPORT' && (
         <>
+      <div className="sales-sunat-window-note" role="note" aria-live="polite">
+        <strong>Ventana SUNAT (operaciones individuales):</strong> envio tributario dentro de 3 dias calendario desde emision. Baja individual de factura dentro de 3 dias desde aceptacion SUNAT. Fuera de plazo SUNAT puede rechazar. RA/RC aplica solo a boletas.
+      </div>
       {shouldPrioritizePendingOrders && (
         <div className="workspace-mode-switch" style={{ marginTop: '0.35rem', marginBottom: '0.65rem' }}>
           <button
@@ -7337,6 +7572,78 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </div>
           </div>
         </div>
+      )}
+
+      {actionConfirmState && (
+        <>
+          <div
+            className="sales-action-confirm-backdrop"
+            onClick={() => closeActionConfirm({ confirmed: false, reason: '', password: '' })}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className={`sales-action-confirm-modal tone-${actionConfirmState.tone}`}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                closeActionConfirm({ confirmed: false, reason: '', password: '' });
+              }
+            }}
+          >
+            <div className="sales-action-confirm-head">
+              <h3>{actionConfirmState.title}</h3>
+              <p>{actionConfirmState.message}</p>
+            </div>
+
+            {actionConfirmState.warningNote && (
+              <p className="sales-action-confirm-warning">{actionConfirmState.warningNote}</p>
+            )}
+
+            <div className="sales-action-confirm-fields">
+              <label>
+                <span>{actionConfirmState.reasonLabel}</span>
+                <textarea
+                  rows={3}
+                  maxLength={300}
+                  value={actionConfirmReason}
+                  onChange={(event) => setActionConfirmReason(event.target.value)}
+                  placeholder={actionConfirmState.reasonPlaceholder}
+                />
+              </label>
+
+              {actionConfirmState.passwordRequired && (
+                <label>
+                  <span>{actionConfirmState.passwordLabel}</span>
+                  <input
+                    type="password"
+                    value={actionConfirmPassword}
+                    onChange={(event) => setActionConfirmPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </label>
+              )}
+            </div>
+
+            {actionConfirmError && <p className="sales-action-confirm-error">{actionConfirmError}</p>}
+
+            <div className="sales-action-confirm-actions">
+              <button
+                type="button"
+                className="sales-action-confirm-cancel"
+                onClick={() => closeActionConfirm({ confirmed: false, reason: '', password: '' })}
+              >
+                {actionConfirmState.cancelLabel}
+              </button>
+              <button
+                type="button"
+                className="sales-action-confirm-submit"
+                onClick={submitActionConfirm}
+              >
+                {actionConfirmState.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
       {previewDialog && (
