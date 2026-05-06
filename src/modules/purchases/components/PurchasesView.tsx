@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import '../../../styles/modules/purchases.css';
 import { fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
 import type { InventoryProduct, InventoryStockRow } from '../../inventory/types';
 import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry } from '../api';
@@ -53,6 +54,7 @@ type SupplierSuggestion = {
 
 type PurchasesWorkspaceMode = 'ENTRY' | 'REPORT';
 type PriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
+const INTERNAL_UNIT_COST_DECIMALS = 6;
 
 type PurchasesReportFilters = {
   entryType: StockEntryType | 'ALL';
@@ -806,7 +808,7 @@ export function PurchasesView({
       lot_id: item.lot_id ?? null,
       product_query: item.product_name,
       qty: String(Number(item.qty ?? 0)),
-      unit_cost: Number(item.unit_cost ?? 0).toFixed(4),
+      unit_cost: Number(item.unit_cost ?? 0).toFixed(INTERNAL_UNIT_COST_DECIMALS),
       discount_total: Number(item.discount_total ?? item.metadata?.discount_total ?? 0).toFixed(2),
       is_free_operation: Boolean(item.metadata?.is_free_operation),
       lot_code: item.lot_code ?? '',
@@ -1022,7 +1024,7 @@ export function PurchasesView({
       ...prev,
       {
         ...resolvedDraft,
-        unit_cost: normalizedUnitCost.toFixed(4),
+        unit_cost: normalizedUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS),
         key: `item-${Date.now()}-${prev.length + 1}`,
       },
     ]);
@@ -1209,6 +1211,7 @@ export function PurchasesView({
       metadata.has_percepcion = hasPercepcion;
       metadata.percepcion_type_code = hasPercepcion ? percepcionTypeCode : null;
       metadata.sunat_operation_type_code = (hasDetraccion || hasRetencion || hasPercepcion) ? sunatOperationTypeCode : null;
+      metadata.price_tax_mode = priceTaxMode;
     }
     if (dueDate.trim()) {
       metadata.due_date = dueDate.trim();
@@ -1926,7 +1929,7 @@ export function PurchasesView({
                   Costo unitario
                   <input
                     type="number"
-                    step="0.0001"
+                    step="0.000001"
                     min="0"
                     value={draftItem.unit_cost}
                     onChange={(e) => updateDraftItem({ unit_cost: e.target.value })}
@@ -2104,7 +2107,7 @@ export function PurchasesView({
                           <input
                             className="cell-input"
                             type="number"
-                            step="0.0001"
+                            step="0.000001"
                             min="0"
                             value={row.unit_cost}
                             onChange={(e) => updateRow(row.key, { unit_cost: e.target.value })}

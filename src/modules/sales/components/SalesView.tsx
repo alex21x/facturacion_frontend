@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import '../../../styles/modules/sales.css';
 import { docKindLabel } from '../../../shared/utils/docKind';
 import { fmtDateLima, fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
 import {
@@ -559,6 +560,12 @@ type SunatToastState = {
   detail: string;
 };
 
+type StockValidationSummary = {
+  blocked: boolean;
+  insufficientLines: Array<{ description: string; requested: number; available: number }>;
+  lowStockLines: Array<{ description: string; available: number }>;
+};
+
 function isCashOpeningRequiredError(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (normalized === '') {
@@ -567,6 +574,16 @@ function isCashOpeningRequiredError(message: string): boolean {
 
   return normalized.includes('caja')
     && (normalized.includes('apertur') || normalized.includes('abrir'));
+}
+
+function isInsufficientStockError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (normalized === '') {
+    return false;
+  }
+
+  return normalized.includes('insufficient stock')
+    || (normalized.includes('stock') && normalized.includes('insuficiente'));
 }
 
 type SunatBridgeDebugState = {
@@ -857,6 +874,30 @@ function isTributaryRow(row: CommercialDocumentListItem): boolean {
     || toPositiveInt(row.sunat_void_summary_id) !== null;
 }
 
+function resolveDocumentActorTrace(row: CommercialDocumentListItem): {
+  seller: string;
+  issuer: string;
+  compact: string;
+} {
+  const issuer = String(row.created_by_user_name ?? '').trim();
+  const seller = String(row.origin_seller_user_name ?? '').trim();
+
+  if (seller && issuer && seller.toUpperCase() !== issuer.toUpperCase()) {
+    return {
+      seller,
+      issuer,
+      compact: `Solicita: ${seller} | Emite: ${issuer}`,
+    };
+  }
+
+  const resolved = issuer || seller || '-';
+  return {
+    seller: resolved,
+    issuer: resolved,
+    compact: resolved,
+  };
+}
+
 function documentKindRequiresRuc(
   kind: string | null | undefined,
   options?: {
@@ -894,7 +935,7 @@ function customerHasRuc(customer: SalesCustomerSuggestion | null): boolean {
 function canEditCommercialDocument(
   row: CommercialDocumentListItem,
   allowDraftEdit: boolean,
-  allowIssuedBeforeFinalSunatEdit: boolean
+  _allowIssuedBeforeFinalSunatEdit: boolean
 ): boolean {
   const status = String(row.status ?? '').toUpperCase();
 
@@ -903,7 +944,7 @@ function canEditCommercialDocument(
   }
 
   if (status === 'ISSUED' && isTributaryRow(row)) {
-    return allowIssuedBeforeFinalSunatEdit && !resolveSunatUiState(row).isFinal;
+    return !resolveSunatUiState(row).isFinal;
   }
 
   // Allow editing QUOTATION and SALES_ORDER in ISSUED status if draft edit is allowed
@@ -1281,7 +1322,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }
 
   const [salesWorkspaceMode, setSalesWorkspaceMode] = useState<SalesWorkspaceMode>('SELL');
-  const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('FULL');
+  const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('PENDING');
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [seriesExpanded, setSeriesExpanded] = useState(false);
   const [cashierDefaultApplied, setCashierDefaultApplied] = useState(false);
@@ -1296,7 +1337,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
   const normalizedRoleCode = (currentUserRoleCode ?? '').toUpperCase();
   const normalizedRoleProfile = (currentUserRoleProfile ?? '').toUpperCase();
-  const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
+  const isSellerUser = normalizedRoleProfile === 'SELLER'
+    || normalizedRoleProfile.includes('VENDED')
+    || normalizedRoleCode.includes('VENDED')
+    || normalizedRoleCode.includes('SELLER');
   const isAdminUser = normalizedRoleCode.includes('ADMIN');
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isTechnicalUser = isAdminUser
@@ -1328,6 +1372,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         : false;
   const canVoidDocumentsInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID', true) && canVoidByProfile;
   const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
+  const allowNegativeStockEnabled = Boolean(lookups?.inventory_settings?.allow_negative_stock);
+  const lowStockAlertThreshold = lookups?.inventory_settings?.low_stock_alert_threshold ?? 5;
   const stockByProductId = useMemo(() => {
     const stockMap = new Map<number, number>();
     stockRows.forEach((row) => {
@@ -1336,6 +1382,54 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     });
     return stockMap;
   }, [stockRows]);
+
+  function summarizeStockValidation(lines: SalesDraftItem[]): StockValidationSummary {
+    const requestedByProduct = new Map<number, { qty: number; description: string }>();
+
+    lines.forEach((line) => {
+      if (line.isManual || !line.productId) {
+        return;
+      }
+
+      const productId = Number(line.productId);
+      const prev = requestedByProduct.get(productId) ?? { qty: 0, description: line.description };
+      requestedByProduct.set(productId, {
+        qty: prev.qty + Number(line.qty || 0),
+        description: prev.description,
+      });
+    });
+
+    const insufficientLines: StockValidationSummary['insufficientLines'] = [];
+    const lowStockLines: StockValidationSummary['lowStockLines'] = [];
+
+    requestedByProduct.forEach((requested, productId) => {
+      const available = stockByProductId.get(productId);
+      if (available === undefined) {
+        return;
+      }
+
+      if (requested.qty > available + 0.0000001) {
+        insufficientLines.push({
+          description: requested.description,
+          requested: requested.qty,
+          available,
+        });
+      }
+
+      if (available <= lowStockAlertThreshold) {
+        lowStockLines.push({
+          description: requested.description,
+          available,
+        });
+      }
+    });
+
+    return {
+      blocked: !allowNegativeStockEnabled && insufficientLines.length > 0,
+      insufficientLines,
+      lowStockLines,
+    };
+  }
   const advancesEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ANTICIPO_ENABLED', false);
   const salesGlobalDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_GLOBAL_DISCOUNT_ENABLED', false);
   const salesItemDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ITEM_DISCOUNT_ENABLED', false);
@@ -1360,7 +1454,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     : 'Venta directa en punto de venta';
   const activeProfileLabel = isSellerUser ? 'Vendedor' : isCashierUser ? 'Caja' : 'No identificado';
   const activeProfileHint = isSellerUser
-    ? 'Genera pedido comercial; caja realiza la emision final.'
+    ? 'Genera solicitud comercial; caja realiza la emision final.'
     : isCashierUser
       ? 'Inicia en pedidos pendientes para conversion y emision.'
       : 'Configura un perfil VENDEDOR/CAJERO para separar flujos.';
@@ -1392,7 +1486,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [accessToken, branchId, isRestaurantVertical]);
 
   useEffect(() => {
-    const currentDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
+    if (isRestaurantVertical) {
+      return;
+    }
+
+    if (documentFiltersApplied.sourceOrigin === 'RESTAURANT') {
+      setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: '' }));
+    }
+
+    if (documentFiltersDraft.sourceOrigin === 'RESTAURANT') {
+      setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: '' }));
+    }
+  }, [documentFiltersApplied.sourceOrigin, documentFiltersDraft.sourceOrigin, isRestaurantVertical]);
+
+  const sellerRequestDocumentKind = useMemo(() => {
+    const availableCodes = new Set((lookups?.document_kinds ?? []).map((row) => row.code));
+    return availableCodes.has('QUOTATION') ? 'QUOTATION' : 'SALES_ORDER';
+  }, [lookups?.document_kinds]);
+
+  useEffect(() => {
+    const currentDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser
+      ? sellerRequestDocumentKind
+      : form.documentKind;
 
     if (!isRestaurantVertical || currentDocumentKind !== 'SALES_ORDER') {
       if (!form.restaurantTableId && !form.restaurantTableLabel) {
@@ -1428,7 +1543,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         restaurantTableLabel: selected.name,
       }));
     }
-  }, [form.documentKind, form.restaurantTableId, form.restaurantTableLabel, isCashierUser, isRestaurantVertical, restaurantTables, salesFlowMode]);
+  }, [form.documentKind, form.restaurantTableId, form.restaurantTableLabel, isCashierUser, isRestaurantVertical, restaurantTables, salesFlowMode, sellerRequestDocumentKind]);
 
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productInputRef = useRef<HTMLInputElement | null>(null);
@@ -1506,7 +1621,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
     return TRIBUTARY_DOCUMENTS.includes(form.documentKind);
   }, [form.documentKind, lookups?.document_kinds]);
-  const effectiveDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
+  const effectiveDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? sellerRequestDocumentKind : form.documentKind;
   const selectedEffectiveDocumentKind = useMemo(() => {
     return (lookups?.document_kinds ?? []).find((row) => row.code === effectiveDocumentKind) ?? null;
   }, [effectiveDocumentKind, lookups?.document_kinds]);
@@ -1518,7 +1633,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const isDebitNote = effectiveDocumentKindGroup === 'NOTE_DEBIT';
   const isNoteDocument = isCreditNote || isDebitNote;
   const isCurrentPreDocument = effectiveDocumentKindGroup === 'PRE_DOCUMENT';
-  const canCreateDocumentInCurrentMode = !isSeparatedMode || !isCashierUser || !isCurrentPreDocument;
+  const canCreateDocumentInCurrentMode = !isSeparatedMode
+    || (isCashierUser ? !isCurrentPreDocument : isCurrentPreDocument);
   const activeNoteReasons = isCreditNote
     ? ((lookups?.credit_note_reasons ?? []).length > 0 ? (lookups?.credit_note_reasons ?? []) : DEFAULT_CREDIT_NOTE_REASONS)
     : isDebitNote
@@ -2093,7 +2209,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           paymentMethodId: prev.paymentMethodId || defaultPaymentMethodId,
           unitId: prev.unitId || lookupRows?.units?.[0]?.id || null,
           taxCategoryId: prev.taxCategoryId || defaultTaxCategory?.id || null,
-          documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
+          documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser
+            ? ((lookupRows?.document_kinds ?? []).some((row) => row.code === 'QUOTATION') ? 'QUOTATION' : 'SALES_ORDER')
+            : prev.documentKind,
         }));
         setLoadingBootstrap(false);
       }
@@ -2967,6 +3085,33 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       isFreeOperation: salesFreeItemsEnabled ? Boolean(form.draftIsFreeOperation) : false,
     };
 
+    const stockValidation = summarizeStockValidation([...cart, draftItem]);
+    if (stockValidation.blocked) {
+      const first = stockValidation.insufficientLines[0];
+      setSunatToast({
+        tone: 'bad',
+        title: 'Stock insuficiente',
+        detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+      });
+      return;
+    }
+
+    if (stockValidation.insufficientLines.length > 0 && allowNegativeStockEnabled) {
+      const first = stockValidation.insufficientLines[0];
+      setSunatToast({
+        tone: 'warn',
+        title: 'Venta permitida sin stock',
+        detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+      });
+    } else if (stockValidation.lowStockLines.length > 0) {
+      const first = stockValidation.lowStockLines[0];
+      setSunatToast({
+        tone: 'warn',
+        title: 'Alerta de stock bajo',
+        detail: `${first.description} tiene stock ${first.available.toFixed(3)} (umbral ${lowStockAlertThreshold}).`,
+      });
+    }
+
     setCart((prev) => {
       if (draftItem.isManual) {
         return [...prev, draftItem];
@@ -3626,7 +3771,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => ({
         ID: row.id,
-        Usuario: row.created_by_user_name ?? '',
+        Usuario: salesFlowMode === 'SELLER_TO_CASHIER'
+          ? resolveDocumentActorTrace(row).compact
+          : (row.created_by_user_name ?? ''),
         Documento: docKindLabelResolved(row.document_kind),
         Serie: row.series,
         Numero: row.number,
@@ -3911,6 +4058,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
+      const stockValidation = summarizeStockValidation(payloadItems);
+      if (stockValidation.blocked) {
+        const first = stockValidation.insufficientLines[0];
+        setSunatToast({
+          tone: 'bad',
+          title: 'Stock insuficiente',
+          detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+        });
+        setMessage('No se puede emitir porque la política de stock negativo está desactivada.');
+        setLoading(false);
+        return;
+      }
+
+      if (stockValidation.insufficientLines.length > 0 && allowNegativeStockEnabled) {
+        const first = stockValidation.insufficientLines[0];
+        setSunatToast({
+          tone: 'warn',
+          title: 'Emisión con stock negativo habilitada',
+          detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+        });
+      } else if (stockValidation.lowStockLines.length > 0) {
+        const first = stockValidation.lowStockLines[0];
+        setSunatToast({
+          tone: 'warn',
+          title: 'Stock bajo detectado',
+          detail: `${first.description} está en ${first.available.toFixed(3)} (umbral ${lowStockAlertThreshold}).`,
+        });
+      }
+
       const normalizedDocumentMetadata = {
         customer_address: form.customerAddress?.trim() || null,
         discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
@@ -4163,7 +4339,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       setMessage(
         salesFlowMode === 'SELLER_TO_CASHIER'
-          ? 'Pedido comercial generado. Caja puede convertirlo a nota de pedido o comprobante tributario.'
+          ? 'Solicitud comercial generada. Caja puede convertirla a nota de pedido o comprobante tributario.'
           : 'Documento comercial creado correctamente.'
       );
 
@@ -4224,6 +4400,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           title: 'Caja cerrada',
           detail: 'Debes aperturar caja antes de realizar la venta.',
         });
+      } else if (isInsufficientStockError(text)) {
+        setMessage('');
+        setSunatToast({
+          tone: 'bad',
+          title: 'Stock insuficiente',
+          detail: 'No hay stock disponible para completar la venta con la configuración actual.',
+        });
       } else {
         setMessage(text);
       }
@@ -4235,6 +4418,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   async function executeConvertDocument(source: CommercialDocumentListItem, targetDocumentKind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER') {
     if (!canConvertInCurrentMode) {
       setMessage('En este modo, solo caja puede convertir pedidos a boleta/factura.');
+      return;
+    }
+
+    if (isSeparatedMode && isCashierUser && !cashRegisterId) {
+      setMessage('Selecciona una estacion de caja activa antes de convertir.');
       return;
     }
 
@@ -5030,6 +5218,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </span>
               <span className="sales-mode-chip" style={{ background: reverseStockOnVoidEnabled ? '#dbeafe' : '#fef3c7', color: reverseStockOnVoidEnabled ? '#1e3a8a' : '#92400e' }}>
                 Reversa stock al anular: {reverseStockOnVoidEnabled ? 'Activa' : 'Inactiva'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: allowNegativeStockEnabled ? '#fef3c7' : '#fee2e2', color: allowNegativeStockEnabled ? '#92400e' : '#991b1b' }}>
+                Venta sin stock: {allowNegativeStockEnabled ? 'Permitida' : 'Bloqueada'}
               </span>
             </div>
           )}
@@ -6362,19 +6553,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'SALES_ORDER' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('SALES_ORDER'); setDocumentsPage(1); }} disabled={loadingDocuments}>Notas de pedido</button>
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'PENDING_CONVERSION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('PENDING_CONVERSION'); setDocumentsPage(1); }} disabled={loadingDocuments}>Pendientes por convertir</button>
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'CONVERTED' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('CONVERTED'); setDocumentsPage(1); }} disabled={loadingDocuments}>Ya convertidos</button>
-          <button
-            type="button"
-            className={`doc-kind-tab${documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? ' active' : ''}`}
-            onClick={() => {
-              const next = documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? '' : 'RESTAURANT';
-              setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: next }));
-              setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: next }));
-              setDocumentsPage(1);
-            }}
-            disabled={loadingDocuments}
-          >
-            Origen restaurante
-          </button>
+          {isRestaurantVertical && (
+            <button
+              type="button"
+              className={`doc-kind-tab${documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? ' active' : ''}`}
+              onClick={() => {
+                const next = documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? '' : 'RESTAURANT';
+                setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: next }));
+                setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: next }));
+                setDocumentsPage(1);
+              }}
+              disabled={loadingDocuments}
+            >
+              Origen restaurante
+            </button>
+          )}
         </div>
 
         {/* Advanced search filters */}
@@ -6485,16 +6678,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 <option value="CANCELED">Cancelado</option>
               </select>
             </label>
-            <label>
-              <span>Origen</span>
-              <select
-                value={documentFiltersDraft.sourceOrigin}
-                onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: event.target.value as '' | 'RESTAURANT' }))}
-              >
-                <option value="">Todos</option>
-                <option value="RESTAURANT">Restaurante</option>
-              </select>
-            </label>
+            {isRestaurantVertical && (
+              <label>
+                <span>Origen</span>
+                <select
+                  value={documentFiltersDraft.sourceOrigin}
+                  onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: event.target.value as '' | 'RESTAURANT' }))}
+                >
+                  <option value="">Todos</option>
+                  <option value="RESTAURANT">Restaurante</option>
+                </select>
+              </label>
+            )}
           </div>
           <div className="report-filter-actions">
             <button type="button" className="btn-apply" onClick={applyAdvancedDocumentFilters} disabled={loadingDocuments}>
@@ -6558,7 +6753,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 ].filter(Boolean).join(' ')}
               >
                 <td>{row.id}</td>
-                <td>{row.created_by_user_name?.trim() || '-'}</td>
+                <td>
+                  {(() => {
+                    if (salesFlowMode !== 'SELLER_TO_CASHIER') {
+                      return row.created_by_user_name?.trim() || '-';
+                    }
+
+                    const trace = resolveDocumentActorTrace(row);
+                    if (trace.compact === '-' || trace.seller.toUpperCase() === trace.issuer.toUpperCase()) {
+                      return trace.compact;
+                    }
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.08rem' }}>
+                        <span style={{ fontSize: '0.72rem', color: '#374151' }}>Solicita: {trace.seller}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#1f2937', fontWeight: 700 }}>Emite: {trace.issuer}</span>
+                      </div>
+                    );
+                  })()}
+                </td>
                 <td>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                     <span>{docKindLabelResolved(row.document_kind)} {row.series}-{row.number}</span>
@@ -6620,7 +6833,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           padding: '0.1rem 0.55rem', borderRadius: '9999px', fontSize: '0.72rem', fontWeight: 700,
                           background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7',
                         }}>
-                          ✓ Emitido desde {row.source_document_kind === 'SALES_ORDER' ? 'nota de pedido' : 'pedido comercial'}
+                          ✓ Emitido desde {row.source_document_kind === 'SALES_ORDER' ? 'nota de pedido' : 'solicitud comercial'}
                         </span>
                         <span style={{ fontSize: '0.72rem', color: '#4b5563' }}>
                           Origen #{row.source_document_id}

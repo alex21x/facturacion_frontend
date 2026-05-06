@@ -24,5 +24,6 @@ export type InventorySettings = {
   enable_graphical_dashboard: boolean;
   enable_location_control: boolean;
   allow_negative_stock: boolean;
+  low_stock_alert_threshold?: number;
   enforce_lot_for_tracked: boolean;
 };

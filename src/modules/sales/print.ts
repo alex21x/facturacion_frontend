@@ -1085,6 +1085,30 @@ function resolveCashVehicleSnapshot(doc: CashReportDocument): { plate: string; b
   return { plate, brand, model };
 }
 
+function resolveCashActorLabel(rawUser: string | null | undefined): { compact: string; seller: string; issuer: string } {
+  const raw = String(rawUser ?? '').trim();
+  if (!raw) {
+    return { compact: 'Solicita: N/A | Emite: N/A', seller: 'N/A', issuer: 'N/A' };
+  }
+
+  const match = raw.match(/^\s*Solicita:\s*(.*?)\s*\|\s*Emite:\s*(.*?)\s*$/i);
+  if (match) {
+    const seller = (match[1] || '').trim() || 'N/A';
+    const issuer = (match[2] || '').trim() || 'N/A';
+    return {
+      compact: `Solicita: ${seller} | Emite: ${issuer}`,
+      seller,
+      issuer,
+    };
+  }
+
+  return {
+    compact: `Solicita: ${raw} | Emite: ${raw}`,
+    seller: raw,
+    issuer: raw,
+  };
+}
+
 export function buildCashReportHtml80mm(
   data: CashReportPrintData,
   options?: { embedded?: boolean },
@@ -1119,7 +1143,8 @@ export function buildCashReportHtml80mm(
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
-    const sellerName = (doc.user_name || '').trim() || 'N/A';
+    const actor = resolveCashActorLabel(doc.user_name);
+    const sellerName = actor.compact;
     const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
     const vehiclePlate = vehicleSnapshot.plate;
     const vehicleBrand = vehicleSnapshot.brand;
@@ -1270,7 +1295,7 @@ export function buildCashReportHtml80mm(
           <div class="section">
             <div class="section-title">PRODUCTOS VENDIDOS</div>
             <table class="product-table">
-              <thead><tr><th>Producto</th><th>Usuario</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Solicita / Emite</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
               <tbody>
                 ${productRows}
                 <tr class="total-row"><td colspan="3">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
@@ -1318,7 +1343,8 @@ export function buildCashReportHtmlA4(
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
-    const sellerName = (doc.user_name || '').trim() || 'N/A';
+    const actor = resolveCashActorLabel(doc.user_name);
+    const sellerName = actor.compact;
     const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
     const vehiclePlate = vehicleSnapshot.plate;
     const vehicleBrand = vehicleSnapshot.brand;
@@ -1457,7 +1483,7 @@ export function buildCashReportHtmlA4(
           <div class="section">
             <div class="section-title">Productos vendidos en la sesion</div>
             <table class="cash-products-table">
-              <thead><tr><th style="width:${data.showVehicleInfo ? '19%' : '24%'}">Producto</th><th style="width:${data.showVehicleInfo ? '11%' : '13%'}">Usuario</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '8%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '10%' : '10%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:15%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '10%'}">Total</th><th class="ta-r" style="width:${data.showVehicleInfo ? '5%' : '10%'}">Margen</th></tr></thead>
+              <thead><tr><th style="width:${data.showVehicleInfo ? '19%' : '24%'}">Producto</th><th style="width:${data.showVehicleInfo ? '11%' : '13%'}">Solicita / Emite</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '8%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '10%' : '10%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:15%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '10%'}">Total</th><th class="ta-r" style="width:${data.showVehicleInfo ? '5%' : '10%'}">Margen</th></tr></thead>
               <tbody>
                 ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '10' : '9'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
                 <tr class="total-row"><td colspan="4">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>

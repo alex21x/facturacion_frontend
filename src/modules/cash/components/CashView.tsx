@@ -5,15 +5,14 @@ import {
   closeCashSession,
   createCashMovement,
   fetchCashMovements,
+  fetchCashCompanyProfile,
+  fetchCashSalesFeatureFlags,
   fetchCashSessions,
   fetchCurrentSession,
   openCashSession,
   fetchSessionDetail,
 } from '../api';
-import { buildCashReportHtml80mm, buildCashReportHtmlA4 } from '../../sales/print';
-import { fetchSalesLookups } from '../../sales/api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
-import { fetchCompanyProfile } from '../../company/api';
 import type { CompanyProfile } from '../../company/types';
 import type {
   CashMovement,
@@ -31,6 +30,14 @@ type CashViewProps = {
 };
 
 type MetricGlyphKind = 'status' | 'opening' | 'in' | 'out' | 'expected';
+
+async function loadCashPrintBuilders() {
+  const module = await import('../../sales/print');
+  return {
+    buildCashReportHtml80mm: module.buildCashReportHtml80mm,
+    buildCashReportHtmlA4: module.buildCashReportHtmlA4,
+  };
+}
 
 function MetricGlyph({ kind }: { kind: MetricGlyphKind }) {
   if (kind === 'status') {
@@ -163,6 +170,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
   }
 
   function formatReferenceValue(m: CashMovement): string {
+    if (m.reference_label && m.reference_label.trim() !== '') {
+      return m.reference_label;
+    }
+
     if (m.ref_type && ['COMMERCIAL_DOCUMENT', 'RECEIPT', 'INVOICE'].includes(m.ref_type.toUpperCase())) {
       if (m.document_number && m.document_number.trim() !== '') {
         return `${formatReferenceType(m.ref_type)} ${m.document_number}`;
@@ -173,13 +184,24 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     return `${formatReferenceType(m.ref_type)}${m.ref_id ? ` #${m.ref_id}` : ''}`;
   }
 
+  function resolveCashDocumentActorLabel(doc: SessionDocument): string {
+    const issuer = String(doc.issuer_user_name ?? doc.user_name ?? '').trim();
+    const seller = String(doc.origin_seller_user_name ?? '').trim();
+
+    if (seller && issuer && seller.toUpperCase() !== issuer.toUpperCase()) {
+      return `Solicita: ${seller} | Emite: ${issuer}`;
+    }
+
+    return issuer || seller || 'N/A';
+  }
+
   const soldProducts = useMemo(() => {
     const documents = sessionDetail?.documents ?? [];
     const grouped = new Map<string, {
       description: string;
       unitCode: string;
       paymentMethod: string;
-      sellerName: string;
+      actorLabel: string;
       documentKind: string;
       documentNumber: string;
       vehiclePlate: string;
@@ -195,11 +217,11 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const description = (item.description || '').trim() || 'Producto sin descripcion';
         const unitCode = (item.unit_code || '').trim() || '-';
         const paymentMethod = (doc.payment_method_name || '').trim() || '-';
-        const sellerName = (doc.user_name || '').trim() || 'N/A';
+        const actorLabel = resolveCashDocumentActorLabel(doc);
         const documentKind = (doc.document_kind_label || doc.document_kind || '').trim() || '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
         const vehiclePlate = (doc.vehicle_plate_snapshot || '').trim() || '-';
-        const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${sellerName.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${workshopMultiVehicleEnabled ? vehiclePlate.toLowerCase() : ''}`;
+        const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${actorLabel.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${workshopMultiVehicleEnabled ? vehiclePlate.toLowerCase() : ''}`;
         const current = grouped.get(key);
 
         if (current) {
@@ -215,7 +237,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
             description,
             unitCode,
             paymentMethod,
-            sellerName,
+            actorLabel,
             documentKind,
             documentNumber,
             vehiclePlate,
@@ -314,7 +336,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
 
     void (async () => {
       try {
-        const profile = await fetchCompanyProfile(accessToken);
+        const profile = await fetchCashCompanyProfile(accessToken);
         if (!cancelled) {
           setCompanyProfile(profile);
         }
@@ -335,10 +357,9 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
 
     void (async () => {
       try {
-        const lookups = await fetchSalesLookups(accessToken);
+        const flags = await fetchCashSalesFeatureFlags(accessToken);
         if (!cancelled) {
-          const enabled = Boolean((lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_WORKSHOP_MULTI_VEHICLE')?.is_enabled);
-          setWorkshopMultiVehicleEnabled(enabled);
+          setWorkshopMultiVehicleEnabled(flags.workshopMultiVehicleEnabled);
         }
       } catch {
         if (!cancelled) {
@@ -426,7 +447,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       difference: overrides?.difference ?? (summary.difference != null ? Number(summary.difference) : 0),
       paymentMethodBreakdown: paymentMethods as PaymentMethodBreakdown[],
       movements: (detail?.movements ?? []) as any,
-      documents: (detail?.documents ?? []) as any,
+      documents: (detail?.documents ?? []).map((doc) => ({
+        ...doc,
+        user_name: resolveCashDocumentActorLabel(doc),
+      })) as any,
       showVehicleInfo: workshopMultiVehicleEnabled,
       company: companyProfile
         ? {
@@ -441,13 +465,14 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     };
   }
 
-  function handlePrintReport80mm() {
+  async function handlePrintReport80mm() {
     const data = closeResponse
       ? buildPrintData(closeResponse.session, closeResponse.summary, closeResponse.sales_by_payment_method || [], sessionDetail)
       : sessionDetail
         ? buildPrintData(sessionDetail.session, sessionDetail.summary, sessionDetail.payment_method_breakdown, sessionDetail)
         : null;
     if (!data) return;
+    const { buildCashReportHtml80mm } = await loadCashPrintBuilders();
     setPreviewDialog({
       title: 'Ticket 80mm de caja',
       subtitle: 'Vista compacta del reporte de caja',
@@ -456,13 +481,14 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     });
   }
 
-  function handlePrintReportA4() {
+  async function handlePrintReportA4() {
     const data = closeResponse
       ? buildPrintData(closeResponse.session, closeResponse.summary, closeResponse.sales_by_payment_method || [], sessionDetail)
       : sessionDetail
         ? buildPrintData(sessionDetail.session, sessionDetail.summary, sessionDetail.payment_method_breakdown, sessionDetail)
         : null;
     if (!data) return;
+    const { buildCashReportHtmlA4 } = await loadCashPrintBuilders();
     setPreviewDialog({
       title: 'Reporte A4 de caja',
       subtitle: 'Vista detallada del reporte de caja',
@@ -486,6 +512,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       }
     }
     const printData = buildPrintData(detail.session, detail.summary, detail.payment_method_breakdown, detail);
+    const { buildCashReportHtml80mm, buildCashReportHtmlA4 } = await loadCashPrintBuilders();
     setPreviewDialog({
       title: mode === '80mm' ? 'Ticket 80mm de historial' : 'Reporte A4 de historial',
       subtitle: 'Sesion cerrada de caja',
@@ -521,6 +548,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
           closedAt: new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date()).replace(' ', 'T') + '-05:00',
         },
       );
+      const { buildCashReportHtmlA4 } = await loadCashPrintBuilders();
       setPreviewDialog({
         title: 'Previsualizacion de cierre de caja',
         subtitle: 'Revisa el reporte antes de confirmar el cierre.',
@@ -1144,7 +1172,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                       <tr style={{ borderBottom: '2px solid #ddd' }}>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Producto</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Tipo de pago</th>
-                                        <th style={{ textAlign: 'left', padding: '6px' }}>Vendedor</th>
+                                        <th style={{ textAlign: 'left', padding: '6px' }}>Solicita / Emite</th>
                                         <th style={{ textAlign: 'center', padding: '6px' }}>Unidad</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Cantidad</th>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Tipo comprobante</th>
@@ -1157,10 +1185,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                     </thead>
                                     <tbody>
                                       {soldProducts.map((row) => (
-                                        <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.sellerName}-${row.documentKind}-${row.documentNumber}-${row.vehiclePlate}`} style={{ borderBottom: '1px solid #eee' }}>
+                                        <tr key={`${row.description}-${row.unitCode}-${row.paymentMethod}-${row.actorLabel}-${row.documentKind}-${row.documentNumber}-${row.vehiclePlate}`} style={{ borderBottom: '1px solid #eee' }}>
                                           <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.description}</td>
                                           <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.paymentMethod}</td>
-                                          <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.sellerName}</td>
+                                          <td style={{ padding: '6px', whiteSpace: 'normal', wordBreak: 'break-word' }}>{row.actorLabel}</td>
                                           <td style={{ padding: '6px', textAlign: 'center' }}>{row.unitCode}</td>
                                           <td style={{ padding: '6px', textAlign: 'right' }}>{row.quantity.toFixed(3)}</td>
                                           <td style={{ padding: '6px' }}>{row.documentKind}</td>

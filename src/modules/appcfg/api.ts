@@ -15,6 +15,7 @@ import type {
   OperationalLimitsResponse,
   ReconcileStatsResponse,
   ResetAdminPasswordResponse,
+  RevealAdminPasswordResponse,
   UpdateCommerceSettingsPayload,
   UpdateOperationalLimitsPayload,
   CompanyCommerceAdminMatrixResponse,
@@ -303,6 +304,16 @@ export async function resetAdminCompanyPassword(
 ): Promise<ResetAdminPasswordResponse> {
   return apiClient.request<ResetAdminPasswordResponse>(`/api/appcfg/admin-companies/${companyId}/reset-admin-password`, {
     method: 'POST',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function revealAdminCompanyPassword(
+  accessToken: string,
+  companyId: number
+): Promise<RevealAdminPasswordResponse> {
+  return apiClient.request<RevealAdminPasswordResponse>(`/api/appcfg/admin-companies/${companyId}/reveal-admin-password`, {
+    method: 'GET',
     headers: authHeaders(accessToken),
   });
 }
