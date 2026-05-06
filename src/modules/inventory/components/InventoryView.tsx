@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
-import { createStockEntry } from '../../purchases/api';
 import {
+  createInventoryStockEntry,
   fetchInventoryLots,
   fetchInventoryProducts,
   fetchInventoryStock,
@@ -630,7 +630,7 @@ export function InventoryView({
 
     setAdjustmentSubmitting(true);
     try {
-      await createStockEntry(accessToken, {
+      await createInventoryStockEntry(accessToken, {
         warehouse_id: warehouseId,
         entry_type: 'ADJUSTMENT',
         notes: adjustmentNotes.trim(),

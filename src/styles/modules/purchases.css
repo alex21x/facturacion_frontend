@@ -1,5 +1,22 @@
 /* Purchases module styles: colocate purchases-specific layout and controls here. */
 
+.purchases-table-line-meta {
+  min-width: 0;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.35rem;
+}
+
+.purchases-table-line-meta .cell-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.purchases-lines-wrap tbody td .purchases-table-line-meta .sales-inline-check {
+  justify-content: flex-start;
+}
+
 .purchases-entry-row.has-line-tools .sales-field-product {
   grid-column: span 4;
 }

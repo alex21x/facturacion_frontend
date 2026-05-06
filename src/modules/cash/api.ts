@@ -1,4 +1,5 @@
 import { apiClient } from '../../shared/api/client';
+import type { CompanyProfile } from '../company/types';
 import type {
   CashMovement,
   CashSession,
@@ -11,6 +12,24 @@ import type {
 
 function authHeaders(accessToken: string): HeadersInit {
   return { Authorization: `Bearer ${accessToken}` };
+}
+
+function toAbsoluteAssetUrl(value: string | null | undefined): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) {
+    return raw;
+  }
+
+  const base = apiClient.baseUrl.replace(/\/+$/, '');
+  if (raw.startsWith('/')) {
+    return `${base}${raw}`;
+  }
+
+  return `${base}/${raw}`;
 }
 
 export async function fetchCashSessions(
@@ -111,4 +130,35 @@ export async function fetchSessionDetail(
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+}
+
+export async function fetchCashCompanyProfile(accessToken: string): Promise<CompanyProfile> {
+  const profile = await apiClient.request<CompanyProfile>('/api/appcfg/company-profile', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  return {
+    ...profile,
+    logo_url: toAbsoluteAssetUrl(profile.logo_url),
+  };
+}
+
+export async function fetchCashSalesFeatureFlags(
+  accessToken: string,
+): Promise<{ workshopMultiVehicleEnabled: boolean }> {
+  const lookups = await apiClient.request<{
+    commerce_features?: Array<{ feature_code?: string | null; is_enabled?: boolean | null }>;
+  }>('/api/sales/lookups', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  const workshopMultiVehicleEnabled = Boolean(
+    (lookups.commerce_features ?? []).find((row) => row.feature_code === 'SALES_WORKSHOP_MULTI_VEHICLE')?.is_enabled,
+  );
+
+  return {
+    workshopMultiVehicleEnabled,
+  };
 }

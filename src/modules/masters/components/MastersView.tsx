@@ -206,6 +206,44 @@ function isMasterAdvancedCommerceFeature(featureCode: string): boolean {
   ].includes(String(featureCode ?? '').toUpperCase());
 }
 
+function matchesCommerceTabFeature(row: { feature_code: string; feature_category_key?: string | null }, tabId: string): boolean {
+  if (tabId === 'all') {
+    return true;
+  }
+
+  const code = String(row.feature_code ?? '').trim().toUpperCase();
+  const category = commerceCategoryKey(row);
+  if (category !== tabId) {
+    return false;
+  }
+
+  if (tabId === 'restaurant') {
+    return code.startsWith('RESTAURANT_') || code.includes('_RESTAURANT_') || code.endsWith('_RESTAURANT');
+  }
+
+  if (tabId === 'sales') {
+    return code.startsWith('SALES_');
+  }
+
+  if (tabId === 'purchases') {
+    return code.startsWith('PURCHASES_');
+  }
+
+  if (tabId === 'inventory') {
+    return code.startsWith('INVENTORY_');
+  }
+
+  if (tabId === 'doc') {
+    return code.startsWith('DOC_') || code.includes('DOCUMENT');
+  }
+
+  if (tabId === 'product') {
+    return code.startsWith('PRODUCT_') || code.includes('_PRODUCT_') || code.startsWith('INVENTORY_PRODUCT_');
+  }
+
+  return true;
+}
+
 export function MastersView({ accessToken, branchId, warehouseId, currentUserRoleCode, activeVerticalCode }: MastersViewProps) {
   const [options, setOptions] = useState<MasterOptionsResponse | null>(null);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
@@ -458,10 +496,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       if (!matchesSearch) {
         return false;
       }
-      if (activeCommerceTab === 'all') {
-        return true;
-      }
-      return commerceCategoryKey(row) === activeCommerceTab;
+      return matchesCommerceTabFeature(row, activeCommerceTab);
     });
   }, [commerceFeatures, includesSearch, activeCommerceTab]);
 
@@ -531,9 +566,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   }, [currentUserRoleCode]);
 
   const COMMERCE_CATEGORY_TABS = useMemo(() => {
+    const isRestaurantVertical = (activeVerticalCode ?? '').trim().toUpperCase() === 'RESTAURANT';
     const categories = new Map<string, string>();
     for (const row of commerceFeatures) {
       const key = commerceCategoryKey(row);
+      if (key === 'restaurant' && !isRestaurantVertical) {
+        continue;
+      }
       if (!categories.has(key)) {
         categories.set(key, commerceCategoryLabel(row));
       }
@@ -545,7 +584,13 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         .map(([id, label]) => ({ id, label }))
         .sort((a, b) => a.label.localeCompare(b.label)),
     ];
-  }, [commerceFeatures]);
+  }, [commerceFeatures, activeVerticalCode]);
+
+  useEffect(() => {
+    if (!COMMERCE_CATEGORY_TABS.some((tab) => tab.id === activeCommerceTab)) {
+      setActiveCommerceTab('all');
+    }
+  }, [COMMERCE_CATEGORY_TABS, activeCommerceTab]);
 
   const canManagePriceTiers = isAdminUser;
 

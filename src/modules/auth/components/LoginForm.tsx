@@ -10,6 +10,7 @@ export function LoginForm({ onSubmit, isLoading }: LoginFormProps) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('Admin123*');
   const [deviceId, setDeviceId] = useState('CAJA-001');
+  const [showPassword, setShowPassword] = useState(false);
 
   return (
     <form
@@ -30,12 +31,33 @@ export function LoginForm({ onSubmit, isLoading }: LoginFormProps) {
 
       <label>
         Password
-        <input
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <input
+            type={showPassword ? 'text' : 'password'}
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            style={{ flex: 1, paddingRight: '2.2rem' }}
+          />
+          <button
+            type="button"
+            onClick={() => setShowPassword((v) => !v)}
+            title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+            style={{
+              position: 'absolute',
+              right: '0.4rem',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              padding: '0.2rem',
+              lineHeight: 1,
+              fontSize: '1rem',
+              color: '#666',
+            }}
+          >
+            {showPassword ? '🙈' : '👁️'}
+          </button>
+        </div>
       </label>
 
       <label>

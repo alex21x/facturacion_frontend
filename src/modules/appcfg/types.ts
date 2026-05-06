@@ -375,6 +375,10 @@ export type ResetAdminPasswordResponse = {
   message: string;
 };
 
+export type RevealAdminPasswordResponse =
+  | { available: true; username: string; email: string | null; password: string }
+  | { available: false; message: string };
+
 // ---- Admin commerce features matrix ----
 
 export type CompanyCommerceAdminMatrixCompany = {
@@ -407,6 +411,7 @@ export type InventorySettingsRecord = {
   enable_location_control: boolean;
   allow_negative_stock: boolean;
   enforce_lot_for_tracked: boolean;
+  low_stock_alert_threshold: number;
 };
 
 export type CompanyInventorySettingsAdminMatrixCompany = {

@@ -7,6 +7,7 @@ import {
   fetchCompanyRateLimitMatrix,
   fetchCompanyVerticalAdminMatrix,
   resetAdminCompanyPassword,
+  revealAdminCompanyPassword,
   updateCompanyCommerceAdminMatrix,
   updateCompanyInventorySettingsAdminMatrix,
   updateCompanyOperationalLimitMatrix,
@@ -170,6 +171,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [detailTab, setDetailTab] = useState<'general' | 'access' | 'security' | 'history'>('general');
   const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [resetPreviewByCompany, setResetPreviewByCompany] = useState<Record<number, ResetPreview>>({});
+  const [revealedPasswordByCompany, setRevealedPasswordByCompany] = useState<Record<number, { username: string; password: string } | null>>({});
+  const [revealLoading, setRevealLoading] = useState(false);
   const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetPasswordCopied, setResetPasswordCopied] = useState(false);
   const [adminUsernameTouched, setAdminUsernameTouched] = useState(false);
@@ -184,6 +187,25 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       return { ...prev, admin_username: suggested };
     });
   }, [adminUsernameTouched, createDraft.tax_id, createDraft.legal_name]);
+
+  async function doRevealAdminPassword(companyId: number) {
+    setRevealLoading(true);
+    try {
+      const result = await revealAdminCompanyPassword(accessToken, companyId);
+      if (result.available) {
+        setRevealedPasswordByCompany((prev) => ({
+          ...prev,
+          [companyId]: { username: result.username, password: result.password },
+        }));
+      } else {
+        setMessage(result.message);
+        setIsError(false);
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo obtener la contraseña');
+      setIsError(true);
+    } finally { setRevealLoading(false); }
+  }
 
   async function doResetAdminPassword(companyId: number, companyName: string) {
     if (!confirm(`¿Resetear la contraseña del administrador de "${companyName}"? Se generará una nueva contraseña temporal.`)) return;
@@ -1642,6 +1664,9 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       <div className="adm-section">
         <div className="adm-section-header">
           <h3>Configuración de inventario por empresa</h3>
+          <p style={{ margin: '0.35rem 0 0', color: '#64748b' }}>
+            Controla si la venta se bloquea por falta de stock o si se permite continuar con stock negativo.
+          </p>
         </div>
         <div className="adm-table-wrap">
           <table className="adm-table">
@@ -1657,8 +1682,9 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                 <th>Rep. avanzado</th>
                 <th>Dashboard gráf.</th>
                 <th>Ubic. control</th>
-                <th>Stock neg.</th>
+                <th>Permitir venta sin stock</th>
                 <th>Exigir lote</th>
+                <th>Umbral stock bajo</th>
                 <th>Acción</th>
               </tr>
             </thead>
@@ -1706,6 +1732,17 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                         />
                       </td>
                     ))}
+                    <td style={{ textAlign: 'center' }}>
+                      <input
+                        type="number"
+                        min={0}
+                        max={9999}
+                        style={{ width: '60px' }}
+                        value={s.low_stock_alert_threshold ?? 5}
+                        onChange={e => update({ low_stock_alert_threshold: Math.max(0, parseInt(e.target.value) || 0) })}
+                        disabled={loading}
+                      />
+                    </td>
                     <td>
                       <button
                         className="adm-btn adm-btn-primary"
@@ -1731,6 +1768,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         const selectedAssign = detailCompany.assignments.find((assignment) => assignment.vertical_code === selected);
         const isEnabled = Boolean(selectedAssign?.is_enabled);
         const resetPreview = resetPreviewByCompany[detailCompany.company_id];
+        const revealedPassword = revealedPasswordByCompany[detailCompany.company_id];
 
         const closeDrawer = () => { setDetailDrawerOpen(false); setDetailCompanyId(null); };
 
@@ -1824,34 +1862,61 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                 {detailTab === 'security' && (
                   <div className="adm-drawer-grid">
                     <div style={{ gridColumn: '1 / -1' }}>
-                      <span className="adm-drawer-field-label">Seguridad</span>
-                      <div className="adm-drawer-actions">
+                      <span className="adm-drawer-field-label">Contraseña actual del admin</span>
+                      <div className="adm-drawer-actions" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {/* Reveal current password */}
+                        {!revealedPassword ? (
+                          <button
+                            className="adm-btn adm-btn-secondary"
+                            type="button"
+                            disabled={revealLoading || !detailCompany.admin_username}
+                            title={detailCompany.admin_username ? 'Ver la última contraseña conocida sin resetear' : 'Esta empresa no tiene admin registrado'}
+                            onClick={() => void doRevealAdminPassword(detailCompany.company_id)}
+                          >
+                            {revealLoading ? 'Consultando...' : '👁️ Ver contraseña'}
+                          </button>
+                        ) : (
+                          <div className="adm-credential-cell" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            <span className="adm-badge adm-badge-neutral">{revealedPassword.username}</span>
+                            <code style={{ background: '#f0f4ff', padding: '0.2rem 0.5rem', borderRadius: '4px', fontFamily: 'monospace', fontWeight: 600 }}>
+                              {revealedPassword.password}
+                            </code>
+                            <button
+                              className="adm-btn adm-btn-secondary"
+                              type="button"
+                              style={{ fontSize: '0.75rem' }}
+                              onClick={() => setRevealedPasswordByCompany((prev) => ({ ...prev, [detailCompany.company_id]: null }))}
+                            >
+                              Ocultar
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Reset password (last resort) */}
                         <button
                           className="adm-btn adm-btn-secondary"
                           type="button"
                           disabled={loading || !detailCompany.admin_username}
-                          title={detailCompany.admin_username ? 'Generar nueva contraseña para el admin' : 'Esta empresa no tiene admin registrado'}
+                          title={detailCompany.admin_username ? 'Generar nueva contraseña para el admin (último recurso)' : 'Esta empresa no tiene admin registrado'}
                           onClick={() => void doResetAdminPassword(detailCompany.company_id, detailCompany.legal_name)}
                         >
-                          Reset pass
+                          🔄 Reset pass
                         </button>
-                        <div className="adm-credential-cell">
-                          <span className="adm-badge adm-badge-neutral">Credencial oculta por defecto</span>
-                          {resetPreview && (
-                            <button
-                              className="adm-btn adm-btn-secondary"
-                              type="button"
-                              disabled={loading}
-                              onClick={() => {
-                                setResetPasswordCopied(false);
-                                setShowResetPassword(false);
-                                setResetModal(resetPreview);
-                              }}
-                            >
-                              Ver clave temporal
-                            </button>
-                          )}
-                        </div>
+
+                        {resetPreview && (
+                          <button
+                            className="adm-btn adm-btn-secondary"
+                            type="button"
+                            disabled={loading}
+                            onClick={() => {
+                              setResetPasswordCopied(false);
+                              setShowResetPassword(false);
+                              setResetModal(resetPreview);
+                            }}
+                          >
+                            Ver clave del último reset
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
