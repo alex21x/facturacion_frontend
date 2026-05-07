@@ -6,7 +6,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-facturacion}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-facturacion}
     volumes:
-      - postgres_data:/var/lib/postgresql
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-facturacion} -d ${POSTGRES_DB:-facturacion_v2}"]
       interval: 10s
