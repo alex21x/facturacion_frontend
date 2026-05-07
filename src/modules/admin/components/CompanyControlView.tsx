@@ -1,6 +1,10 @@
 ﻿import { useEffect, useMemo, useState } from 'react';
 import {
   createAdminCompany,
+  downloadSystemDatabaseBackup,
+  downloadSystemDatabaseBackupFile,
+  listSystemDatabaseBackups,
+  restoreSystemDatabaseBackup,
   fetchCompanyCommerceAdminMatrix,
   fetchCompanyInventorySettingsAdminMatrix,
   fetchCompanyOperationalLimitMatrix,
@@ -29,7 +33,6 @@ import type {
 function buildCommerceFeatureCodes(matrix: CompanyCommerceAdminMatrixResponse | null): string[] {
   const apiCodes = matrix?.feature_codes ?? [];
   const companyCodes = new Set<string>();
-
   for (const company of matrix?.companies ?? []) {
     for (const code of Object.keys(company.features ?? {})) {
       companyCodes.add(code);
@@ -90,8 +93,16 @@ type ResetPreview = {
   generatedAtLabel: string;
 };
 
+type BackupHistoryRow = {
+  file_name: string;
+  size_bytes: number;
+  size_label: string;
+  generated_at: string;
+};
+
 export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const PAGE_SIZE = 12;
+  const BACKUP_PAGE_SIZE = 10;
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [activePanel, setActivePanel] = useState<AdminPanelKey>('companies');
@@ -178,6 +189,16 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [adminUsernameTouched, setAdminUsernameTouched] = useState(false);
   const [debouncedSearchText, setDebouncedSearchText] = useState('');
   const [currentCompanyPage, setCurrentCompanyPage] = useState(1);
+  const [backupRows, setBackupRows] = useState<BackupHistoryRow[]>([]);
+  const [backupHistoryLoading, setBackupHistoryLoading] = useState(false);
+  const [selectedBackupCompanyId, setSelectedBackupCompanyId] = useState<number | null>(null);
+  const [backupCompanyQuery, setBackupCompanyQuery] = useState('');
+  const [backupCompanyDropdownOpen, setBackupCompanyDropdownOpen] = useState(false);
+  const [restoreBackupFile, setRestoreBackupFile] = useState<File | null>(null);
+  const [restoreInputKey, setRestoreInputKey] = useState(0);
+  const [backupHistoryPage, setBackupHistoryPage] = useState(1);
+  const [backupHistoryTotal, setBackupHistoryTotal] = useState(0);
+  const [backupHistoryLastPage, setBackupHistoryLastPage] = useState(1);
 
   useEffect(() => {
     if (adminUsernameTouched) return;
@@ -339,6 +360,13 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setBulkOpWarehouses(operationalResult.defaults.max_warehouses_enabled);
       setBulkOpCash(operationalResult.defaults.max_cash_registers_enabled);
       setBulkOpCashPerWarehouse(operationalResult.defaults.max_cash_registers_per_warehouse);
+
+      setSelectedBackupCompanyId((prev) => {
+        if (prev !== null && verticalResult.companies.some((company) => company.company_id === prev)) {
+          return prev;
+        }
+        return verticalResult.companies[0]?.company_id ?? null;
+      });
     } catch (err) {
       setMessage(handleApiError(err, 'No se pudo cargar el control de empresas'));
       setIsError(true);
@@ -353,6 +381,29 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   }
 
   useEffect(() => { void loadMatrix(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (selectedBackupCompanyId === null) {
+      setBackupRows([]);
+      setBackupHistoryTotal(0);
+      setBackupHistoryLastPage(1);
+      return;
+    }
+    void refreshBackupHistory(backupHistoryPage);
+  }, [accessToken, selectedBackupCompanyId, backupHistoryPage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (selectedBackupCompanyId === null) {
+      setBackupCompanyQuery('');
+      return;
+    }
+
+    const company = (matrix?.companies ?? []).find((row) => row.company_id === selectedBackupCompanyId);
+    if (!company) {
+      return;
+    }
+
+    setBackupCompanyQuery(company.legal_name + (company.tax_id ? ` (${company.tax_id})` : ''));
+  }, [selectedBackupCompanyId, matrix?.companies]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -718,6 +769,130 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     }
   }
 
+  async function refreshBackupHistory(targetPage = backupHistoryPage) {
+    if (selectedBackupCompanyId === null) {
+      setBackupRows([]);
+      setBackupHistoryTotal(0);
+      setBackupHistoryLastPage(1);
+      return;
+    }
+
+    setBackupHistoryLoading(true);
+    try {
+      const result = await listSystemDatabaseBackups(
+        accessToken,
+        selectedBackupCompanyId,
+        targetPage,
+        BACKUP_PAGE_SIZE
+      );
+      setBackupRows(result.backups);
+      setBackupHistoryPage(result.pagination.page);
+      setBackupHistoryTotal(result.pagination.total);
+      setBackupHistoryLastPage(result.pagination.last_page);
+    } catch (err) {
+      setMessage(handleApiError(err, 'No se pudo cargar el historial de respaldos.'));
+      setIsError(true);
+    } finally {
+      setBackupHistoryLoading(false);
+    }
+  }
+
+  async function exportSystemBackup() {
+    if (selectedBackupCompanyId === null) {
+      setMessage('Selecciona una empresa para generar su respaldo.');
+      setIsError(true);
+      return;
+    }
+
+    setLoading(true);
+    setMessage('');
+    setIsError(false);
+    try {
+      const { blob, fileName } = await downloadSystemDatabaseBackup(accessToken, selectedBackupCompanyId);
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(downloadUrl);
+      setMessage(`Respaldo generado y descargado: ${fileName}`);
+      await refreshBackupHistory(1);
+    } catch (err) {
+      setMessage(handleApiError(err, 'No se pudo exportar el respaldo de base de datos.'));
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function downloadExistingBackup(fileName: string) {
+    if (selectedBackupCompanyId === null) {
+      setMessage('Selecciona una empresa para descargar su respaldo.');
+      setIsError(true);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { blob, fileName: resolvedFileName } = await downloadSystemDatabaseBackupFile(
+        accessToken,
+        selectedBackupCompanyId,
+        fileName
+      );
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = downloadUrl;
+      anchor.download = resolvedFileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      window.URL.revokeObjectURL(downloadUrl);
+      setMessage(`Respaldo descargado: ${resolvedFileName}`);
+      setIsError(false);
+    } catch (err) {
+      setMessage(handleApiError(err, 'No se pudo descargar el respaldo seleccionado.'));
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function restoreCompanyBackup() {
+    if (selectedBackupCompanyId === null) {
+      setMessage('Selecciona una empresa para restaurar su respaldo.');
+      setIsError(true);
+      return;
+    }
+
+    if (!restoreBackupFile) {
+      setMessage('Selecciona un archivo .sql para restaurar.');
+      setIsError(true);
+      return;
+    }
+
+    if (!confirm('Esta accion reemplazara los datos actuales de la empresa seleccionada. ¿Deseas continuar?')) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await restoreSystemDatabaseBackup(accessToken, selectedBackupCompanyId, restoreBackupFile);
+      setMessage(result.message || 'Restauracion completada correctamente.');
+      setIsError(false);
+      setRestoreBackupFile(null);
+      setRestoreInputKey((prev) => prev + 1);
+      await refreshBackupHistory(1);
+      await loadMatrix();
+    } catch (err) {
+      setMessage(handleApiError(err, 'No se pudo restaurar el respaldo seleccionado.'));
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   const totalCompanies  = matrix?.companies.length ?? 0;
   const activeCompanies = matrix?.companies.filter(c => c.active_vertical_code).length ?? 0;
   const totalVerticals  = matrix?.verticals.length ?? 0;
@@ -849,6 +1024,176 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         <div className={`adm-notice ${isError ? 'adm-notice-err' : 'adm-notice-ok'}`}>
           {message}
         </div>
+      )}
+
+      {activePanel === 'companies' && (
+      <div className="adm-card">
+        <div className="adm-card-header">
+          <h3>Respaldo de base de datos</h3>
+          <div className="adm-card-header-actions">
+            <button className="adm-btn adm-btn-secondary" type="button" onClick={() => void refreshBackupHistory()} disabled={loading || backupHistoryLoading}>
+              Refrescar historial
+            </button>
+          </div>
+        </div>
+        <div className="adm-card-body adm-backup-body">
+          <p className="adm-backup-intro">
+            Genera un respaldo por empresa, descarga historicos y restaura cuando sea necesario.
+          </p>
+          <div className="adm-backup-selector-row">
+            <div className="adm-autocomplete-wrap adm-backup-company-autocomplete">
+              <input
+                className="adm-input"
+                placeholder="Buscar empresa por nombre o RUC para respaldo..."
+                value={backupCompanyQuery}
+                disabled={loading || backupHistoryLoading || !matrix}
+                autoComplete="off"
+                onChange={(e) => {
+                  setBackupCompanyQuery(e.target.value);
+                  setBackupCompanyDropdownOpen(true);
+                  if (!e.target.value.trim()) {
+                    setSelectedBackupCompanyId(null);
+                    setBackupHistoryPage(1);
+                  }
+                }}
+                onFocus={() => setBackupCompanyDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setBackupCompanyDropdownOpen(false), 150)}
+              />
+              {backupCompanyDropdownOpen && matrix && (() => {
+                const q = backupCompanyQuery.trim().toLowerCase();
+                const filtered = q
+                  ? matrix.companies.filter((company) =>
+                      company.legal_name.toLowerCase().includes(q)
+                      || (company.trade_name ?? '').toLowerCase().includes(q)
+                      || (company.tax_id ?? '').toLowerCase().includes(q)
+                    )
+                  : matrix.companies;
+
+                if (filtered.length === 0) {
+                  return null;
+                }
+
+                return (
+                  <div className="adm-autocomplete-list">
+                    {filtered.slice(0, 20).map((company) => (
+                      <button
+                        key={`backup-company-row-${company.company_id}`}
+                        type="button"
+                        className={`adm-autocomplete-item${selectedBackupCompanyId === company.company_id ? ' adm-autocomplete-item--active' : ''}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setSelectedBackupCompanyId(company.company_id);
+                          setBackupHistoryPage(1);
+                          setBackupCompanyQuery(company.legal_name + (company.tax_id ? ` (${company.tax_id})` : ''));
+                          setBackupCompanyDropdownOpen(false);
+                        }}
+                      >
+                        <span className="adm-autocomplete-item__name">{company.legal_name}</span>
+                        {company.trade_name && <span className="adm-autocomplete-item__sub">{company.trade_name}</span>}
+                        {company.tax_id && <span className="adm-autocomplete-item__ruc">{company.tax_id}</span>}
+                      </button>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+
+          <div className="adm-backup-actions-row">
+            <button className="adm-btn adm-btn-secondary" type="button" onClick={() => void exportSystemBackup()} disabled={loading || selectedBackupCompanyId === null}>
+              Exportar backup de empresa
+            </button>
+            <div className="adm-backup-file-picker">
+              <input
+                id="adm-backup-restore-file"
+                key={restoreInputKey}
+                className="adm-backup-file-native"
+                type="file"
+                accept=".sql,text/plain"
+                onChange={(e) => setRestoreBackupFile(e.target.files?.[0] ?? null)}
+                disabled={loading || selectedBackupCompanyId === null}
+              />
+              <label
+                htmlFor="adm-backup-restore-file"
+                className="adm-btn adm-btn-secondary"
+                aria-disabled={loading || selectedBackupCompanyId === null}
+              >
+                Seleccionar .sql
+              </label>
+              <span className="adm-backup-file-name" title={restoreBackupFile?.name ?? ''}>
+                {restoreBackupFile?.name ?? 'Ningun archivo seleccionado'}
+              </span>
+            </div>
+            <button className="adm-btn adm-btn-danger" type="button" onClick={() => void restoreCompanyBackup()} disabled={loading || selectedBackupCompanyId === null || !restoreBackupFile}>
+              Restaurar backup seleccionado
+            </button>
+          </div>
+
+          <div className="adm-backup-guidance">
+            <p><strong>Local:</strong> exporta, descarga y restaura desde este mismo panel con la empresa seleccionada.</p>
+            <p><strong>Nube:</strong> funciona igual desde Portal Admin porque la operacion se ejecuta en backend Laravel.</p>
+            <p><strong>Importante:</strong> restaura solo backups de la misma empresa para evitar inconsistencias.</p>
+          </div>
+
+          <div className="adm-table-wrap">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th>Archivo</th>
+                  <th>Tamano</th>
+                  <th>Generado</th>
+                  <th>Accion</th>
+                </tr>
+              </thead>
+              <tbody>
+                {backupRows.length === 0 && (
+                  <tr>
+                    <td colSpan={4}>{backupHistoryLoading ? 'Cargando historial...' : 'No hay respaldos disponibles aun.'}</td>
+                  </tr>
+                )}
+                {backupRows.map((row) => (
+                  <tr key={row.file_name}>
+                    <td style={{ fontFamily: 'monospace' }}>{row.file_name}</td>
+                    <td>{row.size_label}</td>
+                    <td>{new Intl.DateTimeFormat('es-PE', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Lima' }).format(new Date(row.generated_at))}</td>
+                    <td>
+                      <button
+                        className="adm-btn adm-btn-primary"
+                        type="button"
+                        disabled={loading}
+                        onClick={() => void downloadExistingBackup(row.file_name)}
+                      >
+                        Descargar
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="adm-pagination">
+            <button
+              className="adm-btn adm-btn-secondary"
+              type="button"
+              disabled={backupHistoryLoading || backupHistoryPage <= 1}
+              onClick={() => setBackupHistoryPage((prev) => Math.max(1, prev - 1))}
+            >
+              Anterior
+            </button>
+            <span className="adm-pagination__meta">
+              Pagina {backupHistoryPage} de {backupHistoryLastPage} ({backupHistoryTotal} respaldos)
+            </span>
+            <button
+              className="adm-btn adm-btn-secondary"
+              type="button"
+              disabled={backupHistoryLoading || backupHistoryPage >= backupHistoryLastPage}
+              onClick={() => setBackupHistoryPage((prev) => Math.min(backupHistoryLastPage, prev + 1))}
+            >
+              Siguiente
+            </button>
+          </div>
+        </div>
+      </div>
       )}
 
       {activePanel === 'companies' && (

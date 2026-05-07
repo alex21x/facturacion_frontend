@@ -43,11 +43,16 @@ export async function updateCompanyProfile(
   accessToken: string,
   payload: UpdateCompanyProfilePayload
 ): Promise<CompanyProfile> {
-  return apiClient.request<CompanyProfile>('/api/appcfg/company-profile', {
+  const profile = await apiClient.request<CompanyProfile>('/api/appcfg/company-profile', {
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+
+  return {
+    ...profile,
+    logo_url: toAbsoluteAssetUrl(profile.logo_url),
+  };
 }
 
 export async function uploadCompanyLogo(

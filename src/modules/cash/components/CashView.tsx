@@ -27,6 +27,7 @@ import type {
 type CashViewProps = {
   accessToken: string;
   cashRegisterId: number | null;
+  salesFlowMode?: 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
 };
 
 type MetricGlyphKind = 'status' | 'opening' | 'in' | 'out' | 'expected';
@@ -91,7 +92,7 @@ function MetricGlyph({ kind }: { kind: MetricGlyphKind }) {
   );
 }
 
-export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
+export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_CASHIER' }: CashViewProps) {
   const [activeTab, setActiveTab] = useState<'sesion' | 'historial'>('sesion');
   const [currentSession, setCurrentSession] = useState<CashSession | null>(null);
   const [movements, setMovements] = useState<CashMovement[]>([]);
@@ -132,6 +133,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
   const [movAmount, setMovAmount] = useState('');
   const [movDescription, setMovDescription] = useState('');
   const [submittingMov, setSubmittingMov] = useState(false);
+  const [exportingCashReport, setExportingCashReport] = useState(false);
 
   const totalIn = useMemo(
     () => movements.filter((m) => m.movement_type === 'IN').reduce((a, m) => a + Number(m.amount), 0),
@@ -188,6 +190,11 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     const issuer = String(doc.issuer_user_name ?? doc.user_name ?? '').trim();
     const seller = String(doc.origin_seller_user_name ?? '').trim();
 
+    // Only separated mode distinguishes requester vs issuer in UI labels.
+    if (salesFlowMode !== 'SELLER_TO_CASHIER') {
+      return issuer || seller || 'N/A';
+    }
+
     if (seller && issuer && seller.toUpperCase() !== issuer.toUpperCase()) {
       return `Solicita: ${seller} | Emite: ${issuer}`;
     }
@@ -195,8 +202,24 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     return issuer || seller || 'N/A';
   }
 
-  const soldProducts = useMemo(() => {
-    const documents = sessionDetail?.documents ?? [];
+  function buildSoldProductsFromDetail(detail: SessionDetailResponse): Array<{
+    description: string;
+    unitCode: string;
+    paymentMethod: string;
+    actorLabel: string;
+    documentKind: string;
+    documentNumber: string;
+    vehiclePlate: string;
+    quantity: number;
+    netAmount: number;
+    grossAmount: number;
+    costAmount: number;
+    marginAmount: number;
+    marginPercent: number;
+    marginAmountCommercial: number;
+    marginPercentCommercial: number;
+    marginSource: 'REAL' | 'ESTIMATED' | 'MIXED';
+  }> {
     const grouped = new Map<string, {
       description: string;
       unitCode: string;
@@ -206,13 +229,15 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
       documentNumber: string;
       vehiclePlate: string;
       quantity: number;
-      amount: number;
+      netAmount: number;
+      grossAmount: number;
       costAmount: number;
       marginAmount: number;
+      marginAmountCommercial: number;
       marginSource: 'REAL' | 'ESTIMATED' | 'MIXED';
     }>();
 
-    for (const doc of documents) {
+    for (const doc of detail.documents ?? []) {
       for (const item of doc.items ?? []) {
         const description = (item.description || '').trim() || 'Producto sin descripcion';
         const unitCode = (item.unit_code || '').trim() || '-';
@@ -221,14 +246,18 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
         const documentKind = (doc.document_kind_label || doc.document_kind || '').trim() || '-';
         const documentNumber = (doc.document_number || '').trim() || '-';
         const vehiclePlate = (doc.vehicle_plate_snapshot || '').trim() || '-';
+        const lineNetAmount = Number(item.line_subtotal ?? item.line_total ?? 0);
+        const lineGrossAmount = Number(item.line_total || 0);
         const key = `${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${actorLabel.toLowerCase()}__${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${workshopMultiVehicleEnabled ? vehiclePlate.toLowerCase() : ''}`;
         const current = grouped.get(key);
 
         if (current) {
           current.quantity += Number(item.quantity || 0);
-          current.amount += Number(item.line_total || 0);
+          current.netAmount += lineNetAmount;
+          current.grossAmount += lineGrossAmount;
           current.costAmount += Number(item.cost_total || 0);
-          current.marginAmount += Number(item.margin_total || 0);
+          current.marginAmount += Number(item.margin_total_net ?? item.margin_total ?? 0);
+          current.marginAmountCommercial += Number(item.margin_total_commercial ?? 0);
           if ((item.margin_source || 'ESTIMATED') !== current.marginSource) {
             current.marginSource = 'MIXED';
           }
@@ -242,9 +271,11 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
             documentNumber,
             vehiclePlate,
             quantity: Number(item.quantity || 0),
-            amount: Number(item.line_total || 0),
+            netAmount: lineNetAmount,
+            grossAmount: lineGrossAmount,
             costAmount: Number(item.cost_total || 0),
-            marginAmount: Number(item.margin_total || 0),
+            marginAmount: Number(item.margin_total_net ?? item.margin_total ?? 0),
+            marginAmountCommercial: Number(item.margin_total_commercial ?? 0),
             marginSource: (item.margin_source || 'ESTIMATED') as 'REAL' | 'ESTIMATED',
           });
         }
@@ -254,9 +285,153 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
     return Array.from(grouped.values())
       .map((row) => ({
         ...row,
-        marginPercent: row.amount > 0 ? (row.marginAmount / row.amount) * 100 : 0,
+        marginPercent: row.netAmount > 0 ? (row.marginAmount / row.netAmount) * 100 : 0,
+        marginPercentCommercial: row.grossAmount > 0 ? (row.marginAmountCommercial / row.grossAmount) * 100 : 0,
       }))
-      .sort((a, b) => b.amount - a.amount);
+      .sort((a, b) => b.netAmount - a.netAmount);
+  }
+
+  async function exportCashReportXlsx(detail: SessionDetailResponse, detailMode: 'GENERAL' | 'DETAILED') {
+    const XLSX = await import('xlsx');
+    const workbook = XLSX.utils.book_new();
+
+    const summaryRows = [
+      { Campo: 'Sesion', Valor: `#${detail.session.id}` },
+      { Campo: 'Caja', Valor: detail.session.cash_register_name ?? detail.session.cash_register_code ?? '-' },
+      { Campo: 'Usuario', Valor: detail.session.user_name ?? '-' },
+      { Campo: 'Apertura', Valor: detail.session.opened_at ?? '' },
+      { Campo: 'Cierre', Valor: detail.session.closed_at ?? '' },
+      { Campo: 'Saldo Inicial', Valor: Number(detail.session.opening_balance ?? 0) },
+      { Campo: 'Entradas', Valor: Number(detail.summary.total_in ?? 0) },
+      { Campo: 'Salidas', Valor: Number(detail.summary.total_out ?? 0) },
+      { Campo: 'Saldo Esperado', Valor: Number(detail.session.expected_balance ?? 0) },
+      { Campo: 'Saldo Cierre', Valor: Number(detail.session.closing_balance ?? 0) },
+      { Campo: 'Diferencia', Valor: Number(detail.summary.difference ?? 0) },
+    ];
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'ResumenCaja');
+
+    const paymentRows = (detail.payment_method_breakdown ?? []).map((row) => ({
+      FormaPago: row.payment_method_name?.trim() ? row.payment_method_name : '-',
+      Cantidad: row.document_count,
+      Monto: row.total_amount,
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(paymentRows), 'VentasPorPago');
+
+    const movementRows = (detail.movements ?? []).map((row) => ({
+      ID: row.id,
+      Tipo: row.movement_type === 'IN' ? 'Ingreso' : 'Egreso',
+      Monto: Number(row.amount ?? 0),
+      Descripcion: row.description ?? '',
+      ReferenciaTipo: row.ref_type ?? '',
+      ReferenciaId: row.ref_id ?? '',
+      Usuario: row.user_name ?? '-',
+      FechaHora: row.movement_at ?? '',
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(movementRows), 'Movimientos');
+
+    const documentRows = (detail.documents ?? []).map((doc) => ({
+      ID: doc.id,
+      Documento: doc.document_number,
+      Tipo: doc.document_kind_label ?? doc.document_kind,
+      Cliente: doc.customer_name,
+      Solicita: String(doc.origin_seller_user_name ?? doc.user_name ?? '').trim() || '-',
+      Emite: String(doc.issuer_user_name ?? doc.user_name ?? '').trim() || '-',
+      Actor: resolveCashDocumentActorLabel(doc),
+      FormaPago: doc.payment_method_name ?? '-',
+      Estado: doc.status,
+      Vehiculo: [doc.vehicle_plate_snapshot, doc.vehicle_brand_snapshot, doc.vehicle_model_snapshot]
+        .map((part) => String(part ?? '').trim())
+        .filter((part) => part !== '')
+        .join(' | '),
+      Total: Number(doc.total ?? 0),
+      FechaHora: doc.created_at,
+    }));
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(documentRows), 'Comprobantes');
+
+    if (detailMode === 'DETAILED') {
+      const itemRows: Array<Record<string, unknown>> = [];
+      (detail.documents ?? []).forEach((doc) => {
+        (doc.items ?? []).forEach((item) => {
+          itemRows.push({
+            Documento: doc.document_number,
+            Tipo: doc.document_kind_label ?? doc.document_kind,
+            Cliente: doc.customer_name,
+            Actor: resolveCashDocumentActorLabel(doc),
+            FormaPago: doc.payment_method_name ?? '-',
+            Estado: doc.status,
+            Producto: item.description,
+            Unidad: item.unit_code,
+            Cantidad: Number(item.quantity ?? 0),
+            PrecioUnitario: Number(item.unit_price ?? 0),
+            SubtotalNeto: Number(item.line_subtotal ?? item.line_total ?? 0),
+            CostoUnitario: Number(item.unit_cost ?? 0),
+            CostoTotal: Number(item.cost_total ?? 0),
+            MargenTotal: Number(item.margin_total_net ?? item.margin_total ?? 0),
+            MargenPorcentaje: Number(item.margin_percent_net ?? item.margin_percent ?? 0),
+            MargenComercial: Number(item.margin_total_commercial ?? 0),
+            MargenComercialPct: Number(item.margin_percent_commercial ?? 0),
+            TotalLinea: Number(item.line_total ?? 0),
+          });
+        });
+      });
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(itemRows), 'DetalleItems');
+
+      const productRows = buildSoldProductsFromDetail(detail).map((row) => ({
+        Producto: row.description,
+        Unidad: row.unitCode,
+        FormaPago: row.paymentMethod,
+        Actor: row.actorLabel,
+        DocumentoTipo: row.documentKind,
+        DocumentoNumero: row.documentNumber,
+        Vehiculo: workshopMultiVehicleEnabled ? row.vehiclePlate : '',
+        Cantidad: row.quantity,
+        VentaNeta: row.netAmount,
+        VentaBruta: row.grossAmount,
+        Costo: row.costAmount,
+        Margen: row.marginAmount,
+        MargenPct: row.marginPercent,
+        MargenComercial: row.marginAmountCommercial,
+        MargenComercialPct: row.marginPercentCommercial,
+        FuenteMargen: row.marginSource,
+      }));
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(productRows), 'DetalleProductos');
+    }
+
+    const filePrefix = detailMode === 'DETAILED' ? 'reporte_caja_detallado' : 'reporte_caja_general';
+    const fileName = `${filePrefix}_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  }
+
+  async function handleExportCashReport(detailMode: 'GENERAL' | 'DETAILED', sessionId?: number | null) {
+    const resolvedSessionId = Number(sessionId ?? sessionDetail?.session?.id ?? currentSession?.id ?? 0);
+    if (!resolvedSessionId) {
+      setIsError(true);
+      setMessage('No se pudo identificar la sesion para exportar el reporte.');
+      return;
+    }
+
+    setExportingCashReport(true);
+    setIsError(false);
+    setMessage('');
+    try {
+      const detail = sessionDetail?.session?.id === resolvedSessionId
+        ? sessionDetail
+        : await fetchSessionDetail(accessToken, resolvedSessionId);
+      await exportCashReportXlsx(detail, detailMode);
+    } catch (error) {
+      setIsError(true);
+      setMessage(error instanceof Error ? error.message : 'No se pudo exportar el reporte de caja.');
+    } finally {
+      setExportingCashReport(false);
+    }
+  }
+
+  const soldProducts = useMemo(() => {
+    if (!sessionDetail) {
+      return [];
+    }
+
+    return buildSoldProductsFromDetail(sessionDetail);
   }, [sessionDetail, workshopMultiVehicleEnabled]);
 
   async function loadCurrentSession() {
@@ -1016,6 +1191,22 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                     <button className="cash-btn cash-btn-soft" type="button" onClick={handlePrintReportA4}>
                       📄 Formato A4
                     </button>
+                    <button
+                      className="cash-btn cash-btn-soft"
+                      type="button"
+                      onClick={() => void handleExportCashReport('GENERAL', closeResponse.session.id)}
+                      disabled={exportingCashReport}
+                    >
+                      {exportingCashReport ? 'Exportando...' : '⬇ XLSX General'}
+                    </button>
+                    <button
+                      className="cash-btn cash-btn-soft"
+                      type="button"
+                      onClick={() => void handleExportCashReport('DETAILED', closeResponse.session.id)}
+                      disabled={exportingCashReport}
+                    >
+                      {exportingCashReport ? 'Exportando...' : '⬇ XLSX Detallado'}
+                    </button>
                     <button className="cash-btn cash-btn-accent" type="button" onClick={() => { setCloseResponse(null); void loadCurrentSession(); }}>
                       🔄 Nueva sesion
                     </button>
@@ -1086,6 +1277,30 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                             <>
                               <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" style={{ marginRight: '4px' }} onClick={(e) => { e.stopPropagation(); void handleRowPrint(s, '80mm'); }}>🧾 Ticket</button>
                               <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" onClick={(e) => { e.stopPropagation(); void handleRowPrint(s, 'A4'); }}>📄 A4</button>
+                              <button
+                                className="cash-btn cash-btn-soft cash-btn-compact"
+                                type="button"
+                                style={{ marginLeft: '4px' }}
+                                disabled={exportingCashReport}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleExportCashReport('GENERAL', s.id);
+                                }}
+                              >
+                                {exportingCashReport ? '...' : '⬇ XLSX G'}
+                              </button>
+                              <button
+                                className="cash-btn cash-btn-soft cash-btn-compact"
+                                type="button"
+                                style={{ marginLeft: '4px' }}
+                                disabled={exportingCashReport}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleExportCashReport('DETAILED', s.id);
+                                }}
+                              >
+                                {exportingCashReport ? '...' : '⬇ XLSX D'}
+                              </button>
                             </>
                           )}
                         </td>
@@ -1158,15 +1373,17 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                 <div style={{ overflowX: 'auto' }}>
                                   <table style={{ width: '100%', fontSize: '0.8rem', tableLayout: 'fixed' }}>
                                     <colgroup>
-                                      <col style={{ width: '26%' }} />
-                                      <col style={{ width: '11%' }} />
-                                      <col style={{ width: '11%' }} />
-                                      <col style={{ width: '7%' }} />
-                                      <col style={{ width: '8%' }} />
-                                      <col style={{ width: '11%' }} />
-                                      <col style={{ width: '11%' }} />
-                                      <col style={{ width: '9%' }} />
+                                      <col style={{ width: '22%' }} />
+                                      <col style={{ width: '10%' }} />
+                                      <col style={{ width: '10%' }} />
+                                      <col style={{ width: '5%' }} />
                                       <col style={{ width: '6%' }} />
+                                      <col style={{ width: '9%' }} />
+                                      <col style={{ width: '9%' }} />
+                                      <col style={{ width: '7%' }} />
+                                      <col style={{ width: '5%' }} />
+                                      <col style={{ width: '8%' }} />
+                                      <col style={{ width: '9%' }} />
                                     </colgroup>
                                     <thead>
                                       <tr style={{ borderBottom: '2px solid #ddd' }}>
@@ -1179,8 +1396,10 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Serie-correlativo</th>
                                         {workshopMultiVehicleEnabled && <th style={{ textAlign: 'left', padding: '6px' }}>Vehículo</th>}
                                         <th style={{ textAlign: 'center', padding: '6px' }}>Sesion</th>
-                                        <th style={{ textAlign: 'right', padding: '6px' }}>Total</th>
-                                        <th style={{ textAlign: 'right', padding: '6px' }}>Margen</th>
+                                        <th style={{ textAlign: 'right', padding: '6px' }}>Total venta</th>
+                                        <th style={{ textAlign: 'right', padding: '6px' }}>Costo</th>
+                                        <th style={{ textAlign: 'right', padding: '6px' }}>Margen neto</th>
+                                        <th style={{ textAlign: 'right', padding: '6px' }}>Margen comercial</th>
                                       </tr>
                                     </thead>
                                     <tbody>
@@ -1195,12 +1414,16 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                           <td style={{ padding: '6px' }}>{row.documentNumber}</td>
                                           {workshopMultiVehicleEnabled && <td style={{ padding: '6px' }}>{row.vehiclePlate}</td>}
                                           <td style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>#{sessionDetail.session.id}</td>
-                                          <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600 }}>{row.amount.toFixed(2)}</td>
+                                          <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600 }}>{row.grossAmount.toFixed(2)}</td>
+                                          <td style={{ padding: '6px', textAlign: 'right' }}>{row.costAmount.toFixed(2)}</td>
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmount >= 0 ? '#0f766e' : '#b91c1c' }}>
                                             {row.marginAmount.toFixed(2)} ({row.marginPercent.toFixed(1)}%)
                                             <div style={{ fontWeight: 500, fontSize: '0.68rem', color: '#64748b' }}>
                                               {row.marginSource === 'REAL' ? 'Costo real' : row.marginSource === 'MIXED' ? 'Mixto' : 'Estimado'}
                                             </div>
+                                          </td>
+                                          <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmountCommercial >= 0 ? '#0369a1' : '#b91c1c' }}>
+                                            {row.marginAmountCommercial.toFixed(2)}
                                           </td>
                                         </tr>
                                       ))}
@@ -1208,7 +1431,7 @@ export function CashView({ accessToken, cashRegisterId }: CashViewProps) {
                                   </table>
                                 </div>
                                 <p style={{ marginTop: '8px', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-                                  * Margen estimado usa un ratio conservador cuando el item no tiene costo trazable en inventario.
+                                  * Total venta = monto completo cobrado al cliente (con IGV). Margen neto (contable): sobre subtotal sin IGV. Margen comercial: monto referencial ganado sobre el total cobrado. Estimado cuando no hay costo trazable.
                                 </p>
                               </div>
                             )}

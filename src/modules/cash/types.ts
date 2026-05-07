@@ -95,10 +95,15 @@ export type DocumentItem = {
   quantity: number;
   unit_code: string;
   unit_price: number;
+  line_subtotal?: number;
   unit_cost?: number;
   cost_total?: number;
   margin_total?: number;
   margin_percent?: number;
+  margin_total_net?: number;
+  margin_percent_net?: number;
+  margin_total_commercial?: number;
+  margin_percent_commercial?: number;
   margin_source?: 'REAL' | 'ESTIMATED';
   line_total: number;
 };

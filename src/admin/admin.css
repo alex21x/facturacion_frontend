@@ -1460,6 +1460,86 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
   font-size: 0.85rem;
 }
 
+/* ── BACKUP PANEL ──────────────────────────────────────── */
+.adm-backup-body {
+  display: grid;
+  gap: 0.95rem;
+}
+
+.adm-backup-intro {
+  margin: 0;
+  color: #64748b;
+}
+
+.adm-backup-selector-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.adm-backup-company-autocomplete {
+  position: relative;
+  flex: 1 1 360px;
+  max-width: 640px;
+}
+
+.adm-backup-actions-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.adm-backup-file-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-width: 220px;
+  max-width: 340px;
+  flex: 0 1 340px;
+}
+
+.adm-backup-file-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  border: 0;
+  padding: 0;
+  clip: rect(0, 0, 0, 0);
+  overflow: hidden;
+}
+
+.adm-backup-file-name {
+  min-width: 0;
+  flex: 1 1 140px;
+  padding: 0.42rem 0.6rem;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #475569;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.adm-backup-guidance {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.adm-backup-guidance p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.8rem;
+}
+
 /* ── AUTOCOMPLETE ───────────────────────────────────────── */
 .adm-autocomplete-wrap {
   position: relative;

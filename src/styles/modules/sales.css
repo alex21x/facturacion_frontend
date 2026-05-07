@@ -131,3 +131,140 @@
 .sales-concepts-shell {
   grid-template-columns: minmax(0, 2.45fr) minmax(220px, 0.6fr);
 }
+
+.sales-sunat-window-note {
+  margin: 0.45rem 0 0.8rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #fbbf24;
+  border-radius: 12px;
+  background: linear-gradient(120deg, #fffbeb 0%, #fef3c7 100%);
+  color: #78350f;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.sales-action-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3360;
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.sales-action-confirm-modal {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3361;
+  width: min(560px, 94vw);
+  max-height: 90vh;
+  overflow: auto;
+  border-radius: 14px;
+  border: 1px solid #dbe4f0;
+  background: #ffffff;
+  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.42);
+}
+
+.sales-action-confirm-modal.tone-neutral {
+  border-top: 6px solid #1d4ed8;
+}
+
+.sales-action-confirm-modal.tone-warn {
+  border-top: 6px solid #d97706;
+}
+
+.sales-action-confirm-modal.tone-danger {
+  border-top: 6px solid #b91c1c;
+}
+
+.sales-action-confirm-head {
+  padding: 0.9rem 1rem 0.55rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.sales-action-confirm-head h3 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1rem;
+}
+
+.sales-action-confirm-head p {
+  margin: 0.45rem 0 0;
+  color: #475569;
+  font-size: 0.85rem;
+}
+
+.sales-action-confirm-warning {
+  margin: 0.7rem 1rem 0;
+  padding: 0.62rem 0.7rem;
+  border-radius: 10px;
+  border: 1px solid #fdba74;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 0.81rem;
+  line-height: 1.4;
+}
+
+.sales-action-confirm-fields {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem 0.25rem;
+}
+
+.sales-action-confirm-fields label {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.sales-action-confirm-fields span {
+  font-size: 0.78rem;
+  color: #475569;
+}
+
+.sales-action-confirm-fields textarea,
+.sales-action-confirm-fields input {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  padding: 0.55rem 0.6rem;
+  font: inherit;
+  color: #0f172a;
+  background: #fff;
+}
+
+.sales-action-confirm-fields textarea {
+  resize: vertical;
+}
+
+.sales-action-confirm-error {
+  margin: 0.2rem 1rem 0;
+  color: #b91c1c;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.sales-action-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem 1rem;
+}
+
+.sales-action-confirm-actions button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sales-action-confirm-cancel {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.sales-action-confirm-submit {
+  background: #b91c1c;
+  color: #fff;
+}
