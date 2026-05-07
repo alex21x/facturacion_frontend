@@ -273,8 +273,8 @@ if (-not $clientConfig) {
     throw "No existe .client-config.env. Ejecuta primero scripts/instalar-local.bat o setup-local.ps1 desde la carpeta raiz del instalador."
 }
 
-$frontendBranch = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_BRANCH" -DefaultValue "main"
-$backendBranch = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_BRANCH" -DefaultValue "main"
+$frontendBranch = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_BRANCH" -DefaultValue "feature/docker-multientorno"
+$backendBranch = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_BRANCH" -DefaultValue "feature/docker-multientorno"
 $composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key "RUN_MIGRATIONS" -DefaultValue "true"
 $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST" -DefaultValue "127.0.0.1"
