@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
-import { createStockEntry } from '../../purchases/api';
 import {
+  createInventoryStockEntry,
   fetchInventoryLots,
   fetchInventoryProducts,
   fetchInventoryStock,
@@ -630,7 +630,7 @@ export function InventoryView({
 
     setAdjustmentSubmitting(true);
     try {
-      await createStockEntry(accessToken, {
+      await createInventoryStockEntry(accessToken, {
         warehouse_id: warehouseId,
         entry_type: 'ADJUSTMENT',
         notes: adjustmentNotes.trim(),
@@ -1008,7 +1008,7 @@ export function InventoryView({
         Movimiento: MOVEMENT_TYPE_LABELS[row.movement_type] ?? row.movement_type,
         Cantidad: Number(row.quantity),
         StockFinal: Number(row.stock_balance ?? 0),
-        CostoUnitario: Number(row.unit_cost),
+        CostoUnitarioNeto: Number(row.unit_cost),
         TotalLinea: Number(row.line_total),
         Referencia: row.ref_type === 'STOCK_ENTRY' && row.stock_entry_type
           ? `${STOCK_ENTRY_TYPE_LABELS[row.stock_entry_type] ?? row.stock_entry_type}${row.ref_id ? ` #${row.ref_id}` : ''}`
@@ -1674,7 +1674,7 @@ export function InventoryView({
                   <th>Tipo</th>
                   <th>Cantidad</th>
                   <th>Stock final</th>
-                  <th>Costo unit.</th>
+                  <th>Costo unit. neto</th>
                   <th>Total</th>
                   <th>Referencia</th>
                   <th>Notas</th>
@@ -1708,6 +1708,10 @@ export function InventoryView({
                 ))}
               </tbody>
             </table>
+
+            <p style={{ marginTop: '0.45rem', color: '#64748b', fontSize: '0.8rem' }}>
+              El kardex valorizado muestra costo neto real. Si la compra se registró con "Incluye IGV en costos", ese valor ya fue normalizado antes de entrar al inventario.
+            </p>
 
             <div className="module-header" style={{ marginTop: '0.8rem' }}>
               <button

@@ -275,6 +275,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     const roleCode = (currentUserRoleCode ?? '').trim().toUpperCase();
     return roleCode === 'ADMIN' || roleCode === 'ADMINISTRADOR' || roleCode === 'SUPERADMIN' || roleCode === 'SUPER_ADMIN';
   }, [currentUserRoleCode]);
+  const platformLimitsReadOnly = true;
 
   const adminManagedFeatureCodes = useMemo(
     () =>
@@ -668,10 +669,11 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     <textarea
                       rows={3}
                       value={taxBridgeDebugRolesInput}
-                      onChange={(e) => setTaxBridgeDebugRolesInput(e.target.value)}
+                      readOnly
+                      disabled
                       placeholder="ADMIN,SOPORTE,VENDEDOR"
                     />
-                    <small>{UI_LABELS.taxBridgeDebugRolesHint}</small>
+                    <small>Solo lectura. Esta configuración se administra desde el portal administrativo.</small>
                   </label>
                 </div>
               </div>
@@ -807,7 +809,15 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
           <div className="cfg-grid-2">
             <div className="cfg-card">
               <h4 className="cfg-card-title">Limites de plataforma</h4>
-              <form className="grid-form" onSubmit={handleSaveLimits}>
+              <form
+                className="grid-form"
+                onSubmit={platformLimitsReadOnly
+                  ? (event) => {
+                    event.preventDefault();
+                    setMessage('Los límites de plataforma son de solo lectura en POS. Modifíquelos desde el portal admin.');
+                  }
+                  : handleSaveLimits}
+              >
                 <label>
                   {UI_LABELS.maxCompanies}
                   <input
@@ -815,6 +825,8 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     min={1}
                     value={limitsForm.max_companies_enabled ?? ''}
                     onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_companies_enabled: Number(e.target.value) }))}
+                    readOnly={platformLimitsReadOnly}
+                    disabled={platformLimitsReadOnly}
                   />
                 </label>
                 <label>
@@ -824,6 +836,8 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     min={1}
                     value={limitsForm.max_branches_enabled ?? ''}
                     onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_branches_enabled: Number(e.target.value) }))}
+                    readOnly={platformLimitsReadOnly}
+                    disabled={platformLimitsReadOnly}
                   />
                 </label>
                 <label>
@@ -833,6 +847,8 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     min={1}
                     value={limitsForm.max_warehouses_enabled ?? ''}
                     onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_warehouses_enabled: Number(e.target.value) }))}
+                    readOnly={platformLimitsReadOnly}
+                    disabled={platformLimitsReadOnly}
                   />
                 </label>
                 <label>
@@ -842,11 +858,18 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     min={1}
                     value={limitsForm.max_cash_registers_enabled ?? ''}
                     onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_cash_registers_enabled: Number(e.target.value) }))}
+                    readOnly={platformLimitsReadOnly}
+                    disabled={platformLimitsReadOnly}
                   />
                 </label>
-                <button className="wide" type="submit" disabled={loading}>
-                  {UI_LABELS.saveLimits}
+                <button className="wide" type="submit" disabled={loading || platformLimitsReadOnly}>
+                  {platformLimitsReadOnly ? 'Solo lectura (Portal Admin)' : UI_LABELS.saveLimits}
                 </button>
+                {platformLimitsReadOnly && (
+                  <p className="notice" style={{ gridColumn: '1 / -1', margin: 0 }}>
+                    Estos límites se administran únicamente desde el portal admin.
+                  </p>
+                )}
               </form>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>

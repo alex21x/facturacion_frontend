@@ -394,3 +394,32 @@ export async function fetchInventoryProductImportBatchDetail(
     }
   );
 }
+
+export type CreateInventoryStockEntryPayload = {
+  warehouse_id: number;
+  entry_type: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER';
+  issue_at?: string;
+  notes?: string;
+  items: Array<{
+    product_id: number;
+    qty: number;
+    unit_cost?: number;
+    lot_id?: number;
+    lot_code?: string;
+    expiry_date?: string;
+  }>;
+};
+
+export async function createInventoryStockEntry(
+  accessToken: string,
+  payload: CreateInventoryStockEntryPayload,
+): Promise<{ message: string; data: { id: number } }> {
+  return apiClient.request<{ message: string; data: { id: number } }>('/api/inventory/stock-entries', {
+    method: 'POST',
+    headers: {
+      ...authHeaders(accessToken),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+}

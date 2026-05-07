@@ -35,6 +35,9 @@ export type CashMovement = {
   description: string | null;
   ref_type: string | null;
   ref_id: number | null;
+  document_number?: string | null;
+  document_kind_label?: string | null;
+  reference_label?: string | null;
   user_id: number;
   user_name: string | null;
   movement_at: string;
@@ -92,10 +95,15 @@ export type DocumentItem = {
   quantity: number;
   unit_code: string;
   unit_price: number;
+  line_subtotal?: number;
   unit_cost?: number;
   cost_total?: number;
   margin_total?: number;
   margin_percent?: number;
+  margin_total_net?: number;
+  margin_percent_net?: number;
+  margin_total_commercial?: number;
+  margin_percent_commercial?: number;
   margin_source?: 'REAL' | 'ESTIMATED';
   line_total: number;
 };
@@ -115,6 +123,9 @@ export type SessionDocument = {
   status: string;
   created_at: string;
   user_name: string | null;
+  issuer_user_name?: string | null;
+  origin_seller_user_name?: string | null;
+  origin_seller_user_id?: number | null;
   items: DocumentItem[];
 };
 

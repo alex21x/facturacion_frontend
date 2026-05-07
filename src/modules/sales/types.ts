@@ -10,6 +10,10 @@ export type SeriesNumber = {
 
 export type CommercialDocumentListItem = {
   id: number;
+  created_by?: number | null;
+  created_by_user_name?: string | null;
+  origin_seller_user_id?: number | null;
+  origin_seller_user_name?: string | null;
   document_kind: string;
   document_kind_id?: number | null;
   document_kind_base?: string | null;
@@ -20,6 +24,7 @@ export type CommercialDocumentListItem = {
   number: number;
   source_document_id?: number | null;
   source_document_kind?: string | null;
+  source_document_number?: string | null;
   issue_at: string;
   created_at?: string | null;
   status: string;
@@ -31,6 +36,8 @@ export type CommercialDocumentListItem = {
   cancellation_summary_status?: string | null;
   total: string;
   balance_due: string;
+  item_discount_total?: number | string | null;
+  global_discount_total?: number | string | null;
   customer_name: string;
   customer_vehicle_id?: number | null;
   vehicle_plate_snapshot?: string | null;
@@ -50,6 +57,11 @@ export type CommercialDocumentProductDetailRow = {
   number: number;
   issue_at: string;
   status: string;
+  status_label?: string | null;
+  created_by_user_name?: string | null;
+  origin_seller_user_name?: string | null;
+  sunat_status?: string | null;
+  sunat_void_status?: string | null;
   customer_name: string;
   customer_vehicle_id?: number | null;
   vehicle_plate_snapshot?: string | null;
@@ -193,6 +205,7 @@ export type VoidCommercialDocumentPayload = {
   notes?: string;
   void_at?: string;
   sunat_void_status?: string;
+  void_password?: string;
 };
 
 export type SalesDocumentKind = {

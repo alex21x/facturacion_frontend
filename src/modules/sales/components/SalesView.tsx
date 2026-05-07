@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import '../../../styles/modules/sales.css';
 import { docKindLabel } from '../../../shared/utils/docKind';
 import { fmtDateLima, fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
 import {
@@ -559,6 +560,47 @@ type SunatToastState = {
   detail: string;
 };
 
+type ActionConfirmTone = 'neutral' | 'warn' | 'danger';
+
+type ActionConfirmRequest = {
+  title: string;
+  message: string;
+  tone?: ActionConfirmTone;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  reasonLabel?: string;
+  reasonPlaceholder?: string;
+  passwordLabel?: string;
+  passwordRequired?: boolean;
+  warningNote?: string;
+  initialReason?: string;
+};
+
+type ActionConfirmState = {
+  title: string;
+  message: string;
+  tone: ActionConfirmTone;
+  confirmLabel: string;
+  cancelLabel: string;
+  reasonLabel: string;
+  reasonPlaceholder: string;
+  passwordLabel: string;
+  passwordRequired: boolean;
+  warningNote: string;
+};
+
+type ActionConfirmResult = {
+  confirmed: boolean;
+  reason: string;
+  password: string;
+};
+
+type StockValidationSummary = {
+  blocked: boolean;
+  insufficientLines: Array<{ description: string; requested: number; available: number }>;
+  lowStockLines: Array<{ description: string; available: number }>;
+};
+
 function isCashOpeningRequiredError(message: string): boolean {
   const normalized = message.trim().toLowerCase();
   if (normalized === '') {
@@ -567,6 +609,16 @@ function isCashOpeningRequiredError(message: string): boolean {
 
   return normalized.includes('caja')
     && (normalized.includes('apertur') || normalized.includes('abrir'));
+}
+
+function isInsufficientStockError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (normalized === '') {
+    return false;
+  }
+
+  return normalized.includes('insufficient stock')
+    || (normalized.includes('stock') && normalized.includes('insuficiente'));
 }
 
 type SunatBridgeDebugState = {
@@ -621,6 +673,60 @@ function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFil
   }
 
   return 'ALL';
+}
+
+const SUNAT_OPERATION_WINDOW_DAYS = 3;
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+
+function parseDateOnlyToUtc(value: string | null | undefined): Date | null {
+  const raw = String(value ?? '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function daysFromDateToTodayLima(value: string | null | undefined): number | null {
+  const sourceDate = parseDateOnlyToUtc(value);
+  const todayDate = parseDateOnlyToUtc(todayLima());
+
+  if (!sourceDate || !todayDate) {
+    return null;
+  }
+
+  return Math.floor((todayDate.getTime() - sourceDate.getTime()) / ONE_DAY_IN_MS);
+}
+
+function renderDaysLabel(days: number): string {
+  return days === 1 ? '1 dia' : `${days} dias`;
+}
+
+function buildSunatIndividualSendWindowWarning(row: CommercialDocumentListItem): string {
+  const daysSinceIssue = daysFromDateToTodayLima(row.issue_at);
+  if (daysSinceIssue === null || daysSinceIssue <= SUNAT_OPERATION_WINDOW_DAYS) {
+    return '';
+  }
+
+  return `Este comprobante fue emitido hace ${renderDaysLabel(daysSinceIssue)}. El envio individual SUNAT suele permitirse hasta ${SUNAT_OPERATION_WINDOW_DAYS} dias calendario desde la emision; fuera de plazo puede ser rechazado.`;
+}
+
+function buildSunatIndividualVoidWindowWarning(row: CommercialDocumentListItem): string {
+  const daysSinceIssue = daysFromDateToTodayLima(row.issue_at);
+  if (daysSinceIssue === null || daysSinceIssue <= SUNAT_OPERATION_WINDOW_DAYS) {
+    return '';
+  }
+
+  return `Advertencia operativa: la baja individual de factura se valida por SUNAT en ventana de ${SUNAT_OPERATION_WINDOW_DAYS} dias desde la aceptacion. Este documento fue emitido hace ${renderDaysLabel(daysSinceIssue)} y SUNAT puede rechazar la baja fuera de ventana. RA/RC aplica solo a boletas.`;
 }
 
 function resolveSunatUiState(row: CommercialDocumentListItem): SunatUiState {
@@ -857,6 +963,30 @@ function isTributaryRow(row: CommercialDocumentListItem): boolean {
     || toPositiveInt(row.sunat_void_summary_id) !== null;
 }
 
+function resolveDocumentActorTrace(row: CommercialDocumentListItem): {
+  seller: string;
+  issuer: string;
+  compact: string;
+} {
+  const issuer = String(row.created_by_user_name ?? '').trim();
+  const seller = String(row.origin_seller_user_name ?? '').trim();
+
+  if (seller && issuer && seller.toUpperCase() !== issuer.toUpperCase()) {
+    return {
+      seller,
+      issuer,
+      compact: `Solicita: ${seller} | Emite: ${issuer}`,
+    };
+  }
+
+  const resolved = issuer || seller || '-';
+  return {
+    seller: resolved,
+    issuer: resolved,
+    compact: resolved,
+  };
+}
+
 function documentKindRequiresRuc(
   kind: string | null | undefined,
   options?: {
@@ -894,7 +1024,7 @@ function customerHasRuc(customer: SalesCustomerSuggestion | null): boolean {
 function canEditCommercialDocument(
   row: CommercialDocumentListItem,
   allowDraftEdit: boolean,
-  allowIssuedBeforeFinalSunatEdit: boolean
+  _allowIssuedBeforeFinalSunatEdit: boolean
 ): boolean {
   const status = String(row.status ?? '').toUpperCase();
 
@@ -903,7 +1033,7 @@ function canEditCommercialDocument(
   }
 
   if (status === 'ISSUED' && isTributaryRow(row)) {
-    return allowIssuedBeforeFinalSunatEdit && !resolveSunatUiState(row).isFinal;
+    return !resolveSunatUiState(row).isFinal;
   }
 
   // Allow editing QUOTATION and SALES_ORDER in ISSUED status if draft edit is allowed
@@ -1281,7 +1411,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }
 
   const [salesWorkspaceMode, setSalesWorkspaceMode] = useState<SalesWorkspaceMode>('SELL');
-  const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('FULL');
+  const [cashierReportPanelMode, setCashierReportPanelMode] = useState<CashierReportPanelMode>('PENDING');
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [seriesExpanded, setSeriesExpanded] = useState(false);
   const [cashierDefaultApplied, setCashierDefaultApplied] = useState(false);
@@ -1296,7 +1426,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
   const normalizedRoleCode = (currentUserRoleCode ?? '').toUpperCase();
   const normalizedRoleProfile = (currentUserRoleProfile ?? '').toUpperCase();
-  const isSellerUser = normalizedRoleProfile === 'SELLER' || normalizedRoleCode.includes('VENDED') || normalizedRoleCode.includes('SELLER');
+  const isSellerUser = normalizedRoleProfile === 'SELLER'
+    || normalizedRoleProfile.includes('VENDED')
+    || normalizedRoleCode.includes('VENDED')
+    || normalizedRoleCode.includes('SELLER');
   const isAdminUser = normalizedRoleCode.includes('ADMIN');
   const isCashierUser = normalizedRoleProfile === 'CASHIER' || normalizedRoleCode.includes('CAJA') || normalizedRoleCode.includes('CAJER') || normalizedRoleCode.includes('CASHIER');
   const isTechnicalUser = isAdminUser
@@ -1327,7 +1460,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         ? allowVoidForSeller
         : false;
   const canVoidDocumentsInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID', true) && canVoidByProfile;
+  const voidPasswordRequired = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REQUIRE_PASSWORD', false);
   const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
+  const allowNegativeStockEnabled = Boolean(lookups?.inventory_settings?.allow_negative_stock);
+  const lowStockAlertThreshold = lookups?.inventory_settings?.low_stock_alert_threshold ?? 5;
   const stockByProductId = useMemo(() => {
     const stockMap = new Map<number, number>();
     stockRows.forEach((row) => {
@@ -1336,6 +1472,54 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     });
     return stockMap;
   }, [stockRows]);
+
+  function summarizeStockValidation(lines: SalesDraftItem[]): StockValidationSummary {
+    const requestedByProduct = new Map<number, { qty: number; description: string }>();
+
+    lines.forEach((line) => {
+      if (line.isManual || !line.productId) {
+        return;
+      }
+
+      const productId = Number(line.productId);
+      const prev = requestedByProduct.get(productId) ?? { qty: 0, description: line.description };
+      requestedByProduct.set(productId, {
+        qty: prev.qty + Number(line.qty || 0),
+        description: prev.description,
+      });
+    });
+
+    const insufficientLines: StockValidationSummary['insufficientLines'] = [];
+    const lowStockLines: StockValidationSummary['lowStockLines'] = [];
+
+    requestedByProduct.forEach((requested, productId) => {
+      const available = stockByProductId.get(productId);
+      if (available === undefined) {
+        return;
+      }
+
+      if (requested.qty > available + 0.0000001) {
+        insufficientLines.push({
+          description: requested.description,
+          requested: requested.qty,
+          available,
+        });
+      }
+
+      if (available <= lowStockAlertThreshold) {
+        lowStockLines.push({
+          description: requested.description,
+          available,
+        });
+      }
+    });
+
+    return {
+      blocked: !allowNegativeStockEnabled && insufficientLines.length > 0,
+      insufficientLines,
+      lowStockLines,
+    };
+  }
   const advancesEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ANTICIPO_ENABLED', false);
   const salesGlobalDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_GLOBAL_DISCOUNT_ENABLED', false);
   const salesItemDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ITEM_DISCOUNT_ENABLED', false);
@@ -1360,7 +1544,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     : 'Venta directa en punto de venta';
   const activeProfileLabel = isSellerUser ? 'Vendedor' : isCashierUser ? 'Caja' : 'No identificado';
   const activeProfileHint = isSellerUser
-    ? 'Genera pedido comercial; caja realiza la emision final.'
+    ? 'Genera solicitud comercial; caja realiza la emision final.'
     : isCashierUser
       ? 'Inicia en pedidos pendientes para conversion y emision.'
       : 'Configura un perfil VENDEDOR/CAJERO para separar flujos.';
@@ -1392,7 +1576,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [accessToken, branchId, isRestaurantVertical]);
 
   useEffect(() => {
-    const currentDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
+    if (isRestaurantVertical) {
+      return;
+    }
+
+    if (documentFiltersApplied.sourceOrigin === 'RESTAURANT') {
+      setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: '' }));
+    }
+
+    if (documentFiltersDraft.sourceOrigin === 'RESTAURANT') {
+      setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: '' }));
+    }
+  }, [documentFiltersApplied.sourceOrigin, documentFiltersDraft.sourceOrigin, isRestaurantVertical]);
+
+  const sellerRequestDocumentKind = useMemo(() => {
+    const availableCodes = new Set((lookups?.document_kinds ?? []).map((row) => row.code));
+    return availableCodes.has('QUOTATION') ? 'QUOTATION' : 'SALES_ORDER';
+  }, [lookups?.document_kinds]);
+
+  useEffect(() => {
+    const currentDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser
+      ? sellerRequestDocumentKind
+      : form.documentKind;
 
     if (!isRestaurantVertical || currentDocumentKind !== 'SALES_ORDER') {
       if (!form.restaurantTableId && !form.restaurantTableLabel) {
@@ -1428,7 +1633,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         restaurantTableLabel: selected.name,
       }));
     }
-  }, [form.documentKind, form.restaurantTableId, form.restaurantTableLabel, isCashierUser, isRestaurantVertical, restaurantTables, salesFlowMode]);
+  }, [form.documentKind, form.restaurantTableId, form.restaurantTableLabel, isCashierUser, isRestaurantVertical, restaurantTables, salesFlowMode, sellerRequestDocumentKind]);
 
   const customerInputRef = useRef<HTMLInputElement | null>(null);
   const productInputRef = useRef<HTMLInputElement | null>(null);
@@ -1445,6 +1650,70 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const documentsRequestSeqRef = useRef(0);
   const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
   const stockLoadedScopeRef = useRef('');
+  const actionConfirmResolverRef = useRef<((result: ActionConfirmResult) => void) | null>(null);
+  const [actionConfirmState, setActionConfirmState] = useState<ActionConfirmState | null>(null);
+  const [actionConfirmReason, setActionConfirmReason] = useState('');
+  const [actionConfirmPassword, setActionConfirmPassword] = useState('');
+  const [actionConfirmError, setActionConfirmError] = useState('');
+
+  function closeActionConfirm(result: ActionConfirmResult) {
+    const resolver = actionConfirmResolverRef.current;
+    actionConfirmResolverRef.current = null;
+    setActionConfirmState(null);
+    setActionConfirmReason('');
+    setActionConfirmPassword('');
+    setActionConfirmError('');
+    resolver?.(result);
+  }
+
+  async function requestActionConfirm(request: ActionConfirmRequest): Promise<ActionConfirmResult> {
+    return new Promise((resolve) => {
+      if (actionConfirmResolverRef.current) {
+        actionConfirmResolverRef.current({ confirmed: false, reason: '', password: '' });
+      }
+
+      actionConfirmResolverRef.current = resolve;
+      setActionConfirmReason(request.initialReason ?? '');
+      setActionConfirmPassword('');
+      setActionConfirmError('');
+      setActionConfirmState({
+        title: request.title,
+        message: request.message,
+        tone: request.tone ?? 'neutral',
+        confirmLabel: request.confirmLabel ?? 'Confirmar',
+        cancelLabel: request.cancelLabel ?? 'Cancelar',
+        reasonLabel: request.reasonLabel ?? 'Motivo (opcional)',
+        reasonPlaceholder: request.reasonPlaceholder ?? '',
+        passwordLabel: request.passwordLabel ?? 'Clave',
+        passwordRequired: request.passwordRequired ?? false,
+        warningNote: request.warningNote ?? '',
+      });
+    });
+  }
+
+  function submitActionConfirm() {
+    if (!actionConfirmState) {
+      return;
+    }
+
+    if (actionConfirmState.passwordRequired && actionConfirmPassword.trim() === '') {
+      setActionConfirmError('Debe ingresar su clave para continuar.');
+      return;
+    }
+
+    closeActionConfirm({
+      confirmed: true,
+      reason: actionConfirmReason,
+      password: actionConfirmPassword,
+    });
+  }
+
+  useEffect(() => () => {
+    if (actionConfirmResolverRef.current) {
+      actionConfirmResolverRef.current({ confirmed: false, reason: '', password: '' });
+      actionConfirmResolverRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     if (!sunatToast) {
@@ -1506,7 +1775,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
     return TRIBUTARY_DOCUMENTS.includes(form.documentKind);
   }, [form.documentKind, lookups?.document_kinds]);
-  const effectiveDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : form.documentKind;
+  const effectiveDocumentKind = salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? sellerRequestDocumentKind : form.documentKind;
   const selectedEffectiveDocumentKind = useMemo(() => {
     return (lookups?.document_kinds ?? []).find((row) => row.code === effectiveDocumentKind) ?? null;
   }, [effectiveDocumentKind, lookups?.document_kinds]);
@@ -1518,7 +1787,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const isDebitNote = effectiveDocumentKindGroup === 'NOTE_DEBIT';
   const isNoteDocument = isCreditNote || isDebitNote;
   const isCurrentPreDocument = effectiveDocumentKindGroup === 'PRE_DOCUMENT';
-  const canCreateDocumentInCurrentMode = !isSeparatedMode || !isCashierUser || !isCurrentPreDocument;
+  const canCreateDocumentInCurrentMode = !isSeparatedMode
+    || (isCashierUser ? !isCurrentPreDocument : isCurrentPreDocument);
   const activeNoteReasons = isCreditNote
     ? ((lookups?.credit_note_reasons ?? []).length > 0 ? (lookups?.credit_note_reasons ?? []) : DEFAULT_CREDIT_NOTE_REASONS)
     : isDebitNote
@@ -2093,7 +2363,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           paymentMethodId: prev.paymentMethodId || defaultPaymentMethodId,
           unitId: prev.unitId || lookupRows?.units?.[0]?.id || null,
           taxCategoryId: prev.taxCategoryId || defaultTaxCategory?.id || null,
-          documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser ? 'QUOTATION' : prev.documentKind,
+          documentKind: nextSalesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser
+            ? ((lookupRows?.document_kinds ?? []).some((row) => row.code === 'QUOTATION') ? 'QUOTATION' : 'SALES_ORDER')
+            : prev.documentKind,
         }));
         setLoadingBootstrap(false);
       }
@@ -2967,6 +3239,33 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       isFreeOperation: salesFreeItemsEnabled ? Boolean(form.draftIsFreeOperation) : false,
     };
 
+    const stockValidation = summarizeStockValidation([...cart, draftItem]);
+    if (stockValidation.blocked) {
+      const first = stockValidation.insufficientLines[0];
+      setSunatToast({
+        tone: 'bad',
+        title: 'Stock insuficiente',
+        detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+      });
+      return;
+    }
+
+    if (stockValidation.insufficientLines.length > 0 && allowNegativeStockEnabled) {
+      const first = stockValidation.insufficientLines[0];
+      setSunatToast({
+        tone: 'warn',
+        title: 'Venta permitida sin stock',
+        detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+      });
+    } else if (stockValidation.lowStockLines.length > 0) {
+      const first = stockValidation.lowStockLines[0];
+      setSunatToast({
+        tone: 'warn',
+        title: 'Alerta de stock bajo',
+        detail: `${first.description} tiene stock ${first.available.toFixed(3)} (umbral ${lowStockAlertThreshold}).`,
+      });
+    }
+
     setCart((prev) => {
       if (draftItem.isManual) {
         return [...prev, draftItem];
@@ -3624,19 +3923,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         max: 20000,
       });
 
-      const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => ({
-        ID: row.id,
-        Documento: docKindLabelResolved(row.document_kind),
-        Serie: row.series,
-        Numero: row.number,
-        FechaEmision: row.issue_at,
-        Cliente: row.customer_name,
-        Vehiculo: formatReportDocumentVehicle(row),
-        FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
-        Estado: commercialStatusLabel(row.status),
-        Total: Number(row.total ?? 0),
-        Saldo: Number(row.balance_due ?? 0),
-      }));
+      const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => {
+        const trace = resolveDocumentActorTrace(row);
+
+        return {
+          ID: row.id,
+          Solicita: trace.seller,
+          Emite: trace.issuer,
+          Actor: trace.compact,
+          Documento: docKindLabelResolved(row.document_kind),
+          Serie: row.series,
+          Numero: row.number,
+          DocumentoAfectado: String(row.source_document_number ?? '').trim(),
+          FechaEmision: row.issue_at,
+          Cliente: row.customer_name,
+          Vehiculo: formatReportDocumentVehicle(row),
+          FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
+          Estado: commercialStatusLabel(row.status),
+          EstadoSunat: String(row.sunat_status ?? ''),
+          EstadoBajaSunat: String(row.sunat_void_status ?? ''),
+          DescuentoItem: Number(row.item_discount_total ?? 0),
+          DescuentoGlobal: Number(row.global_discount_total ?? 0),
+          Total: Number(row.total ?? 0),
+          Saldo: Number(row.balance_due ?? 0),
+        };
+      });
 
       const XLSX = await import('xlsx');
       const workbook = XLSX.utils.book_new();
@@ -3728,6 +4039,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const detailRows = rows as Array<Record<string, unknown>>;
       const sheetRows = detailRows.map((row) => ({
+        ...(() => {
+          const issuer = String(row.created_by_user_name ?? '').trim();
+          const seller = String(row.origin_seller_user_name ?? '').trim();
+          const actor = seller && issuer && seller.toUpperCase() !== issuer.toUpperCase()
+            ? `Solicita: ${seller} | Emite: ${issuer}`
+            : (issuer || seller || '-');
+          return {
+            Solicita: seller || issuer || '-',
+            Emite: issuer || seller || '-',
+            Actor: actor,
+          };
+        })(),
         ID: Number(row.id ?? 0),
         Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
         Serie: String(row.series ?? ''),
@@ -3736,7 +4059,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         Cliente: String(row.customer_name ?? ''),
         Vehiculo: formatReportDocumentVehicle(row as CommercialDocumentProductDetailRow),
         FormaPago: String(row.payment_method_name ?? ''),
-        Estado: String(row.status ?? ''),
+        Estado: String(row.status_label ?? row.status ?? ''),
+        EstadoSunat: String(row.sunat_status ?? ''),
+        EstadoBajaSunat: String(row.sunat_void_status ?? ''),
         Producto: String(row.product_description ?? ''),
         Unidad: String(row.unit_code ?? ''),
         Cantidad: Number(row.qty ?? 0),
@@ -3907,6 +4232,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         setMessage('Debe agregar al menos un item para emitir.');
         setLoading(false);
         return;
+      }
+
+      const stockValidation = summarizeStockValidation(payloadItems);
+      if (stockValidation.blocked) {
+        const first = stockValidation.insufficientLines[0];
+        setSunatToast({
+          tone: 'bad',
+          title: 'Stock insuficiente',
+          detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+        });
+        setMessage('No se puede emitir porque la política de stock negativo está desactivada.');
+        setLoading(false);
+        return;
+      }
+
+      if (stockValidation.insufficientLines.length > 0 && allowNegativeStockEnabled) {
+        const first = stockValidation.insufficientLines[0];
+        setSunatToast({
+          tone: 'warn',
+          title: 'Emisión con stock negativo habilitada',
+          detail: `${first.description}: solicitado ${first.requested.toFixed(3)}, disponible ${first.available.toFixed(3)}.`,
+        });
+      } else if (stockValidation.lowStockLines.length > 0) {
+        const first = stockValidation.lowStockLines[0];
+        setSunatToast({
+          tone: 'warn',
+          title: 'Stock bajo detectado',
+          detail: `${first.description} está en ${first.available.toFixed(3)} (umbral ${lowStockAlertThreshold}).`,
+        });
       }
 
       const normalizedDocumentMetadata = {
@@ -4161,7 +4515,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       setMessage(
         salesFlowMode === 'SELLER_TO_CASHIER'
-          ? 'Pedido comercial generado. Caja puede convertirlo a nota de pedido o comprobante tributario.'
+          ? 'Solicitud comercial generada. Caja puede convertirla a nota de pedido o comprobante tributario.'
           : 'Documento comercial creado correctamente.'
       );
 
@@ -4222,6 +4576,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           title: 'Caja cerrada',
           detail: 'Debes aperturar caja antes de realizar la venta.',
         });
+      } else if (isInsufficientStockError(text)) {
+        setMessage('');
+        setSunatToast({
+          tone: 'bad',
+          title: 'Stock insuficiente',
+          detail: 'No hay stock disponible para completar la venta con la configuración actual.',
+        });
       } else {
         setMessage(text);
       }
@@ -4233,6 +4594,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   async function executeConvertDocument(source: CommercialDocumentListItem, targetDocumentKind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER') {
     if (!canConvertInCurrentMode) {
       setMessage('En este modo, solo caja puede convertir pedidos a boleta/factura.');
+      return;
+    }
+
+    if (isSeparatedMode && isCashierUser && !cashRegisterId) {
+      setMessage('Selecciona una estacion de caja activa antes de convertir.');
       return;
     }
 
@@ -4370,21 +4736,65 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     const isReceipt = isReceiptDocument(row);
     const docLabel = docKindLabelResolved(row.document_kind);
-    const accepted = window.confirm(`Se anulara ${docLabel} ${row.series}-${row.number}. Desea continuar?`);
-    if (!accepted) {
+    const confirmResult = await requestActionConfirm({
+      title: `Anular ${docLabel} ${row.series}-${row.number}`,
+      message: 'Esta accion cambia el estado del comprobante a anulado y no se puede deshacer desde esta pantalla.',
+      tone: 'danger',
+      confirmLabel: 'Anular documento',
+      reasonLabel: 'Motivo de anulacion (opcional)',
+      reasonPlaceholder: 'Ej. error de digitacion o solicitud del cliente',
+      warningNote: buildSunatIndividualSendWindowWarning(row),
+    });
+    if (!confirmResult.confirmed) {
       return;
     }
-
-    const reason = window.prompt('Motivo de anulacion (opcional):', '') ?? '';
+    const reason = confirmResult.reason.trim();
 
     setLoading(true);
     setMessage('');
     try {
-      const response = await voidCommercialDocument(accessToken, row.id, {
+      const basePayload = {
         reason: reason.trim() || undefined,
         notes: reason.trim() || undefined,
         void_at: nowLimaIso(),
-      });
+      };
+
+      let response;
+      try {
+        response = await voidCommercialDocument(accessToken, row.id, basePayload);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
+        const needsPassword = /ingresar su clave|clave para confirmar la anulacion/i.test(text);
+
+        if (!needsPassword) {
+          throw error;
+        }
+
+        const passwordConfirmResult = await requestActionConfirm({
+          title: `Confirmacion con clave: ${docLabel} ${row.series}-${row.number}`,
+          message: 'La politica activa exige clave para confirmar la anulacion.',
+          tone: 'warn',
+          confirmLabel: 'Validar y anular',
+          reasonLabel: 'Motivo de anulacion (opcional)',
+          reasonPlaceholder: 'Puedes ajustar el motivo antes de confirmar',
+          passwordLabel: 'Clave de usuario',
+          passwordRequired: true,
+          initialReason: reason,
+        });
+        if (!passwordConfirmResult.confirmed) {
+          return;
+        }
+
+        const validatedReason = passwordConfirmResult.reason.trim();
+
+        response = await voidCommercialDocument(accessToken, row.id, {
+          reason: validatedReason || undefined,
+          notes: validatedReason || undefined,
+          void_at: nowLimaIso(),
+          void_password: passwordConfirmResult.password,
+        });
+      }
+
       const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
       const summaryType = isReceipt ? 'RA' : 'baja SUNAT';
       const summaryInfo = linkedSummaryId && isReceipt ? ` Asignado automaticamente a ${summaryType} #${linkedSummaryId}.` : '';
@@ -4404,10 +4814,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
-    const accepted = window.confirm(
-      `Se agregara Boleta ${row.series}-${row.number} al resumen diario de declaracion (RC). Desea continuar?`
-    );
-    if (!accepted) {
+    const confirmResult = await requestActionConfirm({
+      title: `Agregar Boleta ${row.series}-${row.number} a resumen RC`,
+      message: 'La boleta se incluira en el resumen diario de declaracion para procesamiento SUNAT.',
+      tone: 'warn',
+      confirmLabel: 'Agregar a resumen RC',
+      warningNote: 'Usa este flujo para documentos en ventana operativa y con datos tributarios completos.',
+    });
+    if (!confirmResult.confirmed) {
       return;
     }
 
@@ -4427,21 +4841,26 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }
 
   async function handleSunatVoidCommunication(row: CommercialDocumentListItem) {
-    const accepted = window.confirm(
-      `Se enviara comunicacion de baja SUNAT para ${row.series}-${row.number}. Desea continuar?`
-    );
-    if (!accepted) {
+    const confirmResult = await requestActionConfirm({
+      title: `Comunicacion de baja SUNAT ${row.series}-${row.number}`,
+      message: 'Se enviara una baja individual al puente SUNAT para este comprobante.',
+      tone: 'danger',
+      confirmLabel: 'Enviar baja SUNAT',
+      reasonLabel: 'Motivo de baja SUNAT (opcional)',
+      reasonPlaceholder: 'Ej. anulacion por error de emision',
+      warningNote: buildSunatIndividualVoidWindowWarning(row),
+    });
+    if (!confirmResult.confirmed) {
       return;
     }
-
-    const reason = window.prompt('Motivo de baja SUNAT (opcional):', '') ?? '';
+    const reason = confirmResult.reason.trim();
 
     setLoading(true);
     setMessage('');
     try {
       const response = await sendSunatVoidCommunication(accessToken, row.id, {
-        reason: reason.trim() || undefined,
-        notes: reason.trim() || undefined,
+        reason: reason || undefined,
+        notes: reason || undefined,
       });
 
       const responseSummary = summarizeSunatDiagnostic(response.sunat_error_code, response.sunat_error_message, response.bridge_response);
@@ -5008,6 +5427,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <span className="sales-mode-chip" style={{ background: canVoidDocumentsInCurrentMode ? '#d1fae5' : '#fee2e2', color: canVoidDocumentsInCurrentMode ? '#065f46' : '#991b1b' }}>
                 Anulacion: {canVoidDocumentsInCurrentMode ? 'Habilitada' : 'Deshabilitada'}
               </span>
+              <span className="sales-mode-chip" style={{ background: voidPasswordRequired ? '#fef3c7' : '#ecfeff', color: voidPasswordRequired ? '#92400e' : '#155e75' }}>
+                Clave para anular: {voidPasswordRequired ? 'Requerida' : 'Opcional'}
+              </span>
               <span className={featureSourceBadgeClass(documentVoidSource)}>
                 Fuente anulacion: {featureSourceLabel(documentVoidSource)}
               </span>
@@ -5028,6 +5450,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </span>
               <span className="sales-mode-chip" style={{ background: reverseStockOnVoidEnabled ? '#dbeafe' : '#fef3c7', color: reverseStockOnVoidEnabled ? '#1e3a8a' : '#92400e' }}>
                 Reversa stock al anular: {reverseStockOnVoidEnabled ? 'Activa' : 'Inactiva'}
+              </span>
+              <span className="sales-mode-chip" style={{ background: allowNegativeStockEnabled ? '#fef3c7' : '#fee2e2', color: allowNegativeStockEnabled ? '#92400e' : '#991b1b' }}>
+                Venta sin stock: {allowNegativeStockEnabled ? 'Permitida' : 'Bloqueada'}
               </span>
             </div>
           )}
@@ -6214,6 +6639,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       {salesWorkspaceMode === 'REPORT' && (
         <>
+      <div className="sales-sunat-window-note" role="note" aria-live="polite">
+        <strong>Ventana SUNAT (operaciones individuales):</strong> envio tributario dentro de 3 dias calendario desde emision. Baja individual de factura dentro de 3 dias desde aceptacion SUNAT. Fuera de plazo SUNAT puede rechazar. RA/RC aplica solo a boletas.
+      </div>
       {shouldPrioritizePendingOrders && (
         <div className="workspace-mode-switch" style={{ marginTop: '0.35rem', marginBottom: '0.65rem' }}>
           <button
@@ -6360,19 +6788,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'SALES_ORDER' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('SALES_ORDER'); setDocumentsPage(1); }} disabled={loadingDocuments}>Notas de pedido</button>
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'PENDING_CONVERSION' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('PENDING_CONVERSION'); setDocumentsPage(1); }} disabled={loadingDocuments}>Pendientes por convertir</button>
           <button type="button" className={`doc-kind-tab${documentViewFilter === 'CONVERTED' ? ' active' : ''}`} onClick={() => { setDocumentViewFilter('CONVERTED'); setDocumentsPage(1); }} disabled={loadingDocuments}>Ya convertidos</button>
-          <button
-            type="button"
-            className={`doc-kind-tab${documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? ' active' : ''}`}
-            onClick={() => {
-              const next = documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? '' : 'RESTAURANT';
-              setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: next }));
-              setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: next }));
-              setDocumentsPage(1);
-            }}
-            disabled={loadingDocuments}
-          >
-            Origen restaurante
-          </button>
+          {isRestaurantVertical && (
+            <button
+              type="button"
+              className={`doc-kind-tab${documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? ' active' : ''}`}
+              onClick={() => {
+                const next = documentFiltersApplied.sourceOrigin === 'RESTAURANT' ? '' : 'RESTAURANT';
+                setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: next }));
+                setDocumentFiltersApplied((prev) => ({ ...prev, sourceOrigin: next }));
+                setDocumentsPage(1);
+              }}
+              disabled={loadingDocuments}
+            >
+              Origen restaurante
+            </button>
+          )}
         </div>
 
         {/* Advanced search filters */}
@@ -6483,16 +6913,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 <option value="CANCELED">Cancelado</option>
               </select>
             </label>
-            <label>
-              <span>Origen</span>
-              <select
-                value={documentFiltersDraft.sourceOrigin}
-                onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: event.target.value as '' | 'RESTAURANT' }))}
-              >
-                <option value="">Todos</option>
-                <option value="RESTAURANT">Restaurante</option>
-              </select>
-            </label>
+            {isRestaurantVertical && (
+              <label>
+                <span>Origen</span>
+                <select
+                  value={documentFiltersDraft.sourceOrigin}
+                  onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: event.target.value as '' | 'RESTAURANT' }))}
+                >
+                  <option value="">Todos</option>
+                  <option value="RESTAURANT">Restaurante</option>
+                </select>
+              </label>
+            )}
           </div>
           <div className="report-filter-actions">
             <button type="button" className="btn-apply" onClick={applyAdvancedDocumentFilters} disabled={loadingDocuments}>
@@ -6520,6 +6952,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <thead>
             <tr>
               <th>ID</th>
+              <th>Usuario</th>
               <th>Documento</th>
               <th>Fecha emision</th>
               <th>Cliente</th>
@@ -6555,6 +6988,25 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 ].filter(Boolean).join(' ')}
               >
                 <td>{row.id}</td>
+                <td>
+                  {(() => {
+                    if (salesFlowMode !== 'SELLER_TO_CASHIER') {
+                      return row.created_by_user_name?.trim() || '-';
+                    }
+
+                    const trace = resolveDocumentActorTrace(row);
+                    if (trace.compact === '-' || trace.seller.toUpperCase() === trace.issuer.toUpperCase()) {
+                      return trace.compact;
+                    }
+
+                    return (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.08rem' }}>
+                        <span style={{ fontSize: '0.72rem', color: '#374151' }}>Solicita: {trace.seller}</span>
+                        <span style={{ fontSize: '0.72rem', color: '#1f2937', fontWeight: 700 }}>Emite: {trace.issuer}</span>
+                      </div>
+                    );
+                  })()}
+                </td>
                 <td>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                     <span>{docKindLabelResolved(row.document_kind)} {row.series}-{row.number}</span>
@@ -6616,7 +7068,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           padding: '0.1rem 0.55rem', borderRadius: '9999px', fontSize: '0.72rem', fontWeight: 700,
                           background: '#d1fae5', color: '#065f46', border: '1px solid #6ee7b7',
                         }}>
-                          ✓ Emitido desde {row.source_document_kind === 'SALES_ORDER' ? 'nota de pedido' : 'pedido comercial'}
+                          ✓ Emitido desde {row.source_document_kind === 'SALES_ORDER' ? 'nota de pedido' : 'solicitud comercial'}
                         </span>
                         <span style={{ fontSize: '0.72rem', color: '#4b5563' }}>
                           Origen #{row.source_document_id}
@@ -7120,6 +7572,78 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </div>
           </div>
         </div>
+      )}
+
+      {actionConfirmState && (
+        <>
+          <div
+            className="sales-action-confirm-backdrop"
+            onClick={() => closeActionConfirm({ confirmed: false, reason: '', password: '' })}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className={`sales-action-confirm-modal tone-${actionConfirmState.tone}`}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                closeActionConfirm({ confirmed: false, reason: '', password: '' });
+              }
+            }}
+          >
+            <div className="sales-action-confirm-head">
+              <h3>{actionConfirmState.title}</h3>
+              <p>{actionConfirmState.message}</p>
+            </div>
+
+            {actionConfirmState.warningNote && (
+              <p className="sales-action-confirm-warning">{actionConfirmState.warningNote}</p>
+            )}
+
+            <div className="sales-action-confirm-fields">
+              <label>
+                <span>{actionConfirmState.reasonLabel}</span>
+                <textarea
+                  rows={3}
+                  maxLength={300}
+                  value={actionConfirmReason}
+                  onChange={(event) => setActionConfirmReason(event.target.value)}
+                  placeholder={actionConfirmState.reasonPlaceholder}
+                />
+              </label>
+
+              {actionConfirmState.passwordRequired && (
+                <label>
+                  <span>{actionConfirmState.passwordLabel}</span>
+                  <input
+                    type="password"
+                    value={actionConfirmPassword}
+                    onChange={(event) => setActionConfirmPassword(event.target.value)}
+                    autoComplete="current-password"
+                  />
+                </label>
+              )}
+            </div>
+
+            {actionConfirmError && <p className="sales-action-confirm-error">{actionConfirmError}</p>}
+
+            <div className="sales-action-confirm-actions">
+              <button
+                type="button"
+                className="sales-action-confirm-cancel"
+                onClick={() => closeActionConfirm({ confirmed: false, reason: '', password: '' })}
+              >
+                {actionConfirmState.cancelLabel}
+              </button>
+              <button
+                type="button"
+                className="sales-action-confirm-submit"
+                onClick={submitActionConfirm}
+              >
+                {actionConfirmState.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
       {previewDialog && (

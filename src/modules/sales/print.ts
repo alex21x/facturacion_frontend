@@ -997,10 +997,15 @@ export type CashReportDocumentItem = {
   quantity: number;
   unit_code: string;
   unit_price: number;
+  line_subtotal?: number;
   unit_cost?: number;
   cost_total?: number;
   margin_total?: number;
   margin_percent?: number;
+  margin_total_net?: number;
+  margin_percent_net?: number;
+  margin_total_commercial?: number;
+  margin_percent_commercial?: number;
   margin_source?: 'REAL' | 'ESTIMATED';
   line_total: number;
 };
@@ -1049,32 +1054,45 @@ export type CashReportPrintData = {
   company?: PrintableCompanyProfile | null;
 };
 
-function resolveCashItemMargin(item: CashReportDocumentItem): { costTotal: number; marginTotal: number; marginPercent: number } {
-  const lineTotal = Number(item.line_total || 0);
-  if (lineTotal <= 0) {
-    return { costTotal: 0, marginTotal: 0, marginPercent: 0 };
+function resolveCashItemMargin(item: CashReportDocumentItem): { costTotal: number; marginTotalNet: number; marginPercentNet: number; marginTotalCommercial: number; marginPercentCommercial: number } {
+  const lineNet = Number(item.line_subtotal ?? item.line_total ?? 0);
+  const lineGross = Number(item.line_total ?? 0);
+  const commercialCostFactor = lineNet > 0 && lineGross > 0
+    ? Math.max(1, lineGross / lineNet)
+    : 1;
+  if (lineNet <= 0 && lineGross <= 0) {
+    return { costTotal: 0, marginTotalNet: 0, marginPercentNet: 0, marginTotalCommercial: 0, marginPercentCommercial: 0 };
   }
 
-  const providedMargin = Number(item.margin_total ?? NaN);
   const providedCost = Number(item.cost_total ?? NaN);
 
-  if (Number.isFinite(providedMargin)) {
-    const marginTotal = providedMargin;
-    const costTotal = Number.isFinite(providedCost) ? providedCost : lineTotal - marginTotal;
+  // Prefer explicit dual-margin fields from backend
+  const providedMarginNet = Number(item.margin_total_net ?? item.margin_total ?? NaN);
+  const providedMarginCommercial = Number(item.margin_total_commercial ?? NaN);
+
+  if (Number.isFinite(providedMarginNet)) {
+    const costTotal = Number.isFinite(providedCost) ? providedCost : lineNet - providedMarginNet;
+    const commercialCostTotal = costTotal * commercialCostFactor;
+    const marginTotalCommercial = Number.isFinite(providedMarginCommercial) ? providedMarginCommercial : lineGross - commercialCostTotal;
     return {
       costTotal,
-      marginTotal,
-      marginPercent: lineTotal > 0 ? (marginTotal / lineTotal) * 100 : 0,
+      marginTotalNet: providedMarginNet,
+      marginPercentNet: lineNet > 0 ? (providedMarginNet / lineNet) * 100 : 0,
+      marginTotalCommercial,
+      marginPercentCommercial: lineGross > 0 ? (marginTotalCommercial / lineGross) * 100 : 0,
     };
   }
 
-  const estimatedMargin = lineTotal * 0.22;
-  const marginTotal = Math.min(Math.max(estimatedMargin, 0), lineTotal * 0.35);
-  const costTotal = Math.max(0, lineTotal - marginTotal);
+  const estimatedMarginNet = Math.min(Math.max(lineNet * 0.22, 0), lineNet * 0.35);
+  const costTotal = Math.max(0, lineNet - estimatedMarginNet);
+  const commercialCostTotal = costTotal * commercialCostFactor;
+  const marginTotalCommercial = Math.max(0, lineGross - commercialCostTotal);
   return {
     costTotal,
-    marginTotal,
-    marginPercent: lineTotal > 0 ? (marginTotal / lineTotal) * 100 : 0,
+    marginTotalNet: estimatedMarginNet,
+    marginPercentNet: lineNet > 0 ? (estimatedMarginNet / lineNet) * 100 : 0,
+    marginTotalCommercial,
+    marginPercentCommercial: lineGross > 0 ? (marginTotalCommercial / lineGross) * 100 : 0,
   };
 }
 
@@ -1083,6 +1101,30 @@ function resolveCashVehicleSnapshot(doc: CashReportDocument): { plate: string; b
   const brand = String(doc.vehicle_brand_snapshot ?? '').trim() || '-';
   const model = String(doc.vehicle_model_snapshot ?? '').trim() || '-';
   return { plate, brand, model };
+}
+
+function resolveCashActorLabel(rawUser: string | null | undefined): { compact: string; seller: string; issuer: string } {
+  const raw = String(rawUser ?? '').trim();
+  if (!raw) {
+    return { compact: 'N/A', seller: 'N/A', issuer: 'N/A' };
+  }
+
+  const match = raw.match(/^\s*Solicita:\s*(.*?)\s*\|\s*Emite:\s*(.*?)\s*$/i);
+  if (match) {
+    const seller = (match[1] || '').trim() || 'N/A';
+    const issuer = (match[2] || '').trim() || 'N/A';
+    return {
+      compact: `Solicita: ${seller} | Emite: ${issuer}`,
+      seller,
+      issuer,
+    };
+  }
+
+  return {
+    compact: raw,
+    seller: raw,
+    issuer: raw,
+  };
 }
 
 export function buildCashReportHtml80mm(
@@ -1105,6 +1147,7 @@ export function buildCashReportHtml80mm(
   const productMap = new Map<string, {
     documentKind: string;
     documentNumber: string;
+    sellerName: string;
     vehiclePlate: string;
     vehicleBrand: string;
     vehicleModel: string;
@@ -1112,12 +1155,16 @@ export function buildCashReportHtml80mm(
     unitCode: string;
     paymentMethod: string;
     quantity: number;
-    amount: number;
+    netAmount: number;
+    grossAmount: number;
     marginAmount: number;
+    marginAmountCommercial: number;
   }>();
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
+    const actor = resolveCashActorLabel(doc.user_name);
+    const sellerName = actor.compact;
     const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
     const vehiclePlate = vehicleSnapshot.plate;
     const vehicleBrand = vehicleSnapshot.brand;
@@ -1126,18 +1173,23 @@ export function buildCashReportHtml80mm(
     for (const item of doc.items ?? []) {
       const description = (item.description || '').trim() || 'Producto sin descripcion';
       const unitCode = (item.unit_code || '').trim() || '-';
-      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
+      const lineNetAmount = Number(item.line_subtotal ?? item.line_total ?? 0);
+      const lineGrossAmount = Number(item.line_total || 0);
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${sellerName.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
       const current = productMap.get(key);
+      const marginMeta = resolveCashItemMargin(item);
 
       if (current) {
         current.quantity += Number(item.quantity || 0);
-        current.amount += Number(item.line_total || 0);
-        current.marginAmount += resolveCashItemMargin(item).marginTotal;
+        current.netAmount += lineNetAmount;
+        current.grossAmount += lineGrossAmount;
+        current.marginAmount += marginMeta.marginTotalNet;
+        current.marginAmountCommercial += marginMeta.marginTotalCommercial;
       } else {
-        const marginMeta = resolveCashItemMargin(item);
         productMap.set(key, {
           documentKind,
           documentNumber,
+          sellerName,
           vehiclePlate,
           vehicleBrand,
           vehicleModel,
@@ -1145,19 +1197,23 @@ export function buildCashReportHtml80mm(
           unitCode,
           paymentMethod,
           quantity: Number(item.quantity || 0),
-          amount: Number(item.line_total || 0),
-          marginAmount: marginMeta.marginTotal,
+          netAmount: lineNetAmount,
+          grossAmount: lineGrossAmount,
+          marginAmount: marginMeta.marginTotalNet,
+          marginAmountCommercial: marginMeta.marginTotalCommercial,
         });
       }
     }
   }
 
-  const productRowsData = Array.from(productMap.values()).sort((a, b) => b.amount - a.amount);
+  // Keep chronological document order from backend to match session movements and avoid confusion.
+  const productRowsData = Array.from(productMap.values());
   const productRows = productRowsData
     .map(
       (row) => `
         <tr>
           <td style="font-size:8px">${escapeHtml(row.description)}</td>
+          <td style="font-size:8px">${escapeHtml(row.sellerName)}</td>
           <td style="font-size:8px">${escapeHtml(row.paymentMethod)}</td>
           <td class="ta-r" style="font-size:8px">${row.quantity.toFixed(2)}</td>
           <td style="font-size:8px">${escapeHtml(row.documentKind)}</td>
@@ -1167,15 +1223,20 @@ export function buildCashReportHtml80mm(
             <div><b>Marca:</b> ${escapeHtml(row.vehicleBrand)}</div>
             <div><b>Modelo:</b> ${escapeHtml(row.vehicleModel)}</div>
           </td>` : ''}
-          <td class="ta-r" style="font-size:8px;font-weight:700">${formatMoney(row.amount)}</td>
-          <td class="ta-r" style="font-size:8px;color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmount)}</td>
+          <td class="ta-r" style="font-size:8px;font-weight:700">${formatMoney(row.grossAmount)}</td>
+          <td class="ta-r" style="font-size:8px;color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmount)}${row.netAmount > 0 ? `<div style="font-size:7px;color:#64748b">${((row.marginAmount / row.netAmount) * 100).toFixed(1)}%</div>` : ''}</td>
+          <td class="ta-r" style="font-size:8px;color:${row.marginAmountCommercial >= 0 ? '#0369a1' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmountCommercial)}</td>
         </tr>`,
     )
     .join('');
 
   const totalProductQty = productRowsData.reduce((sum, row) => sum + row.quantity, 0);
-  const totalProductAmount = productRowsData.reduce((sum, row) => sum + row.amount, 0);
+  const totalProductNet = productRowsData.reduce((sum, row) => sum + row.netAmount, 0);
+  const totalProductGross = productRowsData.reduce((sum, row) => sum + row.grossAmount, 0);
   const totalProductMargin = productRowsData.reduce((sum, row) => sum + row.marginAmount, 0);
+  const totalProductMarginPercent = totalProductNet > 0 ? (totalProductMargin / totalProductNet) * 100 : 0;
+  const totalProductMarginCommercial = productRowsData.reduce((sum, row) => sum + row.marginAmountCommercial, 0);
+  const totalProductMarginCommercialPercent = totalProductGross > 0 ? (totalProductMarginCommercial / totalProductGross) * 100 : 0;
 
   return `
     <html>
@@ -1245,6 +1306,8 @@ export function buildCashReportHtml80mm(
             <div class="row"><div class="label">Saldo Inicial:</div><div class="value">S/ ${formatMoney(data.openingBalance)}</div></div>
             <div class="row"><div class="label">Entradas (+):</div><div class="value">S/ ${formatMoney(data.totalIn)}</div></div>
             <div class="row"><div class="label">Salidas (-):</div><div class="value">S/ ${formatMoney(data.totalOut)}</div></div>
+            <div class="row"><div class="label">Margen neto:</div><div class="value">S/ ${formatMoney(totalProductMargin)} (${totalProductMarginPercent.toFixed(1)}%)</div></div>
+            <div class="row"><div class="label">Margen comercial:</div><div class="value">S/ ${formatMoney(totalProductMarginCommercial)}</div></div>
             <div class="row"><div class="label">Esperado:</div><div class="value">S/ ${formatMoney(data.expectedBalance)}</div></div>
             <div class="row" style="font-weight:700;border-top:1px solid #000;padding-top:1mm"><div class="label">Real:</div><div class="value">S/ ${formatMoney(data.closingBalance)}</div></div>
             ${data.difference !== 0 ? `<div class="row" style="color:${data.difference >= 0 ? '#008000' : '#cc0000'}"><div class="label">Diferencia:</div><div class="value">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</div></div>` : ''}
@@ -1265,10 +1328,10 @@ export function buildCashReportHtml80mm(
           <div class="section">
             <div class="section-title">PRODUCTOS VENDIDOS</div>
             <table class="product-table">
-              <thead><tr><th>Producto</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total</th><th class="ta-r">Margen</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Solicita / Emite</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total venta</th><th class="ta-r">M. neto</th><th class="ta-r">M. comercial</th></tr></thead>
               <tbody>
                 ${productRows}
-                <tr class="total-row"><td colspan="2">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductAmount)}</td><td class="ta-r">${formatMoney(totalProductMargin)}</td></tr>
+                <tr class="total-row"><td colspan="3">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductGross)}</td><td class="ta-r">${formatMoney(totalProductMargin)} (${totalProductMarginPercent.toFixed(1)}%)</td><td class="ta-r">${formatMoney(totalProductMarginCommercial)}</td></tr>
               </tbody>
             </table>
           </div>` : ''}
@@ -1299,6 +1362,7 @@ export function buildCashReportHtmlA4(
   const productMap = new Map<string, {
     documentKind: string;
     documentNumber: string;
+    sellerName: string;
     vehiclePlate: string;
     vehicleBrand: string;
     vehicleModel: string;
@@ -1306,12 +1370,16 @@ export function buildCashReportHtmlA4(
     unitCode: string;
     paymentMethod: string;
     quantity: number;
-    amount: number;
+    netAmount: number;
+    grossAmount: number;
     marginAmount: number;
+    marginAmountCommercial: number;
   }>();
   for (const doc of data.documents ?? []) {
     const documentKind = cashDocumentKindLabel(doc.document_kind);
     const documentNumber = (doc.document_number || '').trim() || '-';
+    const actor = resolveCashActorLabel(doc.user_name);
+    const sellerName = actor.compact;
     const vehicleSnapshot = resolveCashVehicleSnapshot(doc);
     const vehiclePlate = vehicleSnapshot.plate;
     const vehicleBrand = vehicleSnapshot.brand;
@@ -1320,18 +1388,23 @@ export function buildCashReportHtmlA4(
     for (const item of doc.items ?? []) {
       const description = (item.description || '').trim() || 'Producto sin descripcion';
       const unitCode = (item.unit_code || '').trim() || '-';
-      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
+      const lineNetAmount = Number(item.line_subtotal ?? item.line_total ?? 0);
+      const lineGrossAmount = Number(item.line_total || 0);
+      const key = `${documentKind.toLowerCase()}__${documentNumber.toLowerCase()}__${sellerName.toLowerCase()}__${description.toLowerCase()}__${unitCode.toLowerCase()}__${paymentMethod.toLowerCase()}__${(data.showVehicleInfo ? `${vehiclePlate.toLowerCase()}__${vehicleBrand.toLowerCase()}__${vehicleModel.toLowerCase()}` : '')}`;
       const current = productMap.get(key);
+      const marginMeta = resolveCashItemMargin(item);
 
       if (current) {
         current.quantity += Number(item.quantity || 0);
-        current.amount += Number(item.line_total || 0);
-        current.marginAmount += resolveCashItemMargin(item).marginTotal;
+        current.netAmount += lineNetAmount;
+        current.grossAmount += lineGrossAmount;
+        current.marginAmount += marginMeta.marginTotalNet;
+        current.marginAmountCommercial += marginMeta.marginTotalCommercial;
       } else {
-        const marginMeta = resolveCashItemMargin(item);
         productMap.set(key, {
           documentKind,
           documentNumber,
+          sellerName,
           vehiclePlate,
           vehicleBrand,
           vehicleModel,
@@ -1339,34 +1412,43 @@ export function buildCashReportHtmlA4(
           unitCode,
           paymentMethod,
           quantity: Number(item.quantity || 0),
-          amount: Number(item.line_total || 0),
-          marginAmount: marginMeta.marginTotal,
+          netAmount: lineNetAmount,
+          grossAmount: lineGrossAmount,
+          marginAmount: marginMeta.marginTotalNet,
+          marginAmountCommercial: marginMeta.marginTotalCommercial,
         });
       }
     }
   }
 
-  const productRowsData = Array.from(productMap.values()).sort((a, b) => b.amount - a.amount);
+  // Keep chronological document order from backend to match session movements and avoid confusion.
+  const productRowsData = Array.from(productMap.values());
   const productRows = productRowsData
     .map(
       (row) => `
       <tr>
         <td>${escapeHtml(row.description)}</td>
+        <td>${escapeHtml(row.sellerName)}</td>
         <td>${escapeHtml(row.paymentMethod)}</td>
         <td class="ta-c">${escapeHtml(row.unitCode)}</td>
         <td class="ta-r">${row.quantity.toFixed(3)}</td>
         <td>${escapeHtml(row.documentKind)}</td>
         <td>${escapeHtml(row.documentNumber)}</td>
         ${data.showVehicleInfo ? `<td class="cash-vehicle-cell"><div><b>Placa:</b> ${escapeHtml(row.vehiclePlate)}</div><div><b>Marca:</b> ${escapeHtml(row.vehicleBrand)}</div><div><b>Modelo:</b> ${escapeHtml(row.vehicleModel)}</div></td>` : ''}
-        <td class="ta-r">S/ ${formatMoney(row.amount)}</td>
-        <td class="ta-r" style="color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(row.marginAmount)}</td>
+        <td class="ta-r">S/ ${formatMoney(row.grossAmount)}</td>
+        <td class="ta-r" style="color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(row.marginAmount)}${row.netAmount > 0 ? `<div style="font-size:10px;color:#64748b">${((row.marginAmount / row.netAmount) * 100).toFixed(1)}%</div>` : ''}</td>
+        <td class="ta-r" style="color:${row.marginAmountCommercial >= 0 ? '#0369a1' : '#dc2626'}">S/ ${formatMoney(row.marginAmountCommercial)}</td>
       </tr>`,
     )
     .join('');
 
   const totalProductQty = productRowsData.reduce((sum, row) => sum + row.quantity, 0);
-  const totalProductAmount = productRowsData.reduce((sum, row) => sum + row.amount, 0);
+  const totalProductNet = productRowsData.reduce((sum, row) => sum + row.netAmount, 0);
+  const totalProductGross = productRowsData.reduce((sum, row) => sum + row.grossAmount, 0);
   const totalProductMargin = productRowsData.reduce((sum, row) => sum + row.marginAmount, 0);
+  const totalProductMarginPercent = totalProductNet > 0 ? (totalProductMargin / totalProductNet) * 100 : 0;
+  const totalProductMarginCommercial = productRowsData.reduce((sum, row) => sum + row.marginAmountCommercial, 0);
+  const totalProductMarginCommercialPercent = totalProductGross > 0 ? (totalProductMarginCommercial / totalProductGross) * 100 : 0;
 
   return `
     <html>
@@ -1384,7 +1466,7 @@ export function buildCashReportHtmlA4(
           .header-logo { width: 88px; height: 88px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; display: block; margin: 0 auto 6px; }
           .header h1 { margin: 0; font-size: 18px; font-weight: 700; }
           .header p { margin: 1px 0; font-size: 11px; color: #64748b; }
-          .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+          .summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
           .metric { border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; }
           .metric span { display: block; font-size: 10px; color: #64748b; }
           .metric strong { display: block; margin-top: 2px; font-size: 14px; }
@@ -1431,6 +1513,8 @@ export function buildCashReportHtmlA4(
             <article class="metric"><span>Saldo esperado</span><strong>S/ ${formatMoney(data.expectedBalance)}</strong></article>
             <article class="metric"><span>Saldo real</span><strong>S/ ${formatMoney(data.closingBalance)}</strong></article>
             <article class="metric"><span>Diferencia</span><strong style="color:${data.difference >= 0 ? '#059669' : '#dc2626'}">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</strong></article>
+            <article class="metric"><span>Margen neto</span><strong style="color:${totalProductMargin >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(totalProductMargin)}</strong><span>${totalProductMarginPercent.toFixed(1)}%</span></article>
+            <article class="metric"><span>Margen comercial</span><strong style="color:${totalProductMarginCommercial >= 0 ? '#0369a1' : '#dc2626'}">S/ ${formatMoney(totalProductMarginCommercial)}</strong></article>
           </div>
 
           <div class="section">
@@ -1447,10 +1531,10 @@ export function buildCashReportHtmlA4(
           <div class="section">
             <div class="section-title">Productos vendidos en la sesion</div>
             <table class="cash-products-table">
-              <thead><tr><th style="width:${data.showVehicleInfo ? '24%' : '30%'}">Producto</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Tipo de pago</th><th class="ta-c" style="width:6%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '8%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '10%' : '10%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '10%' : '11%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:18%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '8%' : '10%'}">Total</th><th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '10%'}">Margen</th></tr></thead>
+              <thead><tr><th style="width:${data.showVehicleInfo ? '17%' : '22%'}">Producto</th><th style="width:${data.showVehicleInfo ? '11%' : '12%'}">Solicita / Emite</th><th style="width:${data.showVehicleInfo ? '9%' : '10%'}">Tipo de pago</th><th class="ta-c" style="width:5%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '7%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '9%' : '9%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '9%' : '9%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:13%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '9%'}">Total venta</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '8%'}">M. neto</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '8%'}">M. comercial</th></tr></thead>
               <tbody>
-                ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '9' : '8'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
-                <tr class="total-row"><td colspan="3">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductAmount)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td></tr>
+                ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '11' : '10'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
+                <tr class="total-row"><td colspan="4">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductGross)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)} (${totalProductMarginPercent.toFixed(1)}%)</td><td class="ta-r">S/ ${formatMoney(totalProductMarginCommercial)}</td></tr>
               </tbody>
             </table>
           </div>
