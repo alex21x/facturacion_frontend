@@ -400,3 +400,140 @@ export async function updateCompanyInventorySettingsAdminMatrix(
     body: JSON.stringify({ company_id: companyId, ...settings }),
   });
 }
+
+export async function downloadSystemDatabaseBackup(
+  accessToken: string,
+  companyId: number
+): Promise<{ blob: Blob; fileName: string }> {
+  const response = await apiClient.requestRaw(`/api/appcfg/system-backups/database-export?company_id=${companyId}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    let message = `No se pudo exportar el respaldo (${response.status}).`;
+    try {
+      const payload = await response.json() as { message?: string };
+      if (typeof payload?.message === 'string' && payload.message.trim() !== '') {
+        message = payload.message;
+      }
+    } catch {
+      // Keep generic message when body is not JSON.
+    }
+
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get('content-disposition') ?? '';
+  const match = contentDisposition.match(/filename\*?=(?:UTF-8''|\")?([^\";]+)/i);
+  const fileName = match?.[1] ? decodeURIComponent(match[1]) : 'facturacion_full_backup.sql';
+
+  return { blob, fileName };
+}
+
+export type SystemBackupFileRow = {
+  file_name: string;
+  size_bytes: number;
+  size_label: string;
+  generated_at: string;
+};
+
+export type SystemBackupListResponse = {
+  backups: SystemBackupFileRow[];
+  pagination: {
+    page: number;
+    per_page: number;
+    total: number;
+    last_page: number;
+  };
+};
+
+export async function listSystemDatabaseBackups(
+  accessToken: string,
+  companyId: number,
+  page = 1,
+  perPage = 10
+): Promise<SystemBackupListResponse> {
+  const response = await apiClient.request<SystemBackupListResponse>(
+    `/api/appcfg/system-backups/database-files?company_id=${companyId}&page=${page}&per_page=${perPage}`,
+    {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+    }
+  );
+
+  return {
+    backups: response.backups ?? [],
+    pagination: {
+      page: Number(response.pagination?.page ?? page),
+      per_page: Number(response.pagination?.per_page ?? perPage),
+      total: Number(response.pagination?.total ?? 0),
+      last_page: Number(response.pagination?.last_page ?? 1),
+    },
+  };
+}
+
+export async function downloadSystemDatabaseBackupFile(
+  accessToken: string,
+  companyId: number,
+  fileName: string
+): Promise<{ blob: Blob; fileName: string }> {
+  const encodedName = encodeURIComponent(fileName);
+  const response = await apiClient.requestRaw(`/api/appcfg/system-backups/database-files/${encodedName}?company_id=${companyId}`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+
+  if (!response.ok) {
+    let message = `No se pudo descargar el respaldo (${response.status}).`;
+    try {
+      const payload = await response.json() as { message?: string };
+      if (typeof payload?.message === 'string' && payload.message.trim() !== '') {
+        message = payload.message;
+      }
+    } catch {
+      // Keep generic message when body is not JSON.
+    }
+
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get('content-disposition') ?? '';
+  const match = contentDisposition.match(/filename\*?=(?:UTF-8''|\")?([^\";]+)/i);
+  const resolvedFileName = match?.[1] ? decodeURIComponent(match[1]) : fileName;
+
+  return { blob, fileName: resolvedFileName };
+}
+
+export async function restoreSystemDatabaseBackup(
+  accessToken: string,
+  companyId: number,
+  file: File
+): Promise<{ message: string }> {
+  const form = new FormData();
+  form.append('company_id', String(companyId));
+  form.append('backup_file', file);
+
+  const response = await apiClient.requestRaw('/api/appcfg/system-backups/database-restore', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: form,
+  });
+
+  if (!response.ok) {
+    let message = `No se pudo restaurar el respaldo (${response.status}).`;
+    try {
+      const payload = await response.json() as { message?: string };
+      if (typeof payload?.message === 'string' && payload.message.trim() !== '') {
+        message = payload.message;
+      }
+    } catch {
+      // Keep generic message when body is not JSON.
+    }
+    throw new Error(message);
+  }
+
+  return response.json() as Promise<{ message: string }>;
+}
