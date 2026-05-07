@@ -597,6 +597,8 @@ if (-not (Test-Path $clientConfig)) {
         "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql",
         "TRANSACTIONAL_CLEANUP_SQL_PATH=database\sql\clean_transactional_operational.sql",
         "CLEAN_TRANSACTIONAL_ON_RESTORE=true",
+        "DB_BACKUP_DIR=backups\db",
+        "PRE_RESTORE_AUTO_BACKUP=true",
         "RUN_MIGRATIONS=true"
     )
 }

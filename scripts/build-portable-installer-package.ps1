@@ -19,11 +19,14 @@ $portableBackend = Join-Path $portablePayload "facturacion_backend"
 $portableDatabaseSql = Join-Path $OutputRoot "database\sql"
 
 $trackedScripts = @(
+    'exportar-bd-local.bat',
+    'restaurar-bd-local.bat',
     'actualizar-local.bat',
     'apagar-local.bat',
     'append_cfg_css.ps1',
     'build-portable-installer-package.ps1',
     'clean-transactional-local.ps1',
+    'export-db-local.ps1',
     'config-red-local.bat',
     'desinstalar-local.bat',
     'instalar-local.bat',
@@ -39,6 +42,7 @@ $trackedScripts = @(
     'test-all-local.ps1',
     'uninstall-local.ps1',
     'update-local.ps1',
+    'restore-db-local.ps1',
     'validar-local.bat'
 )
 
