@@ -179,7 +179,7 @@ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
         "core.company_settings",
         "core.companies",
         "auth.users",
-        "master.branches",
+        "core.branches",
         "sales.series_numbers"
     )
 
@@ -597,8 +597,6 @@ if (-not (Test-Path $clientConfig)) {
         "BOOTSTRAP_SQL_PATH=..\facturacion_backend\facturacion_v2_bootstrap_20260423.sql",
         "TRANSACTIONAL_CLEANUP_SQL_PATH=database\sql\clean_transactional_operational.sql",
         "CLEAN_TRANSACTIONAL_ON_RESTORE=true",
-        "DB_BACKUP_DIR=backups\db",
-        "PRE_RESTORE_AUTO_BACKUP=true",
         "RUN_MIGRATIONS=true"
     )
 }
@@ -661,15 +659,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose v2 no esta disponible. Salida: $($composeVersion -join ' ')"
 }
 
-# Always ensure daemon.json has explicit DNS servers so Docker builds can reach apt/pypi/etc.
-# Repair-DockerDnsResolution is idempotent; it merges existing config without overwriting.
-Repair-DockerDnsResolution
-Append-InstallLog 'DNS de Docker verificado/reparado antes del primer compose up.'
+Append-InstallLog 'Instalacion rapida: se omite reparacion DNS preventiva (solo se aplica ante falla real).'
 
 Write-Host 'Levantando stack local Docker...' -ForegroundColor Cyan
 $previousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = 'Continue'
-$composeUpOutput = docker compose @composeArgs up -d --build 2>&1
+$composeUpOutput = docker compose @composeArgs up -d 2>&1
 $composeExitCode = $LASTEXITCODE
 $ErrorActionPreference = $previousErrorActionPreference
 if ($composeExitCode -ne 0) {
@@ -680,6 +675,7 @@ if ($composeExitCode -ne 0) {
     $dnsFailure     = ($composeOutputText -match 'registry-1\.docker\.io|no such host|lookup.*docker') 
     $aptFailure     = ($composeOutputText -match 'apt-get|exit code 100|E: Unable to fetch|E: Failed to fetch')
     $entrypointBad  = ($composeOutputText -match 'docker-entrypoint\.sh.*no such file|no such file.*docker-entrypoint|exec.*entrypoint.*no such file')
+    $postgresUpgradeMismatch = $false
 
     if ($dnsFailure -or $aptFailure) {
         Write-Host 'Detectado fallo DNS/red en build Docker. Reparando DNS y reintentando...' -ForegroundColor Yellow
@@ -690,11 +686,28 @@ if ($composeExitCode -ne 0) {
     Write-Host 'Error al levantar el stack local. Salida de docker compose up:' -ForegroundColor Red
     $composeUpOutput | ForEach-Object { Write-Host $_ -ForegroundColor DarkYellow }
 
+    # Detect PostgreSQL 18+ volume layout mismatch from previous versions.
+    # If detected, recreate postgres volume automatically (clean install behavior).
+    $postgresLogsText = (docker compose @composeArgs logs --tail=120 postgres 2>&1 | Out-String)
+    if ($postgresLogsText -match 'in 18\+, these Docker images are configured to store database data' -or $postgresLogsText -match 'Counter to that, there appears to be PostgreSQL data in:') {
+        $postgresUpgradeMismatch = $true
+        Write-Host 'Detectado volumen PostgreSQL incompatible (upgrade 18+). Se recreara volumen de postgres para continuar.' -ForegroundColor Yellow
+        Append-InstallLog 'Detectado mismatch de volumen PostgreSQL 18+. Se ejecutara down -v para recrear volumen.'
+    }
+
     Write-Host ''
-    Write-Host 'Intentando recuperacion automatica (down + segundo up)...' -ForegroundColor Yellow
-    docker compose @composeArgs down --remove-orphans 2>&1 | ForEach-Object {
-        Write-Host $_ -ForegroundColor DarkGray
-        Append-InstallLog $_
+    if ($postgresUpgradeMismatch) {
+        Write-Host 'Intentando recuperacion automatica (down -v + segundo up con build)...' -ForegroundColor Yellow
+        docker compose @composeArgs down --remove-orphans -v 2>&1 | ForEach-Object {
+            Write-Host $_ -ForegroundColor DarkGray
+            Append-InstallLog $_
+        }
+    } else {
+        Write-Host 'Intentando recuperacion automatica (down + segundo up con build)...' -ForegroundColor Yellow
+        docker compose @composeArgs down --remove-orphans 2>&1 | ForEach-Object {
+            Write-Host $_ -ForegroundColor DarkGray
+            Append-InstallLog $_
+        }
     }
 
     if ($entrypointBad -or $aptFailure) {
@@ -759,7 +772,15 @@ if ($runMigrations -eq 'true') {
     if ($bootstrapRestored -and $cleanTransactionalOnRestore -eq 'true') {
         Write-Host 'Limpiando tablas operacionales/transaccionales del dump base...' -ForegroundColor Cyan
         try {
-            Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath (Join-Path $frontendRoot $transactionalCleanupSqlPath)
+            $cleanupSqlFullPath = Join-Path $frontendRoot $transactionalCleanupSqlPath
+            if (-not (Test-Path $cleanupSqlFullPath)) {
+                $cleanupSqlFallback = Join-Path (Join-Path $PSScriptRoot '..\database\sql') 'clean_transactional_operational.sql'
+                if (Test-Path $cleanupSqlFallback) {
+                    $cleanupSqlFullPath = $cleanupSqlFallback
+                }
+            }
+
+            Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath $cleanupSqlFullPath
             Append-InstallLog 'Limpieza transaccional aplicada sobre dump restaurado.'
         } catch {
             Write-Host "ADVERTENCIA: Limpieza transaccional no critica fallo: $_" -ForegroundColor Yellow
@@ -778,114 +799,10 @@ if ($runMigrations -eq 'true') {
     if (-not $ok) { throw 'No se pudieron aplicar migraciones automaticamente.' }
 }
 
-# Keep superadmin credentials deterministic for every fresh/local install.
-$seedSuperAdminSqlPath = Join-Path $env:TEMP 'facturacion_seed_superadmin.sql'
-Set-Content -Path $seedSuperAdminSqlPath -Encoding UTF8 -Value @'
-DO $$
-DECLARE
-    v_now timestamptz := now();
-    v_branch_id bigint;
-    v_role_id bigint;
-    v_user_id bigint;
-BEGIN
-    SELECT id INTO v_branch_id
-    FROM core.branches
-    WHERE company_id = 1 AND is_main = true
-    ORDER BY id
-    LIMIT 1;
-
-    IF v_branch_id IS NULL THEN
-        SELECT id INTO v_branch_id
-        FROM core.branches
-        WHERE company_id = 1
-        ORDER BY id
-        LIMIT 1;
-    END IF;
-
-    IF v_branch_id IS NULL THEN
-        RAISE EXCEPTION 'No existe sucursal para company_id=1';
-    END IF;
-
-    SELECT id INTO v_role_id
-    FROM auth.roles
-    WHERE company_id = 1 AND UPPER(code) = 'ADMIN'
-    ORDER BY id
-    LIMIT 1;
-
-    IF v_role_id IS NULL THEN
-        INSERT INTO auth.roles (company_id, code, name, status)
-        VALUES (1, 'ADMIN', 'Administrador', 1)
-        RETURNING id INTO v_role_id;
-    END IF;
-
-    SELECT id INTO v_user_id
-    FROM auth.users
-    WHERE username = 'admin_panel'
-    ORDER BY id
-    LIMIT 1;
-
-    IF v_user_id IS NULL THEN
-        INSERT INTO auth.users (
-            company_id,
-            branch_id,
-            username,
-            password_hash,
-            first_name,
-            last_name,
-            email,
-            phone,
-            status,
-            created_at,
-            updated_at
-        ) VALUES (
-            1,
-            v_branch_id,
-            'admin_panel',
-            '$2y$10$kt/Rblu2jmRTCMHZ9pMnJez2MNNTiwrkgXYWMAvmNTbH2QbJGe5l.',
-            'Super',
-            'Admin',
-            'admin.panel@demo.local',
-            NULL,
-            1,
-            v_now,
-            v_now
-        ) RETURNING id INTO v_user_id;
-    ELSE
-        UPDATE auth.users
-        SET company_id = 1,
-            branch_id = v_branch_id,
-            password_hash = '$2y$10$kt/Rblu2jmRTCMHZ9pMnJez2MNNTiwrkgXYWMAvmNTbH2QbJGe5l.',
-            first_name = 'Super',
-            last_name = 'Admin',
-            email = 'admin.panel@demo.local',
-            status = 1,
-            updated_at = v_now
-        WHERE id = v_user_id;
-    END IF;
-
-    IF NOT EXISTS (
-        SELECT 1
-        FROM auth.user_roles
-        WHERE user_id = v_user_id AND role_id = v_role_id
-    ) THEN
-        INSERT INTO auth.user_roles (user_id, role_id)
-        VALUES (v_user_id, v_role_id);
-    END IF;
-
-    IF to_regclass('appcfg.admin_portal_users') IS NOT NULL THEN
-        INSERT INTO appcfg.admin_portal_users (user_id, status, created_at, updated_at)
-        VALUES (v_user_id, 1, v_now, v_now)
-        ON CONFLICT (user_id) DO UPDATE
-        SET status = EXCLUDED.status,
-            updated_at = EXCLUDED.updated_at;
-    END IF;
-END;
-$$;
-'@
-
-Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath $seedSuperAdminSqlPath
+Write-Host 'Asegurando credenciales locales del usuario admin_panel...' -ForegroundColor Cyan
+docker compose @composeArgs exec -T backend php artisan tinker --execute "if (!DB::table('auth.users')->where('username','admin_panel')->exists()) { DB::table('auth.users')->where('username','admin')->update(['username'=>'admin_panel']); } DB::table('auth.users')->where('username','admin_panel')->update(['password_hash'=>Hash::make('Admin123456!'),'updated_at'=>now()]);"
 if ($LASTEXITCODE -ne 0) {
-    throw 'No se pudo asegurar el superadmin por defecto (admin_panel).'
+    throw 'No se pudo establecer las credenciales locales del usuario admin_panel.'
 }
 
 $cmdPath = (Get-Command cmd.exe).Source
@@ -906,5 +823,4 @@ if (Test-Path $updateShortcutPath) { Remove-Item $updateShortcutPath -Force }
 if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Force }
 
 Write-Host 'Instalacion completada.' -ForegroundColor Green
-Write-Host 'Superadmin por defecto: usuario admin_panel / clave Admin123456!' -ForegroundColor Cyan
 Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort -PgAdminPort $pgadminPort -PgAdminEmail $pgadminEmail -PgAdminPassword $pgadminPassword

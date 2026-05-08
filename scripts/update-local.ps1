@@ -209,7 +209,7 @@ function Initialize-DatabaseFromBootstrap {
         "core.company_settings",
         "core.companies",
         "auth.users",
-        "master.branches",
+        "core.branches",
         "sales.series_numbers"
     )
 
@@ -277,7 +277,6 @@ $frontendBranch = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_BRANCH"
 $backendBranch = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_BRANCH" -DefaultValue "feature/docker-multientorno"
 $composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key "RUN_MIGRATIONS" -DefaultValue "true"
-$allowBootstrapRestoreOnUpdate = Get-ConfigValue -FilePath $clientConfig -Key "ALLOW_BOOTSTRAP_RESTORE_ON_UPDATE" -DefaultValue "false"
 $dockerBindHost = Get-ConfigValue -FilePath $clientConfig -Key "DOCKER_BIND_HOST" -DefaultValue "127.0.0.1"
 $backendPort = Get-ConfigValue -FilePath $clientConfig -Key "BACKEND_PORT" -DefaultValue "8000"
 $frontendPort = Get-ConfigValue -FilePath $clientConfig -Key "FRONTEND_PORT" -DefaultValue "5173"
@@ -288,6 +287,13 @@ $postgresDb = Get-ConfigValue -FilePath $clientConfig -Key "POSTGRES_DB" -Defaul
 $postgresUser = Get-ConfigValue -FilePath $clientConfig -Key "POSTGRES_USER" -DefaultValue "facturacion"
 $postgresPassword = Get-ConfigValue -FilePath $clientConfig -Key "POSTGRES_PASSWORD" -DefaultValue "facturacion"
 $bootstrapSqlPath = Get-ConfigValue -FilePath $clientConfig -Key "BOOTSTRAP_SQL_PATH" -DefaultValue "..\facturacion_backend\facturacion_v2_export_utf8_clean_20260418_105235.sql"
+$forceBootstrapRestoreOnUpdate = Get-ConfigValue -FilePath $clientConfig -Key "FORCE_BOOTSTRAP_RESTORE_ON_UPDATE" -DefaultValue "false"
+
+if ($forceBootstrapRestoreOnUpdate -eq "true") {
+    Write-Host "FORCE_BOOTSTRAP_RESTORE_ON_UPDATE=true detectado, pero actualizar-local siempre preserva datos transaccionales/operacionales." -ForegroundColor Yellow
+    Write-Host "Se omite restauracion de dump para evitar perdida de informacion sensible." -ForegroundColor Yellow
+    $forceBootstrapRestoreOnUpdate = "false"
+}
 
 $composeArgs = @("-p", $composeProject, "-f", $ComposeFile)
 
@@ -335,18 +341,22 @@ if ($backendClean) {
 }
 
 Write-Host "Reconstruyendo stack local..." -ForegroundColor Cyan
-docker compose @composeArgs up -d --build
+docker compose @composeArgs up -d
 
 if ($LASTEXITCODE -ne 0) {
-    throw "No se pudo reconstruir el stack local."
+    Write-Host "Fallo arranque rapido. Intentando rebuild de backend..." -ForegroundColor Yellow
+    docker compose @composeArgs build backend
+    if ($LASTEXITCODE -ne 0) {
+        throw "No se pudo reconstruir imagen backend."
+    }
+
+    docker compose @composeArgs up -d
+    if ($LASTEXITCODE -ne 0) {
+        throw "No se pudo reconstruir el stack local."
+    }
 }
 
-if ($allowBootstrapRestoreOnUpdate -eq "true") {
-    Write-Host "Modo mantenimiento: restaurar bootstrap durante update esta habilitado." -ForegroundColor Yellow
-    Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
-} else {
-    Write-Host "Update en modo seguro: no se restaura bootstrap ni se toca data sensible." -ForegroundColor Green
-}
+Write-Host "Actualizacion en modo persistente: no se reemplaza la base de datos operativa/transaccional." -ForegroundColor Green
 
 if ($runMigrations -eq "true") {
     Write-Host "Aplicando migraciones post-actualizacion..." -ForegroundColor Cyan
@@ -368,7 +378,11 @@ if ($runMigrations -eq "true") {
     }
 }
 
-Write-Host "Credenciales y usuarios existentes preservados (sin cambios)." -ForegroundColor Green
+Write-Host "Asegurando credenciales locales del usuario admin_panel..." -ForegroundColor Cyan
+docker compose @composeArgs exec -T backend php artisan tinker --execute "if (!DB::table('auth.users')->where('username','admin_panel')->exists()) { DB::table('auth.users')->where('username','admin')->update(['username'=>'admin_panel']); } DB::table('auth.users')->where('username','admin_panel')->update(['password_hash'=>Hash::make('Admin123456!'),'updated_at'=>now()]);"
+if ($LASTEXITCODE -ne 0) {
+    throw "No se pudo establecer las credenciales locales del usuario admin_panel."
+}
 
 Write-Host "Actualizacion completada." -ForegroundColor Green
 if ($dockerBindHost -eq "0.0.0.0") {

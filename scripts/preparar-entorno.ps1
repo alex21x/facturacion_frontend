@@ -90,24 +90,33 @@ function Ensure-Repository {
         git -C $TargetPath config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" | Out-Null
         git -C $TargetPath fetch --all --prune --quiet 2>&1 | Out-Null
         if ($LASTEXITCODE -ne 0) {
-            throw "No se pudo hacer fetch de $Name."
-        }
+            Write-Host "Fallo fetch de $Name. Intentando recuperacion del remoto..." -ForegroundColor Yellow
+            git -C $TargetPath remote set-url origin $RepoUrl 2>&1 | Out-Null
+            git -C $TargetPath fetch --all --prune --quiet 2>&1 | Out-Null
 
-        foreach ($branch in $normalizedCandidates) {
-            $remoteBranchRef = git -C $TargetPath ls-remote --heads origin $branch 2>&1
-            if ([string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
-                continue
-            }
-
-            # -B crea la rama local si no existe, o la resetea si ya existe
-            git -C $TargetPath checkout -q -B $branch "origin/$branch" 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "Rama activa: $branch" -ForegroundColor Green
-                return
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "No se pudo recuperar el repositorio local de $Name. Se recreara desde cero..." -ForegroundColor Yellow
+                Remove-Item -Path $TargetPath -Recurse -Force -ErrorAction SilentlyContinue
             }
         }
 
-        throw "No se encontro una rama remota valida para $Name. Ramas probadas: $($normalizedCandidates -join ', ')."
+        if ((Test-Path $TargetPath) -and (Test-Path (Join-Path $TargetPath ".git"))) {
+            foreach ($branch in $normalizedCandidates) {
+                $remoteBranchRef = git -C $TargetPath ls-remote --heads origin $branch 2>&1
+                if ([string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
+                    continue
+                }
+
+                # -B crea la rama local si no existe, o la resetea si ya existe
+                git -C $TargetPath checkout -q -B $branch "origin/$branch" 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Rama activa: $branch" -ForegroundColor Green
+                    return
+                }
+            }
+
+            throw "No se encontro una rama remota valida para $Name. Ramas probadas: $($normalizedCandidates -join ', ')."
+        }
     }
 
     if (Test-Path $TargetPath) {
@@ -216,6 +225,94 @@ function Assert-PathExists {
     }
 }
 
+function Convert-FileToLf {
+    param([string]$Path)
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    $content = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
+    if ($null -eq $content) {
+        return
+    }
+
+    $normalized = $content -replace "`r`n", "`n"
+    $normalized = $normalized -replace "`r", "`n"
+
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $normalized, $utf8NoBom)
+}
+
+function Ensure-ComposeCompatibility {
+    param([string]$ComposePath)
+
+    if (-not (Test-Path $ComposePath)) {
+        return
+    }
+
+    $composeText = Get-Content -Path $ComposePath -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrWhiteSpace($composeText)) {
+        return
+    }
+
+    # PostgreSQL 18+ requires mounting /var/lib/postgresql instead of /var/lib/postgresql/data.
+    $patchedText = $composeText -replace 'postgres_data:/var/lib/postgresql/data', 'postgres_data:/var/lib/postgresql'
+
+    if ($patchedText -ne $composeText) {
+        $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::WriteAllText($ComposePath, $patchedText, $utf8NoBom)
+    }
+}
+
+function Apply-InstallerDockerOverrides {
+    param(
+        [string]$InstallerScriptsPath,
+        [string]$TargetFrontendPath,
+        [string]$TargetBackendPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($InstallerScriptsPath)) {
+        return
+    }
+
+    $installerRoot = Resolve-Path (Join-Path $InstallerScriptsPath "..") -ErrorAction SilentlyContinue
+    if (-not $installerRoot) {
+        return
+    }
+
+    $installerPayloadFrontend = Join-Path $installerRoot.Path "payload\facturacion_frontend"
+    $installerPayloadBackend = Join-Path $installerRoot.Path "payload\facturacion_backend"
+
+    $frontendOverrides = @(
+        @{ From = (Join-Path $installerPayloadFrontend 'docker-compose.local.yml'); To = (Join-Path $TargetFrontendPath 'docker-compose.local.yml') },
+        @{ From = (Join-Path $installerPayloadFrontend 'docker-entrypoint.frontend.sh'); To = (Join-Path $TargetFrontendPath 'docker-entrypoint.frontend.sh') },
+        @{ From = (Join-Path $installerPayloadFrontend 'docker-entrypoint.admin.sh'); To = (Join-Path $TargetFrontendPath 'docker-entrypoint.admin.sh') }
+    )
+
+    foreach ($item in $frontendOverrides) {
+        if (Test-Path $item.From) {
+            Copy-Item -Path $item.From -Destination $item.To -Force
+        }
+    }
+
+    $backendOverrides = @(
+        @{ From = (Join-Path $installerPayloadBackend 'Dockerfile.local'); To = (Join-Path $TargetBackendPath 'Dockerfile.local') },
+        @{ From = (Join-Path $installerPayloadBackend 'docker\entrypoint.local.sh'); To = (Join-Path $TargetBackendPath 'docker\entrypoint.local.sh') }
+    )
+
+    foreach ($item in $backendOverrides) {
+        if (Test-Path $item.From) {
+            Copy-Item -Path $item.From -Destination $item.To -Force
+        }
+    }
+
+    Convert-FileToLf -Path (Join-Path $TargetFrontendPath 'docker-entrypoint.frontend.sh')
+    Convert-FileToLf -Path (Join-Path $TargetFrontendPath 'docker-entrypoint.admin.sh')
+    Convert-FileToLf -Path (Join-Path $TargetBackendPath 'docker\entrypoint.local.sh')
+    Ensure-ComposeCompatibility -ComposePath (Join-Path $TargetFrontendPath 'docker-compose.local.yml')
+}
+
 function Resolve-InstallScriptPath {
     param(
         [string]$InstallerScriptsPath,
@@ -271,6 +368,10 @@ $installerScriptsRoot = if ($resolvedScriptsDir) {
 
 $installScript = Resolve-InstallScriptPath -InstallerScriptsPath ($(if ($installerScriptsRoot) { $installerScriptsRoot.Path } else { "" })) -ClonedFrontendPath $targetFrontendRoot
 $composeFile = Join-Path $targetFrontendRoot "docker-compose.local.yml"
+
+if ($installerScriptsRoot) {
+    Apply-InstallerDockerOverrides -InstallerScriptsPath $installerScriptsRoot.Path -TargetFrontendPath $targetFrontendRoot -TargetBackendPath $targetBackendRoot
+}
 
 if (-not $installScript) {
     $clonedScriptsPath = Join-Path $targetFrontendRoot "scripts"

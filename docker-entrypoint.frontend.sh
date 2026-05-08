@@ -16,5 +16,13 @@ fi
   echo "VITE_PORT=${VITE_PORT:-5173}"
 } > .env.local
 
+if [ ! -x node_modules/.bin/vite ]; then
+  if [ -f package-lock.json ]; then
+    npm ci
+  else
+    npm install
+  fi
+fi
+
 # Start Vite dev server
 exec npm run dev -- --host 0.0.0.0 --port "${VITE_PORT:-5173}"
