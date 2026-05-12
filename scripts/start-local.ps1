@@ -257,12 +257,7 @@ function Open-Browser {
         }
     }
 
-    # Si no hay Chrome, usar navegador predeterminado
-    try {
-        Start-Process $Url
-    } catch {
-        Write-Host "No se pudo abrir el navegador automaticamente." -ForegroundColor Yellow
-    }
+    Write-Host "Chrome no esta instalado. No se abrira navegador automaticamente." -ForegroundColor Yellow
 }
 
 if (-not $SkipOpenBrowser) {
