@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.local.yml"),
     [string]$BackendRoot = "",
     [switch]$NonInteractive,
@@ -334,7 +334,7 @@ function Repair-DockerDesktopDataPath {
 
     New-Item -ItemType Directory -Path $dockerDataPath -Force | Out-Null
 
-    # Owner y ACL mínimos esperados por Docker Desktop (via SID, independiente del idioma del SO).
+    # Owner y ACL mÃ­nimos esperados por Docker Desktop (via SID, independiente del idioma del SO).
     cmd /c "icacls \"$dockerDataPath\" /setowner *S-1-5-32-544 /T /C >nul 2>&1"
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-32-544:(OI)(CI)F /T /C >nul 2>&1"
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-18:(OI)(CI)F /T /C >nul 2>&1"
@@ -468,85 +468,36 @@ $backendRoot = $resolvedBackendRoot.Path
 if (-not (Test-Path (Join-Path $backendRoot 'artisan'))) { throw "La ruta backend no contiene artisan: $backendRoot" }
 
 function Ensure-DockerAvailable {
-    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
-    if ($dockerCommand) {
-        # Docker encontrado, verificar engine
-        $dockerInfo = docker info 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            return  # Todo bien
-        }
-
-        Write-Host "Docker CLI existe, pero el engine no responde." -ForegroundColor Yellow
-        Write-Host "Modo ligero recomendado: Docker Engine en WSL2 (sin Docker Desktop)." -ForegroundColor Cyan
-
-        $dockerDesktopExe = @(
-            "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
-            "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
-        ) | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-        if ($dockerDesktopExe) {
-            $shouldStartDesktop = if ($NonInteractive) {
-                $false
-            } else {
-                Confirm-Yes -Prompt "Docker Desktop esta instalado. ¿Deseas iniciarlo ahora?"
-            }
-
-            if ($shouldStartDesktop) {
-                Start-Process $dockerDesktopExe
-                Write-Host "Esperando que el engine Docker inicie (hasta 90 segundos)..." -ForegroundColor Yellow
-                $started = $false
-                for ($i = 1; $i -le 18; $i++) {
-                    Start-Sleep -Seconds 5
-                    $testInfo = docker info 2>&1
-                    if ($LASTEXITCODE -eq 0) {
-                        Write-Host "Docker engine listo." -ForegroundColor Green
-                        $started = $true
-                        break
-                    }
-                    Write-Host "  Esperando... ($($i*5)s)" -ForegroundColor DarkGray
-                }
-                if (-not $started) {
-                    throw "Docker Desktop se inicio pero el engine no respondio en 90s. Espera un momento y vuelve a ejecutar el instalador."
-                }
-                return
-            }
-
-            Write-Host "Modo ligero elegido. Asegúrate de tener Docker Engine (WSL2) activo antes de iniciar los contenedores." -ForegroundColor Cyan
-            return
-        }
-
-        Write-Host "Docker CLI existe pero el engine no responde. Activa Docker Engine (WSL2) antes de iniciar los contenedores." -ForegroundColor Cyan
-        return
-    }
-
-    Write-Host "Docker CLI no esta disponible en esta maquina." -ForegroundColor Yellow
-    Write-Host "Instalacion ligera por defecto: usa Docker Engine en WSL2 (sin Docker Desktop)." -ForegroundColor Cyan
-
-    $shouldInstallDesktop = if ($NonInteractive) {
-        $false
-    } else {
-        Confirm-Yes -Prompt "¿Deseas instalar Docker Desktop ahora? (opcional, pesado)"
-    }
-
-    if ($shouldInstallDesktop) {
-        Install-DockerDesktopDirectly
+     = Get-Command docker -ErrorAction SilentlyContinue
+    if () {
         docker info | Out-Null 2>&1
-        if ($LASTEXITCODE -eq 0) {
+        if (0 -eq 0) {
+            Write-Host "Docker en Windows operativo." -ForegroundColor Green
             return
         }
-        throw "Docker Desktop se instalo, pero el engine aun no responde. Abre Docker Desktop y vuelve a ejecutar el instalador."
     }
 
-    Write-Host "Modo ligero elegido: debes tener Docker Engine en WSL2 ya instalado y activo." -ForegroundColor Cyan
-    Write-Host "Para instalar Docker Engine en WSL2:" -ForegroundColor Yellow
-    Write-Host "  1. Abre PowerShell como Administrador" -ForegroundColor Gray
-    Write-Host "  2. Ejecuta: wsl --install -d Ubuntu" -ForegroundColor Gray
-    Write-Host "  3. Luego en Ubuntu: sudo apt-get install -y docker.io docker-compose" -ForegroundColor Gray
-    Write-Host "Si ya lo tienes instalado, verifica que este activo antes de continuar." -ForegroundColor Cyan
-    return
+    Write-Host "Instalacion automatica de Docker ligero en WSL2..." -ForegroundColor Cyan
+    Enable-WSL2
+
+    if (-not (Ensure-UbuntuInWSL2)) {
+        throw "No se pudo instalar Ubuntu en WSL2 automaticamente. Reinicia Windows y vuelve a ejecutar el instalador como Administrador."
+    }
+
+    if (-not (Install-DockerInUbuntuWSL2)) {
+        throw "No se pudo dejar Docker operativo en WSL2 de forma automatica. Vuelve a ejecutar el instalador como Administrador."
+    }
+
+     = True
+    Write-Host "Docker en WSL2 listo y operativo." -ForegroundColor Green
 }
 
 Ensure-DockerAvailable
+
+if () {
+    Enable-DockerWslProxy
+    Write-Host "Docker operara en modo WSL2 (proxy activo)." -ForegroundColor Green
+}
 
 $clientConfig = Join-Path $frontendRoot '.client-config.env'
 $clientConfigExample = Join-Path $frontendRoot '.client-config.example.env'
@@ -563,14 +514,14 @@ if ($NonInteractive) {
     Write-Host "======================================" -ForegroundColor Yellow
     Write-Host "
 " -ForegroundColor White
-    Write-Host "¿Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
+    Write-Host "Â¿Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
     Write-Host "
 " -ForegroundColor White
     Write-Host "  [s] Si  - Accesible desde cualquier PC de la red" -ForegroundColor Green
     Write-Host "          (puertos abiertos: backend 8000, frontend 5173, admin 5174)" -ForegroundColor DarkGray
     Write-Host "
 " -ForegroundColor White
-    Write-Host "  [n] No - Solo accesible localmente en esta PC (más seguro)" -ForegroundColor Yellow
+    Write-Host "  [n] No - Solo accesible localmente en esta PC (mÃ¡s seguro)" -ForegroundColor Yellow
     Write-Host "
 " -ForegroundColor White
     $choice = Read-Host "Opcion"
@@ -644,7 +595,8 @@ $env:PGADMIN_DEFAULT_PASSWORD = $pgadminPassword
 $env:VITE_API_BASE_URL = $viteApiBaseUrl
 $env:VITE_BACKEND_PORT = $backendPort
 
-$composeArgs = @('-p',$composeProject,'-f',$ComposeFile)
+$composeFileForDocker = if ($global:DOCKER_WSL2_MODE) { Convert-ToWslPath -Path $ComposeFile } else { $ComposeFile }
+$composeArgs = @('-p',$composeProject,'-f',$composeFileForDocker)
 
 $installLog = Join-Path $frontendRoot 'install-local.log'
 
@@ -824,3 +776,6 @@ if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Forc
 
 Write-Host 'Instalacion completada.' -ForegroundColor Green
 Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort -PgAdminPort $pgadminPort -PgAdminEmail $pgadminEmail -PgAdminPassword $pgadminPassword
+
+
+
