@@ -18,6 +18,24 @@ $portableFrontend = Join-Path $portablePayload "facturacion_frontend"
 $portableBackend = Join-Path $portablePayload "facturacion_backend"
 $portableDatabaseSql = Join-Path $OutputRoot "database\sql"
 
+function Copy-PayloadFile {
+    param(
+        [string]$From,
+        [string]$To
+    )
+
+    if (-not (Test-Path $From)) {
+        throw "Falta archivo requerido para payload portable: $From"
+    }
+
+    $targetDir = Split-Path -Path $To -Parent
+    if (-not (Test-Path $targetDir)) {
+        New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+    }
+
+    Copy-Item -Path $From -Destination $To -Force
+}
+
 $trackedScripts = @(
     'apagar-local.bat',
     'actualizar-local.bat',
@@ -52,16 +70,26 @@ foreach ($scriptName in $trackedScripts) {
     Copy-Item -Path $sourceScript -Destination (Join-Path $portableScripts $scriptName) -Force
 }
 
-# Copy full frontend/backend payload (excluding heavy transient folders and
-# generated installer artifacts to avoid recursive packaging).
-robocopy $frontendRoot.Path $portableFrontend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git .vscode docs node_modules dist dist-admin scripts INSTALADOR_COMPLETO_PC_LIMPIA* facturacion_instalador_portable* /XF INSTALADOR_COMPLETO_PC_LIMPIA*.zip
-if ($LASTEXITCODE -ge 8) {
-    throw "Fallo copia de frontend al paquete portable."
+# Keep payload minimal: only files used by Apply-InstallerDockerOverrides and
+# cleanup fallback logic. This avoids shipping logs/backups/dumps unnecessarily.
+$payloadFrontendFiles = @(
+    'docker-compose.local.yml',
+    'docker-entrypoint.frontend.sh',
+    'docker-entrypoint.admin.sh'
+)
+
+foreach ($relativePath in $payloadFrontendFiles) {
+    Copy-PayloadFile -From (Join-Path $frontendRoot.Path $relativePath) -To (Join-Path $portableFrontend $relativePath)
 }
 
-robocopy $backendRoot.Path $portableBackend /MIR /R:1 /W:1 /NFL /NDL /NJH /NJS /NP /XD .git docs node_modules tests vendor storage\logs
-if ($LASTEXITCODE -ge 8) {
-    throw "Fallo copia de backend al paquete portable."
+$payloadBackendFiles = @(
+    'Dockerfile.local',
+    'docker\entrypoint.local.sh',
+    'database\sql\clean_transactional_operational.sql'
+)
+
+foreach ($relativePath in $payloadBackendFiles) {
+    Copy-PayloadFile -From (Join-Path $backendRoot.Path $relativePath) -To (Join-Path $portableBackend $relativePath)
 }
 
 $cleanupSqlSource = Join-Path $backendRoot.Path 'database\sql\clean_transactional_operational.sql'
