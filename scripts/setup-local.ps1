@@ -511,10 +511,12 @@ function Ensure-DockerAvailable {
                 return
             }
 
-            throw "Docker engine no esta activo. Inicia Docker Engine (WSL2) o vuelve a ejecutar y acepta iniciar Docker Desktop."
+            Write-Host "Modo ligero elegido. Asegúrate de tener Docker Engine (WSL2) activo antes de iniciar los contenedores." -ForegroundColor Cyan
+            return
         }
 
-        throw "Docker esta instalado pero el engine no responde. Activa Docker Engine (WSL2) o abre Docker Desktop y vuelve a ejecutar."
+        Write-Host "Docker CLI existe pero el engine no responde. Activa Docker Engine (WSL2) antes de iniciar los contenedores." -ForegroundColor Cyan
+        return
     }
 
     Write-Host "Docker CLI no esta disponible en esta maquina." -ForegroundColor Yellow
@@ -535,7 +537,13 @@ function Ensure-DockerAvailable {
         throw "Docker Desktop se instalo, pero el engine aun no responde. Abre Docker Desktop y vuelve a ejecutar el instalador."
     }
 
-    throw "No se detecto Docker operativo. Instala/activa Docker Engine (WSL2) para modo ligero, o instala Docker Desktop manualmente y reintenta."
+    Write-Host "Modo ligero elegido: debes tener Docker Engine en WSL2 ya instalado y activo." -ForegroundColor Cyan
+    Write-Host "Para instalar Docker Engine en WSL2:" -ForegroundColor Yellow
+    Write-Host "  1. Abre PowerShell como Administrador" -ForegroundColor Gray
+    Write-Host "  2. Ejecuta: wsl --install -d Ubuntu" -ForegroundColor Gray
+    Write-Host "  3. Luego en Ubuntu: sudo apt-get install -y docker.io docker-compose" -ForegroundColor Gray
+    Write-Host "Si ya lo tienes instalado, verifica que este activo antes de continuar." -ForegroundColor Cyan
+    return
 }
 
 Ensure-DockerAvailable
