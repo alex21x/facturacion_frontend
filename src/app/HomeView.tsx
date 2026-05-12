@@ -35,7 +35,7 @@ import quickTablesImg from '../assets/quickhome/icons/tables.png';
 
 // ── types (local, not exported — only used in this component) ─────────────────
 type ModuleTab =
-  | 'home' | 'cash' | 'restaurant-orders' | 'comandas' | 'tables'
+  | 'home' | 'cash' | 'racing-ops' | 'restaurant-orders' | 'comandas' | 'tables'
   | 'restaurant-recipes' | 'sales' | 'daily-summary' | 'gre-guides'
   | 'sunat-exceptions' | 'inventory' | 'purchases' | 'reports'
   | 'restaurant-menu' | 'restaurant-supplies' | 'products' | 'customers'
@@ -67,6 +67,7 @@ const QUICK_ACCESS_META: Partial<Record<ModuleTab, { badge: string; flow: string
 };
 
 const QUICK_ACCESS_IMAGES: Partial<Record<ModuleTab, string>> = {
+  'racing-ops':         quickGenericImg,
   'restaurant-orders':   quickRestaurantOrdersImg,
   comandas:              quickComandasImg,
   tables:                quickTablesImg,

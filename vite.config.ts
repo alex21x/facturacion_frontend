@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => {
     `http://${env.VITE_HOST || '127.0.0.1'}:${env.VITE_BACKEND_PORT || 8000}`;
 
   return {
+    cacheDir: 'node_modules/.vite/frontend',
     plugins: [react()],
     resolve: {
       dedupe: ['react', 'react-dom'],
