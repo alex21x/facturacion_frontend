@@ -371,6 +371,23 @@ function Install-DockerDesktopDirectly {
     }
 }
 
+function Confirm-Yes {
+    param(
+        [string]$Prompt,
+        [bool]$DefaultYes = $false
+    )
+
+    if ($DefaultYes) {
+        $answer = Read-Host "$Prompt [S/n]"
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $true }
+        return @('s', 'si', 'y', 'yes') -contains $answer.Trim().ToLowerInvariant()
+    }
+
+    $answer = Read-Host "$Prompt [s/N]"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $false }
+    return @('s', 'si', 'y', 'yes') -contains $answer.Trim().ToLowerInvariant()
+}
+
 function Test-DockerRegistryDns {
     try {
         $addresses = [System.Net.Dns]::GetHostAddresses('registry-1.docker.io')
@@ -458,37 +475,67 @@ function Ensure-DockerAvailable {
         if ($LASTEXITCODE -eq 0) {
             return  # Todo bien
         }
-        # Engine no responde - intentar iniciar Docker Desktop
-        Write-Host "Docker esta instalado pero el engine no esta corriendo. Intentando iniciar Docker Desktop..." -ForegroundColor Yellow
+
+        Write-Host "Docker CLI existe, pero el engine no responde." -ForegroundColor Yellow
+        Write-Host "Modo ligero recomendado: Docker Engine en WSL2 (sin Docker Desktop)." -ForegroundColor Cyan
+
         $dockerDesktopExe = @(
             "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe",
             "$env:LOCALAPPDATA\Docker\Docker Desktop.exe"
         ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
         if ($dockerDesktopExe) {
-            Start-Process $dockerDesktopExe
-            Write-Host "Esperando que el engine Docker inicie (hasta 90 segundos)..." -ForegroundColor Yellow
-            $started = $false
-            for ($i = 1; $i -le 18; $i++) {
-                Start-Sleep -Seconds 5
-                $testInfo = docker info 2>&1
-                if ($LASTEXITCODE -eq 0) {
-                    Write-Host "Docker engine listo." -ForegroundColor Green
-                    $started = $true
-                    break
+            $shouldStartDesktop = if ($NonInteractive) {
+                $false
+            } else {
+                Confirm-Yes -Prompt "Docker Desktop esta instalado. ¿Deseas iniciarlo ahora?"
+            }
+
+            if ($shouldStartDesktop) {
+                Start-Process $dockerDesktopExe
+                Write-Host "Esperando que el engine Docker inicie (hasta 90 segundos)..." -ForegroundColor Yellow
+                $started = $false
+                for ($i = 1; $i -le 18; $i++) {
+                    Start-Sleep -Seconds 5
+                    $testInfo = docker info 2>&1
+                    if ($LASTEXITCODE -eq 0) {
+                        Write-Host "Docker engine listo." -ForegroundColor Green
+                        $started = $true
+                        break
+                    }
+                    Write-Host "  Esperando... ($($i*5)s)" -ForegroundColor DarkGray
                 }
-                Write-Host "  Esperando... ($($i*5)s)" -ForegroundColor DarkGray
+                if (-not $started) {
+                    throw "Docker Desktop se inicio pero el engine no respondio en 90s. Espera un momento y vuelve a ejecutar el instalador."
+                }
+                return
             }
-            if (-not $started) {
-                throw "Docker Desktop se inicio pero el engine no respondio en 90s. Espera un momento y vuelve a ejecutar el instalador."
-            }
-            return
+
+            throw "Docker engine no esta activo. Inicia Docker Engine (WSL2) o vuelve a ejecutar y acepta iniciar Docker Desktop."
         }
 
         throw "Docker esta instalado pero el engine no responde. Activa Docker Engine (WSL2) o abre Docker Desktop y vuelve a ejecutar."
     }
 
-    throw "Docker CLI no esta disponible. Para instalacion ligera, configura Docker Engine en WSL2 (sin Docker Desktop) y asegurate de que 'docker info' funcione; alternativamente instala Docker Desktop."
+    Write-Host "Docker CLI no esta disponible en esta maquina." -ForegroundColor Yellow
+    Write-Host "Instalacion ligera por defecto: usa Docker Engine en WSL2 (sin Docker Desktop)." -ForegroundColor Cyan
+
+    $shouldInstallDesktop = if ($NonInteractive) {
+        $false
+    } else {
+        Confirm-Yes -Prompt "¿Deseas instalar Docker Desktop ahora? (opcional, pesado)"
+    }
+
+    if ($shouldInstallDesktop) {
+        Install-DockerDesktopDirectly
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+        throw "Docker Desktop se instalo, pero el engine aun no responde. Abre Docker Desktop y vuelve a ejecutar el instalador."
+    }
+
+    throw "No se detecto Docker operativo. Instala/activa Docker Engine (WSL2) para modo ligero, o instala Docker Desktop manualmente y reintenta."
 }
 
 Ensure-DockerAvailable
