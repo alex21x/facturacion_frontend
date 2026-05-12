@@ -1,4 +1,5 @@
 import { refresh } from '../../modules/auth/api';
+import type { AuthSession } from '../../modules/auth/types';
 import { clearAuthSession, loadAuthSession, saveAuthSession } from '../../modules/auth/storage';
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -6,7 +7,19 @@ const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
 let refreshingPromise: Promise<string | null> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
 const recentGetResponses = new Map<string, { expiresAt: number; data: unknown }>();
-const GET_RESPONSE_CACHE_TTL_MS = 1000;
+const DEFAULT_GET_RESPONSE_CACHE_TTL_MS = 1000;
+
+function resolveGetResponseCacheTtlMs(path: string): number {
+  if (/^\/api\/appcfg\/company-.*-matrix$/.test(path)) {
+    return 15000;
+  }
+
+  if (path.startsWith('/api/appcfg/system-backups/database-files')) {
+    return 5000;
+  }
+
+  return DEFAULT_GET_RESPONSE_CACHE_TTL_MS;
+}
 
 function pruneRecentGetResponses(now: number): void {
   recentGetResponses.forEach((entry, key) => {
@@ -41,6 +54,18 @@ function toHeadersObject(headers?: HeadersInit): Record<string, string> {
 
 function isAuthRoute(path: string): boolean {
   return path.includes('/api/auth/login') || path.includes('/api/auth/refresh');
+}
+
+function resolveAuthScopeKey(session: AuthSession | null, authHeader?: string): string {
+  if (session?.user?.id && session?.user?.company_id) {
+    return `${session.user.id}:${session.user.company_id}:${session.deviceId}`;
+  }
+
+  if (authHeader && authHeader.trim() !== '') {
+    return 'auth';
+  }
+
+  return 'anon';
 }
 
 function tryParseJsonObject(text: string): Record<string, unknown> | null {
@@ -133,8 +158,9 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
 
   const method = String(init?.method ?? 'GET').toUpperCase();
   const canDeduplicateGet = method === 'GET' && !init?.body && !isAuthRoute(path);
+  const authScopeKey = resolveAuthScopeKey(session, authHeader);
   const dedupKey = canDeduplicateGet
-    ? `${method}:${path}::${authHeader ?? ''}`
+    ? `${method}:${path}::${authScopeKey}`
     : null;
 
   if (dedupKey) {
@@ -252,9 +278,10 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
 
   try {
     const data = await promise;
+    const ttlMs = resolveGetResponseCacheTtlMs(path);
     recentGetResponses.set(dedupKey, {
       data,
-      expiresAt: Date.now() + GET_RESPONSE_CACHE_TTL_MS,
+      expiresAt: Date.now() + ttlMs,
     });
     return data;
   } finally {

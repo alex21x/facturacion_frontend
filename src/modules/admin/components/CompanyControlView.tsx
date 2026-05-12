@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createAdminCompany,
   downloadSystemDatabaseBackup,
@@ -199,6 +199,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [backupHistoryPage, setBackupHistoryPage] = useState(1);
   const [backupHistoryTotal, setBackupHistoryTotal] = useState(0);
   const [backupHistoryLastPage, setBackupHistoryLastPage] = useState(1);
+  const extendedMatricesInFlightRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     if (adminUsernameTouched) return;
@@ -270,46 +271,121 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     }
   }
 
-  async function loadMatrix() {
-    setLoading(true);
-    setMessage('');
-    setIsError(false);
+  async function loadExtendedMatrices() {
+    const [rateResult, operationalResult, commerceResult, inventoryResult] = await Promise.all([
+      fetchCompanyRateLimitMatrix(accessToken),
+      fetchCompanyOperationalLimitMatrix(accessToken),
+      fetchCompanyCommerceAdminMatrix(accessToken),
+      fetchCompanyInventorySettingsAdminMatrix(accessToken),
+    ]);
+
+    setRateMatrix(rateResult);
+    setOperationalMatrix(operationalResult);
+    setCommerceMatrix(commerceResult);
+    setInventoryMatrix(inventoryResult);
+
+    const allCommerceCodes = buildCommerceFeatureCodes(commerceResult);
+    const nextCommerceDraft: Record<number, Record<string, boolean>> = {};
+    for (const company of commerceResult.companies) {
+      nextCommerceDraft[company.company_id] = normalizeCompanyFeatures(allCommerceCodes, company.features);
+    }
+    setCommerceDraftByCompany(nextCommerceDraft);
+
+    setSelectedCommerceCompanyId(prev => {
+      if (prev !== null) return prev;
+      const first = commerceResult.companies[0];
+      if (first) {
+        setCommerceCompanyQuery(first.legal_name + (first.tax_id ? ` (${first.tax_id})` : ''));
+      }
+      return first?.company_id ?? null;
+    });
+
+    const nextInventoryDraft: Record<number, InventorySettingsRecord> = {};
+    for (const company of inventoryResult.companies) {
+      nextInventoryDraft[company.company_id] = { ...company.inventory_settings };
+    }
+    setInventoryDraftByCompany(nextInventoryDraft);
+
+    const nextRateDraft: Record<number, {
+      is_enabled: boolean;
+      requests_per_minute_read: number;
+      requests_per_minute_write: number;
+      requests_per_minute_reports: number;
+      plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
+    }> = {};
+    for (const company of rateResult.companies) {
+      nextRateDraft[company.company_id] = {
+        is_enabled: company.is_enabled,
+        requests_per_minute_read: company.requests_per_minute_read,
+        requests_per_minute_write: company.requests_per_minute_write,
+        requests_per_minute_reports: company.requests_per_minute_reports,
+        plan_code: company.plan_code,
+      };
+    }
+    setRateDraftByCompany(nextRateDraft);
+
+    const nextOpDraft: Record<number, {
+      max_branches_enabled: number;
+      max_warehouses_enabled: number;
+      max_cash_registers_enabled: number;
+      max_cash_registers_per_warehouse: number;
+    }> = {};
+    for (const company of operationalResult.companies) {
+      nextOpDraft[company.company_id] = {
+        max_branches_enabled: company.max_branches_enabled,
+        max_warehouses_enabled: company.max_warehouses_enabled,
+        max_cash_registers_enabled: company.max_cash_registers_enabled,
+        max_cash_registers_per_warehouse: company.max_cash_registers_per_warehouse,
+      };
+    }
+    setOpDraftByCompany(nextOpDraft);
+
+    setBulkRateRead(rateResult.defaults.requests_per_minute_read);
+    setBulkRateWrite(rateResult.defaults.requests_per_minute_write);
+    setBulkRateReports(rateResult.defaults.requests_per_minute_reports);
+    setBulkPresetCode('PRO');
+    setBulkOpBranches(operationalResult.defaults.max_branches_enabled);
+    setBulkOpWarehouses(operationalResult.defaults.max_warehouses_enabled);
+    setBulkOpCash(operationalResult.defaults.max_cash_registers_enabled);
+    setBulkOpCashPerWarehouse(operationalResult.defaults.max_cash_registers_per_warehouse);
+  }
+
+  async function ensureExtendedMatricesLoaded(force = false): Promise<void> {
+    const alreadyLoaded = Boolean(rateMatrix && operationalMatrix && commerceMatrix && inventoryMatrix);
+    if (!force && alreadyLoaded) {
+      return;
+    }
+
+    if (!force && extendedMatricesInFlightRef.current) {
+      await extendedMatricesInFlightRef.current;
+      return;
+    }
+
+    const request = (async () => {
+      await loadExtendedMatrices();
+    })();
+
+    extendedMatricesInFlightRef.current = request;
+
     try {
-      const [verticalResult, rateResult, operationalResult, commerceResult, inventoryResult] = await Promise.all([
-        fetchCompanyVerticalAdminMatrix(accessToken),
-        fetchCompanyRateLimitMatrix(accessToken),
-        fetchCompanyOperationalLimitMatrix(accessToken),
-        fetchCompanyCommerceAdminMatrix(accessToken),
-        fetchCompanyInventorySettingsAdminMatrix(accessToken),
-      ]);
+      await request;
+    } finally {
+      if (extendedMatricesInFlightRef.current === request) {
+        extendedMatricesInFlightRef.current = null;
+      }
+    }
+  }
+
+  async function loadMatrix(manageLoading = true) {
+    if (manageLoading) {
+      setLoading(true);
+      setMessage('');
+      setIsError(false);
+    }
+    try {
+      const verticalResult = await fetchCompanyVerticalAdminMatrix(accessToken);
 
       setMatrix(verticalResult);
-      setRateMatrix(rateResult);
-      setOperationalMatrix(operationalResult);
-      setCommerceMatrix(commerceResult);
-      setInventoryMatrix(inventoryResult);
-
-      const allCommerceCodes = buildCommerceFeatureCodes(commerceResult);
-      const nextCommerceDraft: Record<number, Record<string, boolean>> = {};
-      for (const company of commerceResult.companies) {
-        nextCommerceDraft[company.company_id] = normalizeCompanyFeatures(allCommerceCodes, company.features);
-      }
-      setCommerceDraftByCompany(nextCommerceDraft);
-
-      setSelectedCommerceCompanyId(prev => {
-        if (prev !== null) return prev;
-        const first = commerceResult.companies[0];
-        if (first) {
-          setCommerceCompanyQuery(first.legal_name + (first.tax_id ? ` (${first.tax_id})` : ''));
-        }
-        return first?.company_id ?? null;
-      });
-
-      const nextInventoryDraft: Record<number, InventorySettingsRecord> = {};
-      for (const company of inventoryResult.companies) {
-        nextInventoryDraft[company.company_id] = { ...company.inventory_settings };
-      }
-      setInventoryDraftByCompany(nextInventoryDraft);
 
       const nextMap: Record<number, string> = {};
       for (const company of verticalResult.companies) {
@@ -317,49 +393,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       }
       setSelectedVerticalByCompany(nextMap);
 
-      const nextRateDraft: Record<number, {
-        is_enabled: boolean;
-        requests_per_minute_read: number;
-        requests_per_minute_write: number;
-        requests_per_minute_reports: number;
-        plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
-      }> = {};
-      for (const company of rateResult.companies) {
-        nextRateDraft[company.company_id] = {
-          is_enabled: company.is_enabled,
-          requests_per_minute_read: company.requests_per_minute_read,
-          requests_per_minute_write: company.requests_per_minute_write,
-          requests_per_minute_reports: company.requests_per_minute_reports,
-          plan_code: company.plan_code,
-        };
-      }
-      setRateDraftByCompany(nextRateDraft);
-
-      const nextOpDraft: Record<number, {
-        max_branches_enabled: number;
-        max_warehouses_enabled: number;
-        max_cash_registers_enabled: number;
-        max_cash_registers_per_warehouse: number;
-      }> = {};
-      for (const company of operationalResult.companies) {
-        nextOpDraft[company.company_id] = {
-          max_branches_enabled: company.max_branches_enabled,
-          max_warehouses_enabled: company.max_warehouses_enabled,
-          max_cash_registers_enabled: company.max_cash_registers_enabled,
-          max_cash_registers_per_warehouse: company.max_cash_registers_per_warehouse,
-        };
-      }
-      setOpDraftByCompany(nextOpDraft);
-
       setBulkVerticalCode(prev => prev || verticalResult.verticals[0]?.code || '');
-      setBulkRateRead(rateResult.defaults.requests_per_minute_read);
-      setBulkRateWrite(rateResult.defaults.requests_per_minute_write);
-      setBulkRateReports(rateResult.defaults.requests_per_minute_reports);
-      setBulkPresetCode('PRO');
-      setBulkOpBranches(operationalResult.defaults.max_branches_enabled);
-      setBulkOpWarehouses(operationalResult.defaults.max_warehouses_enabled);
-      setBulkOpCash(operationalResult.defaults.max_cash_registers_enabled);
-      setBulkOpCashPerWarehouse(operationalResult.defaults.max_cash_registers_per_warehouse);
 
       setSelectedBackupCompanyId((prev) => {
         if (prev !== null && verticalResult.companies.some((company) => company.company_id === prev)) {
@@ -371,17 +405,68 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setMessage(handleApiError(err, 'No se pudo cargar el control de empresas'));
       setIsError(true);
       setMatrix(null);
-      setRateMatrix(null);
-      setOperationalMatrix(null);
-      setCommerceMatrix(null);
-      setInventoryMatrix(null);
     } finally {
-      setLoading(false);
+      if (manageLoading) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => { void loadMatrix(); }, [accessToken]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
+    if (activePanel === 'companies') {
+      return;
+    }
+
+    const needsExtendedData =
+      (activePanel === 'rate' && !rateMatrix)
+      || (activePanel === 'operational' && !operationalMatrix)
+      || (activePanel === 'commerce' && !commerceMatrix)
+      || (activePanel === 'inventory' && !inventoryMatrix);
+
+    if (!needsExtendedData) {
+      return;
+    }
+
+    const run = async () => {
+      setLoading(true);
+      setMessage('');
+      setIsError(false);
+      try {
+        await ensureExtendedMatricesLoaded();
+      } catch (err) {
+        setMessage(handleApiError(err, 'No se pudo cargar la configuración avanzada del panel.'));
+        setIsError(true);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    void run();
+  }, [activePanel, accessToken, rateMatrix, operationalMatrix, commerceMatrix, inventoryMatrix]);
+
+  async function refreshAllPanels() {
+    setLoading(true);
+    setMessage('');
+    setIsError(false);
+    try {
+      await Promise.all([
+        loadMatrix(false),
+        ensureExtendedMatricesLoaded(true),
+      ]);
+    } catch (err) {
+      setMessage(handleApiError(err, 'No se pudo refrescar el panel administrativo completo.'));
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (activePanel !== 'companies') {
+      return;
+    }
+
     if (selectedBackupCompanyId === null) {
       setBackupRows([]);
       setBackupHistoryTotal(0);
@@ -389,7 +474,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       return;
     }
     void refreshBackupHistory(backupHistoryPage);
-  }, [accessToken, selectedBackupCompanyId, backupHistoryPage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [accessToken, activePanel, selectedBackupCompanyId, backupHistoryPage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (selectedBackupCompanyId === null) {
@@ -743,7 +828,11 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         preset_code: createDraft.preset_code,
       });
 
-      await loadMatrix();
+      await loadMatrix(false);
+      setRateMatrix(null);
+      setOperationalMatrix(null);
+      setCommerceMatrix(null);
+      setInventoryMatrix(null);
       setCreateDraft(prev => ({
         ...prev,
         tax_id: '',
@@ -966,7 +1055,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           <p>{panelMeta[activePanel].subtitle}</p>
         </div>
         <div className="adm-workspace-actions">
-          <button className="adm-btn adm-btn-secondary" type="button" onClick={() => void loadMatrix()} disabled={loading}>
+          <button className="adm-btn adm-btn-secondary" type="button" onClick={() => void refreshAllPanels()} disabled={loading}>
             Refrescar datos
           </button>
           <span className="adm-badge adm-badge-blue">Panel activo: {panelMeta[activePanel].title}</span>
