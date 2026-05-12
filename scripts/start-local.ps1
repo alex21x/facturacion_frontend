@@ -97,7 +97,7 @@ function Ensure-DockerEngineRunning {
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if (-not $dockerDesktopExe) {
-        throw "Docker no esta disponible. Instala Docker Desktop y vuelve a ejecutar."
+        throw "Docker no esta disponible. Instala o activa Docker Engine (WSL2) o Docker Desktop y vuelve a ejecutar."
     }
 
     Write-Host "Iniciando Docker Desktop..." -ForegroundColor Yellow
@@ -112,7 +112,7 @@ function Ensure-DockerEngineRunning {
         }
     }
 
-    throw "Docker Desktop no respondio a tiempo. Espera un momento y vuelve a intentar."
+    throw "El engine Docker no respondio a tiempo. Espera un momento y vuelve a intentar."
 }
 
 function Get-ConfigValue {

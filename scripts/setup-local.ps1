@@ -485,65 +485,10 @@ function Ensure-DockerAvailable {
             return
         }
 
-        throw "Docker esta instalado pero el engine no responde. Abre Docker Desktop manualmente y vuelve a ejecutar."
+        throw "Docker esta instalado pero el engine no responde. Activa Docker Engine (WSL2) o abre Docker Desktop y vuelve a ejecutar."
     }
 
-    # Docker no instalado - instalar automaticamente via winget
-    Write-Host "" -ForegroundColor White
-    Write-Host "============================================" -ForegroundColor Yellow
-    Write-Host " Docker no esta instalado. Instalando..." -ForegroundColor Yellow
-    Write-Host " (Descarga ~500MB, puede tardar varios minutos)" -ForegroundColor Yellow
-    Write-Host "============================================" -ForegroundColor Yellow
-    Write-Host ""
-
-    # Habilitar WSL2 (requerido por Docker Desktop en Windows 10/11)
-    Write-Host "Habilitando funcionalidad WSL2..." -ForegroundColor Cyan
-    $wslFeature = dism.exe /online /Get-FeatureInfo /FeatureName:Microsoft-Windows-Subsystem-Linux 2>&1 | Out-String
-    if ($wslFeature -notmatch "State : Enabled") {
-        dism.exe /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /all /norestart | Out-Null
-    }
-    $vmFeature = dism.exe /online /Get-FeatureInfo /FeatureName:VirtualMachinePlatform 2>&1 | Out-String
-    if ($vmFeature -notmatch "State : Enabled") {
-        dism.exe /online /enable-feature /featurename:VirtualMachinePlatform /all /norestart | Out-Null
-    }
-
-    Repair-DockerDesktopDataPath
-    Assert-DockerDesktopDataPathOwner
-
-    # Intentar instalar Docker Desktop via winget
-    $wingetCommand = Get-Command winget -ErrorAction SilentlyContinue
-    if (-not $wingetCommand) {
-        Install-DockerDesktopDirectly
-    } else {
-        Write-Host "Instalando Docker Desktop via winget..." -ForegroundColor Cyan
-        winget source update 2>&1 | Out-Null
-        winget install -e --id Docker.DockerDesktop --scope machine --accept-package-agreements --accept-source-agreements --disable-interactivity
-        if ($LASTEXITCODE -ne 0) {
-            # Intentar sin --scope machine (algunos winget no lo soportan)
-            winget install -e --id Docker.DockerDesktop --accept-package-agreements --accept-source-agreements --disable-interactivity
-        }
-
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Winget no pudo instalar Docker Desktop. Intentando instalador oficial..." -ForegroundColor Yellow
-            Repair-DockerDesktopDataPath
-            Assert-DockerDesktopDataPathOwner
-            Install-DockerDesktopDirectly
-        }
-    }
-
-    Write-Host "" -ForegroundColor White
-    Write-Host "============================================" -ForegroundColor Green
-    Write-Host " Docker Desktop instalado correctamente." -ForegroundColor Green
-    Write-Host " IMPORTANTE: Debes REINICIAR la PC para" -ForegroundColor Yellow
-    Write-Host " que Docker quede activo. Despues de" -ForegroundColor Yellow
-    Write-Host " reiniciar, vuelve a ejecutar este" -ForegroundColor Yellow
-    Write-Host " instalador." -ForegroundColor Yellow
-    Write-Host "============================================" -ForegroundColor Green
-    Write-Host ""
-    Write-Host "Presiona una tecla para reiniciar ahora, o cierra esta ventana para reiniciar manualmente." -ForegroundColor Cyan
-    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-    Restart-Computer -Force
-    exit 0
+    throw "Docker CLI no esta disponible. Para instalacion ligera, configura Docker Engine en WSL2 (sin Docker Desktop) y asegurate de que 'docker info' funcione; alternativamente instala Docker Desktop."
 }
 
 Ensure-DockerAvailable
