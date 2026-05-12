@@ -41,6 +41,7 @@ Run a fast, repeatable workflow to improve infrastructure speed and scalability 
 2. Never remove required scripts for desktop shortcuts (levantar/apagar/limpiar).
 3. Avoid one-off machine hacks; prefer package-level fixes.
 4. Keep all fixes testable with a single rerun.
+5. Portable ZIP installer must prioritize local payload (`payload/facturacion_frontend` and `payload/facturacion_backend`) and use Git branch sync only as fallback; this avoids recurrent "No se encontro una rama remota valida" failures on client machines.
 
 ## Quick command bundle (PowerShell)
 ```powershell

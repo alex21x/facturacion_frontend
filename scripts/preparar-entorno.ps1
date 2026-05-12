@@ -85,16 +85,27 @@ function Ensure-Repository {
 
     if ((Test-Path $TargetPath) -and (Test-Path (Join-Path $TargetPath ".git"))) {
         Write-Host "Actualizando $Name..." -ForegroundColor Cyan
-        # Forzar refspec completo para que fetch traiga TODAS las ramas remotas
-        # (repos clonados con --single-branch solo tienen refspec de una rama)
-        git -C $TargetPath config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*" | Out-Null
-        git -C $TargetPath fetch --all --prune --quiet 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Fallo fetch de $Name. Intentando recuperacion del remoto..." -ForegroundColor Yellow
-            git -C $TargetPath remote set-url origin $RepoUrl 2>&1 | Out-Null
-            git -C $TargetPath fetch --all --prune --quiet 2>&1 | Out-Null
 
-            if ($LASTEXITCODE -ne 0) {
+        $fetchOk = $false
+        foreach ($branch in $normalizedCandidates) {
+            git -C $TargetPath fetch --prune --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                $fetchOk = $true
+            }
+        }
+
+        if (-not $fetchOk) {
+            Write-Host "Fallo fetch de ramas objetivo de $Name. Intentando recuperacion del remoto..." -ForegroundColor Yellow
+            git -C $TargetPath remote set-url origin $RepoUrl 2>&1 | Out-Null
+
+            foreach ($branch in $normalizedCandidates) {
+                git -C $TargetPath fetch --prune --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    $fetchOk = $true
+                }
+            }
+
+            if (-not $fetchOk) {
                 Write-Host "No se pudo recuperar el repositorio local de $Name. Se recreara desde cero..." -ForegroundColor Yellow
                 Remove-Item -Path $TargetPath -Recurse -Force -ErrorAction SilentlyContinue
             }
@@ -102,8 +113,8 @@ function Ensure-Repository {
 
         if ((Test-Path $TargetPath) -and (Test-Path (Join-Path $TargetPath ".git"))) {
             foreach ($branch in $normalizedCandidates) {
-                $remoteBranchRef = git -C $TargetPath ls-remote --heads origin $branch 2>&1
-                if ([string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
+                git -C $TargetPath show-ref --verify --quiet "refs/remotes/origin/$branch" 2>$null
+                if ($LASTEXITCODE -ne 0) {
                     continue
                 }
 
@@ -115,7 +126,7 @@ function Ensure-Repository {
                 }
             }
 
-            throw "No se encontro una rama remota valida para $Name. Ramas probadas: $($normalizedCandidates -join ', ')."
+            throw "No se encontro una rama remota valida para $Name tras fetch. Ramas probadas: $($normalizedCandidates -join ', '). Revisa acceso al remoto: $RepoUrl"
         }
     }
 
@@ -124,10 +135,6 @@ function Ensure-Repository {
     }
 
     foreach ($branch in $normalizedCandidates) {
-        if (-not (Test-RemoteBranchExists -RepoUrl $RepoUrl -Branch $branch)) {
-            continue
-        }
-
         Write-Host "Clonando $Name en $TargetPath (rama $branch)..." -ForegroundColor Cyan
         git clone --quiet --branch $branch --single-branch $RepoUrl $TargetPath 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) {
@@ -158,8 +165,8 @@ function Ensure-FrontendDockerBranch {
             continue
         }
 
-        $remoteBranchRef = git -C $FrontendPath ls-remote --heads origin $candidate 2>$null
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
+        git -C $FrontendPath show-ref --verify --quiet "refs/remotes/origin/$candidate" 2>$null
+        if ($LASTEXITCODE -ne 0) {
             continue
         }
 
@@ -194,8 +201,8 @@ function Ensure-BackendDockerBranch {
             continue
         }
 
-        $remoteBranchRef = git -C $BackendPath ls-remote --heads origin $candidate 2>$null
-        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($remoteBranchRef | Out-String).Trim())) {
+        git -C $BackendPath show-ref --verify --quiet "refs/remotes/origin/$candidate" 2>$null
+        if ($LASTEXITCODE -ne 0) {
             continue
         }
 
