@@ -144,7 +144,7 @@ function Invoke-ComposePostgresScalar {
         [string]$Sql
     )
 
-    $result = docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -tAc $Sql
+    $result = docker compose @ComposeArgs exec -T --env "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -tAc $Sql
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo consultar PostgreSQL dentro del contenedor Docker.'
     }
@@ -236,7 +236,7 @@ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
 
     $postgresRoleExists = Invoke-ComposePostgresScalar -ComposeArgs $ComposeArgs -PostgresPassword $PostgresPassword -PostgresUser $PostgresUser -PostgresDb $PostgresDb -Sql "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'postgres');"
     if ($postgresRoleExists -ne 't') {
-        docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -c 'CREATE ROLE postgres;' | Out-Null
+        docker compose @ComposeArgs exec -T --env "PGPASSWORD=$PostgresPassword" postgres psql -U $PostgresUser -d $PostgresDb -c 'CREATE ROLE postgres;' | Out-Null
         if ($LASTEXITCODE -ne 0) {
             throw 'No se pudo preparar el rol postgres requerido por el dump base.'
         }
@@ -248,7 +248,7 @@ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
     }
 
     # If schemas are partially present, clean them first to avoid restore conflicts.
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -q -v ON_ERROR_STOP=1 -U $PostgresUser -d $PostgresDb -c "SET client_min_messages TO warning; DROP SCHEMA IF EXISTS appcfg,auth,billing,core,inventory,master,ops,restaurant,sales CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;"
+    docker compose @ComposeArgs exec -T --env "PGPASSWORD=$PostgresPassword" postgres psql -q -v ON_ERROR_STOP=1 -U $PostgresUser -d $PostgresDb -c "SET client_min_messages TO warning; DROP SCHEMA IF EXISTS appcfg,auth,billing,core,inventory,master,ops,restaurant,sales CASCADE; DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public; GRANT ALL ON SCHEMA public TO public;"
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo limpiar esquemas existentes antes de restaurar el dump base.'
     }
@@ -258,7 +258,7 @@ WHERE table_schema NOT IN ('information_schema', 'pg_catalog')
         throw 'No se pudo copiar el dump base al contenedor de PostgreSQL.'
     }
 
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -q -v ON_ERROR_STOP=1 -U $PostgresUser -d $PostgresDb -f /tmp/bootstrap.sql
+    docker compose @ComposeArgs exec -T --env "PGPASSWORD=$PostgresPassword" postgres psql -q -v ON_ERROR_STOP=1 -U $PostgresUser -d $PostgresDb -f /tmp/bootstrap.sql
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo restaurar el dump base dentro de PostgreSQL.'
     }
@@ -292,7 +292,7 @@ function Invoke-ComposePostgresSqlFile {
         throw 'No se pudo copiar el script SQL al contenedor de PostgreSQL.'
     }
 
-    docker compose @ComposeArgs exec -T -e "PGPASSWORD=$PostgresPassword" postgres psql -q -U $PostgresUser -d $PostgresDb -v ON_ERROR_STOP=1 -f /tmp/runtime-script.sql
+    docker compose @ComposeArgs exec -T --env "PGPASSWORD=$PostgresPassword" postgres psql -q -U $PostgresUser -d $PostgresDb -v ON_ERROR_STOP=1 -f /tmp/runtime-script.sql
     if ($LASTEXITCODE -ne 0) {
         throw 'No se pudo ejecutar el script SQL en PostgreSQL.'
     }
@@ -334,7 +334,7 @@ function Repair-DockerDesktopDataPath {
 
     New-Item -ItemType Directory -Path $dockerDataPath -Force | Out-Null
 
-    # Owner y ACL mÃ­nimos esperados por Docker Desktop (via SID, independiente del idioma del SO).
+    # Owner y ACL m├¡nimos esperados por Docker Desktop (via SID, independiente del idioma del SO).
     cmd /c "icacls \"$dockerDataPath\" /setowner *S-1-5-32-544 /T /C >nul 2>&1"
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-32-544:(OI)(CI)F /T /C >nul 2>&1"
     cmd /c "icacls \"$dockerDataPath\" /grant *S-1-5-18:(OI)(CI)F /T /C >nul 2>&1"
@@ -371,6 +371,178 @@ function Install-DockerDesktopDirectly {
     }
 }
 
+function Enable-WSL2 {
+    Write-Host "Habilitando WSL2..." -ForegroundColor Cyan
+
+    $isAdmin = ([System.Security.Principal.WindowsIdentity]::GetCurrent().Groups -contains 'S-1-5-32-544')
+    if (-not $isAdmin) {
+        throw "Se requieren permisos de administrador para habilitar WSL2. Reinicia el instalador como Administrador."
+    }
+
+    $script:WSL2_REBOOT_REQUIRED = $false
+
+    dism /online /enable-feature /featurename:Microsoft-Windows-Subsystem-Linux /quiet /norestart | Out-Null
+    if ($LASTEXITCODE -eq 3010) {
+        $script:WSL2_REBOOT_REQUIRED = $true
+        Write-Host "Microsoft-Windows-Subsystem-Linux habilitado. Requiere reinicio." -ForegroundColor Yellow
+    } elseif ($LASTEXITCODE -ne 0) {
+        Write-Host "Advertencia: DISM no pudo habilitar WSL (puede ya estar habilitado). Continuando..." -ForegroundColor Yellow
+    }
+
+    dism /online /enable-feature /featurename:VirtualMachinePlatform /quiet /norestart | Out-Null
+    if ($LASTEXITCODE -eq 3010) {
+        $script:WSL2_REBOOT_REQUIRED = $true
+        Write-Host "VirtualMachinePlatform habilitado. Requiere reinicio." -ForegroundColor Yellow
+    } elseif ($LASTEXITCODE -ne 0) {
+        Write-Host "Advertencia: VirtualMachinePlatform no pudo habilitarse (puede ya estar habilitado). Continuando..." -ForegroundColor Yellow
+    }
+
+    # Fallback: check Windows registry for any pending reboot
+    if (-not $script:WSL2_REBOOT_REQUIRED) {
+        foreach ($rp in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending','HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations')) {
+            if (Test-Path $rp) { $script:WSL2_REBOOT_REQUIRED = $true; break }
+        }
+    }
+
+    if ($script:WSL2_REBOOT_REQUIRED) {
+        Write-Host "WSL2 habilitado por primera vez en este equipo." -ForegroundColor Yellow
+        Write-Host "SE REQUIERE REINICIAR WINDOWS antes de instalar Ubuntu." -ForegroundColor Yellow
+    } else {
+        Write-Host "WSL2 ya estaba habilitado y listo." -ForegroundColor Green
+    }
+}
+
+function Ensure-UbuntuInWSL2 {
+    Write-Host "Preparando Ubuntu en WSL2..." -ForegroundColor Cyan
+
+    # If DISM just enabled WSL features for the first time, Windows needs a reboot
+    # before wsl --install or any wsl command can actually work.
+    if ($script:WSL2_REBOOT_REQUIRED) {
+        Write-Host ""
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host "  REINICIO DE WINDOWS REQUERIDO" -ForegroundColor Yellow
+        Write-Host "  WSL2 se acabo de habilitar por primera vez en este equipo." -ForegroundColor Yellow
+        Write-Host "  Pasos:" -ForegroundColor Yellow
+        Write-Host "    1. Cierra esta ventana." -ForegroundColor White
+        Write-Host "    2. Reinicia Windows (Inicio > Reiniciar)." -ForegroundColor White
+        Write-Host "    3. Ejecuta nuevamente INSTALAR-FACTURACION.bat como Admin." -ForegroundColor White
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host ""
+        throw "Reinicio requerido: WSL2 se habilito por primera vez. Reinicia Windows y ejecuta el instalador nuevamente."
+    }
+
+    $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        Write-Host "WSL no esta disponible. Abre PowerShell como Admin y ejecuta:" -ForegroundColor Yellow
+        Write-Host "  wsl --install -d Ubuntu" -ForegroundColor Cyan
+        return $false
+    }
+
+    $ubuntuExists = wsl -l -v 2>$null | Select-String "Ubuntu"
+    if ($ubuntuExists) {
+        Write-Host "Ubuntu en WSL2 detectado." -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "Instalando Ubuntu en WSL2 (primera vez, puede tardar 2-5 minutos)..." -ForegroundColor Cyan
+    $installOutput = wsl --install -d Ubuntu --no-launch 2>&1
+    $installOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Ubuntu instalado en WSL2." -ForegroundColor Green
+        return $true
+    }
+
+    $installText = ($installOutput | Out-String)
+    if ($installText -match '(?i)ERROR_ALREADY_EXISTS|already exists|Ya existe una distribuci') {
+        Write-Host "Ubuntu ya existia en WSL2; se continuara con esa instalacion." -ForegroundColor Yellow
+        return $true
+    }
+
+    if ($LASTEXITCODE -eq 3010) {
+        Write-Host ""
+        Write-Host "============================================================" -ForegroundColor Yellow
+        Write-Host "  Ubuntu instalado pero requiere reinicio para activarse." -ForegroundColor Yellow
+        Write-Host "  Reinicia Windows y ejecuta el instalador nuevamente." -ForegroundColor Yellow
+        Write-Host "============================================================" -ForegroundColor Yellow
+        throw "Reinicio requerido tras instalar Ubuntu en WSL2. Reinicia Windows y ejecuta el instalador nuevamente."
+    }
+
+    Write-Host "Ubuntu no pudo instalarse automaticamente." -ForegroundColor Yellow
+    return $false
+}
+
+function Install-DockerInUbuntuWSL2 {
+    Write-Host "Instalando Docker nativo en Ubuntu/WSL2..." -ForegroundColor Cyan
+    Write-Host "(Descarga ligera comparada con Docker Desktop)" -ForegroundColor DarkGray
+
+    $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        return $false
+    }
+
+    $ubuntuRunning = wsl -l -v 2>$null | Select-String "Ubuntu.*Running"
+    if (-not $ubuntuRunning) {
+        Write-Host "Iniciando Ubuntu..." -ForegroundColor Yellow
+        wsl -d Ubuntu -e ls >$null 2>&1
+    }
+
+    wsl -d Ubuntu -u root -e bash -lc "apt-get update -qq && (apt-get install -y docker.io docker-compose || apt-get install -y docker.io docker-compose-plugin)" 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Docker en WSL2 no pudo instalarse." -ForegroundColor Yellow
+        return $false
+    }
+
+    Write-Host "Iniciando Docker daemon en Ubuntu..." -ForegroundColor Cyan
+    wsl -d Ubuntu -u root -e service docker start 2>$null | Out-Null
+    wsl -d Ubuntu -u root -e docker version >$null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Docker en WSL2 operativo." -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "Docker en WSL2 no pudo iniciar correctamente." -ForegroundColor Yellow
+    return $false
+}
+
+function Test-DockerViaWSL2 {
+    $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        return $false
+    }
+
+    wsl -d Ubuntu -u root -e service docker start >$null 2>&1
+    wsl -d Ubuntu -u root -e docker info >$null 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
+function Convert-ToWslPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+
+    if ($Path -match '^[A-Za-z]:\\') {
+        $drive = $Path.Substring(0,1).ToLowerInvariant()
+        $tail = $Path.Substring(2) -replace '\\','/'
+        return "/mnt/$drive$tail"
+    }
+
+    return $Path
+}
+
+function Enable-DockerWslProxy {
+    function global:docker {
+        # Use automatic $args so PowerShell does NOT bind flags like -d, -e, -T as named params.
+
+        $mappedArgs = @()
+        foreach ($arg in $args) {
+            $mappedArgs += Convert-ToWslPath -Path $arg
+        }
+
+        wsl -d Ubuntu -u root -e docker @mappedArgs
+    }
+}
 function Confirm-Yes {
     param(
         [string]$Prompt,
@@ -468,33 +640,43 @@ $backendRoot = $resolvedBackendRoot.Path
 if (-not (Test-Path (Join-Path $backendRoot 'artisan'))) { throw "La ruta backend no contiene artisan: $backendRoot" }
 
 function Ensure-DockerAvailable {
-     = Get-Command docker -ErrorAction SilentlyContinue
-    if () {
+    $global:DOCKER_WSL2_MODE = $false
+
+    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    if ($dockerCommand) {
         docker info | Out-Null 2>&1
-        if (0 -eq 0) {
+        if ($LASTEXITCODE -eq 0) {
             Write-Host "Docker en Windows operativo." -ForegroundColor Green
             return
         }
+
+        Write-Host "Docker CLI existe, pero el engine Windows no responde." -ForegroundColor Yellow
+    } else {
+        Write-Host "Docker CLI no esta disponible en Windows." -ForegroundColor Yellow
     }
 
-    Write-Host "Instalacion automatica de Docker ligero en WSL2..." -ForegroundColor Cyan
-    Enable-WSL2
+    Write-Host "Instalacion ligera por defecto: Docker Engine en WSL2 (sin Docker Desktop)." -ForegroundColor Cyan
 
+    Enable-WSL2
     if (-not (Ensure-UbuntuInWSL2)) {
-        throw "No se pudo instalar Ubuntu en WSL2 automaticamente. Reinicia Windows y vuelve a ejecutar el instalador como Administrador."
+        throw "No se pudo preparar Ubuntu en WSL2 automaticamente. Reinicia Windows y vuelve a ejecutar como Administrador."
     }
 
     if (-not (Install-DockerInUbuntuWSL2)) {
-        throw "No se pudo dejar Docker operativo en WSL2 de forma automatica. Vuelve a ejecutar el instalador como Administrador."
+        throw "No se pudo instalar Docker en WSL2 automaticamente. Verifica WSL/Ubuntu y reintenta."
     }
 
-     = True
+    if (-not (Test-DockerViaWSL2)) {
+        throw "Docker en WSL2 no quedo operativo tras la instalacion. Reinicia Windows y vuelve a ejecutar el instalador."
+    }
+
+    $global:DOCKER_WSL2_MODE = $true
     Write-Host "Docker en WSL2 listo y operativo." -ForegroundColor Green
 }
 
 Ensure-DockerAvailable
 
-if () {
+if ($global:DOCKER_WSL2_MODE) {
     Enable-DockerWslProxy
     Write-Host "Docker operara en modo WSL2 (proxy activo)." -ForegroundColor Green
 }
@@ -514,14 +696,14 @@ if ($NonInteractive) {
     Write-Host "======================================" -ForegroundColor Yellow
     Write-Host "
 " -ForegroundColor White
-    Write-Host "Â¿Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
+    Write-Host "┬┐Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
     Write-Host "
 " -ForegroundColor White
     Write-Host "  [s] Si  - Accesible desde cualquier PC de la red" -ForegroundColor Green
     Write-Host "          (puertos abiertos: backend 8000, frontend 5173, admin 5174)" -ForegroundColor DarkGray
     Write-Host "
 " -ForegroundColor White
-    Write-Host "  [n] No - Solo accesible localmente en esta PC (mÃ¡s seguro)" -ForegroundColor Yellow
+    Write-Host "  [n] No - Solo accesible localmente en esta PC (m├ís seguro)" -ForegroundColor Yellow
     Write-Host "
 " -ForegroundColor White
     $choice = Read-Host "Opcion"
@@ -776,6 +958,3 @@ if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Forc
 
 Write-Host 'Instalacion completada.' -ForegroundColor Green
 Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort -PgAdminPort $pgadminPort -PgAdminEmail $pgadminEmail -PgAdminPassword $pgadminPassword
-
-
-
