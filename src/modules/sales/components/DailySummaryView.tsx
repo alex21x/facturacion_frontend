@@ -691,7 +691,8 @@ type SummaryRowProps = {
 };
 
 function SummaryRow({ row, isSelected, isSending, isDeleting, onSelect, onSend, onDelete }: SummaryRowProps) {
-  const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status);
+  const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status)
+    || (row.status === 'SENT' && !row.sunat_ticket);
   const canDelete = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status);
 
   return (
