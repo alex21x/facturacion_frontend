@@ -3,10 +3,13 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const devHost = env.VITE_DEV_HOST || '127.0.0.1';
-  const apiTarget = env.VITE_API_TARGET || 'http://127.0.0.1:8000';
+  const devHost = env.VITE_DEV_HOST || env.VITE_HOST || '127.0.0.1';
+  const apiTarget =
+    env.VITE_API_TARGET ||
+    `http://${env.VITE_HOST || '127.0.0.1'}:${env.VITE_BACKEND_PORT || 8000}`;
 
   return {
+    cacheDir: 'node_modules/.vite/frontend',
     plugins: [react()],
     resolve: {
       dedupe: ['react', 'react-dom'],
@@ -54,8 +57,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: devHost,
-      port: 5173,
-      historyApiFallback: true,
+      port: Number(env.VITE_PORT || 5173),
       watch: {
         ignored: ['**/scripts/**'],
       },

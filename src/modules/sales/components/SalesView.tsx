@@ -52,6 +52,7 @@ import {
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import type {
   CommercialDocumentListItem,
+  PaginatedCommercialDocuments,
   CommercialDocumentProductDetailRow,
   CreateDocumentForm,
   PaginationMeta,
@@ -2323,6 +2324,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const resolvedCashRegisterId = shouldApplyCashRegisterFilter() ? cashRegisterId : null;
       const bootstrapScopeKey = `${branchId ?? 'null'}|${warehouseId ?? 'null'}|${resolvedCashRegisterId ?? 'null'}`;
       const shouldReloadLookups = !lookups || lastBootstrapScopeRef.current !== bootstrapScopeKey;
+      const shouldIncludeDocumentsInBootstrap = shouldReloadLookups && salesWorkspaceMode === 'REPORT';
 
       const isCashierPendingQueue =
         shouldPrioritizePendingOrders
@@ -2330,6 +2332,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         && documentViewFilter === 'PENDING_CONVERSION';
 
       let lookupRows: SalesLookups | null = lookups;
+      let bootstrapDocuments: PaginatedCommercialDocuments | null = null;
 
       if (shouldReloadLookups) {
         setLoadingBootstrap(true);
@@ -2337,10 +2340,32 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           branchId,
           warehouseId,
           cashRegisterId: resolvedCashRegisterId,
-          includeDocuments: false,
+          includeDocuments: shouldIncludeDocumentsInBootstrap,
+          ...(shouldIncludeDocumentsInBootstrap
+            ? {
+              ...buildDocumentFilterParams(
+                isCashierPendingQueue ? 'PENDING_CONVERSION' : documentViewFilter,
+                lookupRows?.document_kinds ?? []
+              ),
+              sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
+              status: documentFiltersApplied.status || undefined,
+              customer: documentFiltersApplied.customer || undefined,
+              customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+              customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+                ? Number(documentFiltersApplied.customerVehicleId)
+                : undefined,
+              issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
+              issueDateTo: documentFiltersApplied.issueDateTo || undefined,
+              series: documentFiltersApplied.series || undefined,
+              number: documentFiltersApplied.number || undefined,
+              page: documentsPage,
+              perPage: documentsMeta.per_page,
+            }
+            : {}),
         });
 
         lookupRows = bootstrap.lookups;
+        bootstrapDocuments = bootstrap.documents;
         lastBootstrapScopeRef.current = bootstrapScopeKey;
 
         setLookups(lookupRows);
@@ -2376,7 +2401,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         const requestSeq = documentsRequestSeqRef.current + 1;
         documentsRequestSeqRef.current = requestSeq;
 
-        const docs = await fetchCommercialDocuments(accessToken, {
+        const docs = bootstrapDocuments ?? await fetchCommercialDocuments(accessToken, {
           branchId,
           warehouseId,
           cashRegisterId: resolvedCashRegisterId,
@@ -3727,6 +3752,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  function updateDocumentInList(documentId: number, updates: Partial<CommercialDocumentListItem>): void {
+    setDocuments((prev) =>
+      prev.map((doc) =>
+        doc.id === documentId ? { ...doc, ...updates } : doc
+      )
+    );
+  }
+
   async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
     try {
       const data = await fetchCommercialDocumentDetails(accessToken, documentId);
@@ -3773,7 +3806,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         detail: detailSummary || 'Sin detalle adicional del puente.',
       });
 
-      await loadData();
+      updateDocumentInList(row.id, {
+        sunat_status: nextSunatStatus,
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo enviar el comprobante a SUNAT');
 
@@ -4799,7 +4834,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const summaryType = isReceipt ? 'RA' : 'baja SUNAT';
       const summaryInfo = linkedSummaryId && isReceipt ? ` Asignado automaticamente a ${summaryType} #${linkedSummaryId}.` : '';
       setMessage(`${docLabel} ${row.series}-${row.number} anulado correctamente.${summaryInfo}`);
-      await loadData();
+      updateDocumentInList(row.id, {
+        status: 'VOID',
+        sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
+      });
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
       setMessage(text);
@@ -4883,7 +4921,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         detail: detailSummary || 'Sin detalle adicional del puente.',
       });
 
-      await loadData();
+      updateDocumentInList(row.id, {
+        sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
+      });
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo comunicar la baja SUNAT';
       setMessage(text);

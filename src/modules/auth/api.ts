@@ -1,6 +1,7 @@
+import { getApiBaseUrl } from '../../shared/api/base-url';
 import type { LoginPayload, LoginResponse } from './types';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const baseUrl = getApiBaseUrl();
 
 async function postJson<T>(path: string, body: unknown, headers?: HeadersInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {

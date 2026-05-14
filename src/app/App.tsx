@@ -19,6 +19,7 @@ const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
 type ModuleTab =
   | 'home'
   | 'cash'
+  | 'racing-ops'
   | 'restaurant-orders'
   | 'comandas'
   | 'tables'
@@ -56,6 +57,7 @@ const MENU_GROUPS: Array<{ id: MenuGroup; label: string }> = [
 const QUICK_ACCESS_PRIORITY: ModuleTab[] = [
   'home',
   'sales',
+  'racing-ops',
   'cash',
   'purchases',
   'inventory',
@@ -97,6 +99,7 @@ const TablesView = lazy(() => import('../modules/restaurant/components/TablesVie
 const RecipeEditorView = lazy(() => import('../modules/restaurant/components/RecipeEditorView').then((m) => ({ default: m.RecipeEditorView })));
 const loadSalesView = () => import('../modules/sales/components/SalesView');
 const CashView = lazy(() => loadCashView().then((m) => ({ default: m.CashView })));
+const RacingOperationsView = lazy(() => import('../modules/racing/components/RacingOperationsView').then((m) => ({ default: m.RacingOperationsView })));
 const SalesView = lazy(() => loadSalesView().then((m) => ({ default: m.SalesView })));
 const DailySummaryView = lazy(() => import('../modules/sales/components/DailySummaryView').then((m) => ({ default: m.DailySummaryView })));
 const GreGuidesView = lazy(() => import('../modules/sales/components/GreGuidesView').then((m) => ({ default: m.GreGuidesView })));
@@ -165,6 +168,20 @@ const MENU_ITEMS: Array<{
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9zm0 0V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2M9 13h6M12 13v4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'racing-ops',
+    group: 'operacion',
+    kicker: 'Rally',
+    label: 'Operacion Racing',
+    hint: 'Autos, mantenimiento, checklist y eventos',
+    moduleCode: 'INVENTORY',
+    onlyVerticals: ['RACING_OPERATIONS'],
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 14h2l2-4h9l2 4h3M7 14h10M8 10l1-3h6l1 3M7 17a1.5 1.5 0 1 0 0 .01M17 17a1.5 1.5 0 1 0 0 .01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -294,6 +311,11 @@ const MENU_ITEMS: Array<{
         label: 'Insumos y Bodega',
         hint: 'Stock de ingredientes, bebidas e insumos de cocina',
       },
+      RACING_OPERATIONS: {
+        kicker: 'Almacen',
+        label: 'Inventario Tecnico',
+        hint: 'Repuestos, herramientas, EPP, combustibles y llantas',
+      },
     },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -314,6 +336,11 @@ const MENU_ITEMS: Array<{
         label: 'Compras de Insumos',
         hint: 'Compras al proveedor: carnes, verduras, bebidas e insumos',
       },
+      RACING_OPERATIONS: {
+        kicker: 'Abastecimiento',
+        label: 'Compras y Servicios',
+        hint: 'Proveedores, ordenes de compra y servicios externos',
+      },
     },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -331,6 +358,11 @@ const MENU_ITEMS: Array<{
     verticalLabels: {
       RESTAURANT: {
         hint: 'Ventas por mesa, platos mas vendidos y recaudacion diaria',
+      },
+      RACING_OPERATIONS: {
+        kicker: 'Analitica',
+        label: 'Reportes Operativos',
+        hint: 'Consumo, gastos por rally y rendimiento por auto',
       },
     },
     icon: (
@@ -377,6 +409,11 @@ const MENU_ITEMS: Array<{
         label: 'Menu del Restaurante',
         hint: 'Platos, bebidas, combos y precios de venta',
       },
+      RACING_OPERATIONS: {
+        kicker: 'Catalogo',
+        label: 'Items Tecnicos',
+        hint: 'Repuestos, equipos, codigos internos e imagenes',
+      },
     },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -396,6 +433,11 @@ const MENU_ITEMS: Array<{
         label: 'Comensales',
         hint: 'Clientes frecuentes, datos de facturacion y preferencias',
       },
+      RACING_OPERATIONS: {
+        kicker: 'Ecosistema',
+        label: 'Terceros',
+        hint: 'Proveedores, talleres externos, transporte y servicios',
+      },
     },
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -412,6 +454,11 @@ const MENU_ITEMS: Array<{
     verticalLabels: {
       RESTAURANT: {
         hint: 'Series de comprobantes, modos de pago y configuracion de cajas',
+      },
+      RACING_OPERATIONS: {
+        kicker: 'Operacion',
+        label: 'Parametros de Rally',
+        hint: 'Reglas de mantenimiento, alertas y checklists operativos',
       },
     },
     icon: (
@@ -529,6 +576,7 @@ function resolveInitialActiveTab(): ModuleTab {
   const allowed: ModuleTab[] = [
     'home',
     'cash',
+    'racing-ops',
     'restaurant-orders',
     'comandas',
     'tables',
@@ -1485,6 +1533,9 @@ export function App() {
                     cashRegisterId={selectedCashRegisterId}
                     salesFlowMode={salesFlowMode}
                   />
+                )}
+                {activeTab === 'racing-ops' && (
+                  <RacingOperationsView accessToken={session.accessToken} />
                 )}
                 {activeTab === 'restaurant-orders' && (
                   <RestaurantOrderView
