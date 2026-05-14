@@ -1,8 +1,9 @@
+import { getApiBaseUrl } from './base-url';
 import { refresh } from '../../modules/auth/api';
 import type { AuthSession } from '../../modules/auth/types';
 import { clearAuthSession, loadAuthSession, saveAuthSession } from '../../modules/auth/storage';
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const baseUrl = getApiBaseUrl();
 
 let refreshingPromise: Promise<string | null> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
@@ -10,6 +11,22 @@ const recentGetResponses = new Map<string, { expiresAt: number; data: unknown }>
 const DEFAULT_GET_RESPONSE_CACHE_TTL_MS = 1000;
 
 function resolveGetResponseCacheTtlMs(path: string): number {
+  if (path.startsWith('/api/appcfg/operational-context')) {
+    return 8000;
+  }
+
+  if (path.startsWith('/api/appcfg/feature-toggles')) {
+    return 8000;
+  }
+
+  if (path.startsWith('/api/sales/lookups')) {
+    return 10000;
+  }
+
+  if (path.startsWith('/api/sales/bootstrap') && /(^|[?&])include_documents=0(&|$)/.test(path)) {
+    return 5000;
+  }
+
   if (/^\/api\/appcfg\/company-.*-matrix$/.test(path)) {
     return 15000;
   }
