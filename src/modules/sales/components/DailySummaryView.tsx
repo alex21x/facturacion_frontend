@@ -8,6 +8,7 @@ import {
   fetchDailySummaries,
   fetchEligibleDocuments,
   removeDailySummaryDocument,
+  queryDailySummaryTicketStatus,
   sendDailySummary,
 } from '../api/dailySummary';
 import type {
@@ -143,6 +144,7 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
   // ── Send state ───────────────────────────────────────────────────────────────
   const [sendingId, setSendingId] = useState<number | null>(null);
   const [sendResult, setSendResult] = useState<string>('');
+  const [queryingTicketId, setQueryingTicketId] = useState<number | null>(null);
 
   // ── Delete state ─────────────────────────────────────────────────────────────
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -357,6 +359,28 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
       .finally(() => setSendingId(null));
   };
 
+  const handleQueryTicket = (id: number) => {
+    setQueryingTicketId(id);
+    setSendResult('');
+    setActionError('');
+
+    queryDailySummaryTicketStatus(accessToken, id)
+      .then((res) => {
+        const codePart = res.sunat_error_code ? `Codigo SUNAT: ${res.sunat_error_code}` : '';
+        const messagePart = res.sunat_error_message ? `Detalle: ${res.sunat_error_message}` : '';
+        const detailPart = [codePart, messagePart].filter((value) => value !== '').join(' | ');
+        setSendResult(detailPart ? `${res.label ?? res.message ?? 'Ticket procesado'} | ${detailPart}` : (res.label ?? res.message ?? 'Ticket procesado'));
+        loadList();
+        if (selectedId === id) {
+          fetchDailySummaryDetail(accessToken, id)
+            .then(setDetail)
+            .catch(() => null);
+        }
+      })
+      .catch((err: Error) => setActionError(err.message))
+      .finally(() => setQueryingTicketId(null));
+  };
+
   // ── Delete ────────────────────────────────────────────────────────────────────
 
   const handleDelete = (id: number) => {
@@ -516,6 +540,8 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
                 detail={detail}
                 removingDocumentId={removingDocumentId}
                 onRemoveDocument={handleRemoveDocument}
+                onQueryTicket={handleQueryTicket}
+                queryingTicketId={queryingTicketId}
                 traceabilityEnabled={traceabilityEnabled}
                 summaryAuditLogs={summaryAuditLogs}
                 summaryAuditLoading={summaryAuditLoading}
@@ -712,6 +738,8 @@ type SummaryDetailProps = {
   detail: DailySummaryDetail;
   removingDocumentId: number | null;
   onRemoveDocument: (summaryId: number, documentId: number) => void;
+  onQueryTicket: (summaryId: number) => void;
+  queryingTicketId: number | null;
   traceabilityEnabled: boolean;
   summaryAuditLogs: DailySummaryAuditAttempt[];
   summaryAuditLoading: boolean;
@@ -726,6 +754,8 @@ function SummaryDetail({
   detail,
   removingDocumentId,
   onRemoveDocument,
+  onQueryTicket,
+  queryingTicketId,
   traceabilityEnabled,
   summaryAuditLogs,
   summaryAuditLoading,
@@ -753,6 +783,21 @@ function SummaryDetail({
           {detail.sunat_error_code && <tr><td className="ds-meta-key">Codigo SUNAT</td><td>{detail.sunat_error_code}</td></tr>}
           {detail.sunat_error_message && <tr><td className="ds-meta-key">Detalle error</td><td>{detail.sunat_error_message}</td></tr>}
           {detail.sent_at && <tr><td className="ds-meta-key">Enviado</td><td>{fmtDateTime(detail.sent_at)}</td></tr>}
+          {detail.sunat_ticket && (
+            <tr>
+              <td className="ds-meta-key">Accion</td>
+              <td>
+                <button
+                  type="button"
+                  className="ds-btn-secondary btn-mini"
+                  disabled={queryingTicketId === detail.id}
+                  onClick={() => onQueryTicket(detail.id)}
+                >
+                  {queryingTicketId === detail.id ? 'Consultando…' : 'Consultar ticket'}
+                </button>
+              </td>
+            </tr>
+          )}
           {detail.notes && <tr><td className="ds-meta-key">Notas</td><td>{detail.notes}</td></tr>}
         </tbody>
       </table>
