@@ -11,6 +11,22 @@ const recentGetResponses = new Map<string, { expiresAt: number; data: unknown }>
 const DEFAULT_GET_RESPONSE_CACHE_TTL_MS = 1000;
 
 function resolveGetResponseCacheTtlMs(path: string): number {
+  if (path.startsWith('/api/appcfg/operational-context')) {
+    return 8000;
+  }
+
+  if (path.startsWith('/api/appcfg/feature-toggles')) {
+    return 8000;
+  }
+
+  if (path.startsWith('/api/sales/lookups')) {
+    return 10000;
+  }
+
+  if (path.startsWith('/api/sales/bootstrap') && /(^|[?&])include_documents=0(&|$)/.test(path)) {
+    return 5000;
+  }
+
   if (/^\/api\/appcfg\/company-.*-matrix$/.test(path)) {
     return 15000;
   }
