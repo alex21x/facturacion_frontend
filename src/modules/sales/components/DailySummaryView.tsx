@@ -61,6 +61,18 @@ function fmtDateTime(dateStr: string | null): string {
   return isNaN(d.getTime()) ? dateStr : d.toLocaleString('es-PE', { timeZone: 'America/Lima' });
 }
 
+function normalizeSunatTicket(ticket: string | null | undefined): string | null {
+  const value = String(ticket ?? '').trim();
+  if (!value) return null;
+
+  const normalized = value.toUpperCase();
+  if (['NULL', 'NONE', 'N/A', 'NA', '-', 'S/T', 'SIN TICKET'].includes(normalized)) {
+    return null;
+  }
+
+  return value;
+}
+
 function formatDebugJson(value: unknown): string {
   if (value === null || value === undefined) {
     return 'null';
@@ -691,8 +703,9 @@ type SummaryRowProps = {
 };
 
 function SummaryRow({ row, isSelected, isSending, isDeleting, onSelect, onSend, onDelete }: SummaryRowProps) {
+  const sunatTicket = normalizeSunatTicket(row.sunat_ticket);
   const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status)
-    || (row.status === 'SENT' && !row.sunat_ticket);
+    || (row.status === 'SENT' && !sunatTicket);
   const canDelete = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status);
 
   return (
@@ -709,7 +722,7 @@ function SummaryRow({ row, isSelected, isSending, isDeleting, onSelect, onSend, 
       <div className="ds-row__meta">
         <span>{fmtDate(row.summary_date)}</span>
         <span>{row.item_count} boleta{row.item_count !== 1 ? 's' : ''}</span>
-        {row.sunat_ticket && <span title="Ticket SUNAT">🎟 {row.sunat_ticket}</span>}
+        {sunatTicket && <span title="Ticket SUNAT">🎟 {sunatTicket}</span>}
       </div>
       <div className="ds-row__actions" onClick={(e) => e.stopPropagation()}>
         {canSend && (
@@ -767,6 +780,7 @@ function SummaryDetail({
   onSelectAuditLog,
 }: SummaryDetailProps) {
   const canEditItems = ['DRAFT', 'ERROR', 'REJECTED'].includes(detail.status);
+  const sunatTicket = normalizeSunatTicket(detail.sunat_ticket);
 
   return (
     <div>
@@ -779,12 +793,12 @@ function SummaryDetail({
             <td className="ds-meta-key">Estado</td>
             <td><span className={STATUS_BADGE_CLASS[detail.status]}>{STATUS_LABELS[detail.status]}</span></td>
           </tr>
-          {detail.sunat_ticket && <tr><td className="ds-meta-key">Ticket</td><td>{detail.sunat_ticket}</td></tr>}
+          {sunatTicket && <tr><td className="ds-meta-key">Ticket</td><td>{sunatTicket}</td></tr>}
           {detail.sunat_cdr_code && <tr><td className="ds-meta-key">CDR</td><td>{detail.sunat_cdr_code} {detail.sunat_cdr_desc}</td></tr>}
           {detail.sunat_error_code && <tr><td className="ds-meta-key">Codigo SUNAT</td><td>{detail.sunat_error_code}</td></tr>}
           {detail.sunat_error_message && <tr><td className="ds-meta-key">Detalle error</td><td>{detail.sunat_error_message}</td></tr>}
           {detail.sent_at && <tr><td className="ds-meta-key">Enviado</td><td>{fmtDateTime(detail.sent_at)}</td></tr>}
-          {detail.sunat_ticket && (
+          {sunatTicket && (
             <tr>
               <td className="ds-meta-key">Accion</td>
               <td>
