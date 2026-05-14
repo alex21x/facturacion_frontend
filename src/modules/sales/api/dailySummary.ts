@@ -91,6 +91,8 @@ export type DailySummarySendResult = {
   debug: Record<string, unknown> | null;
 };
 
+export type DailySummaryTicketStatusResult = DailySummarySendResult;
+
 export type DailySummaryAuditAttempt = {
   id: number;
   document: string;
@@ -247,6 +249,19 @@ export async function sendDailySummary(
   const q = companyId ? `?company_id=${companyId}` : '';
   return apiClient.request<DailySummarySendResult>(
     `/api/sales/daily-summaries/${id}/send${q}`,
+    { method: 'PUT', headers: authHeaders(accessToken) }
+  );
+}
+
+export async function queryDailySummaryTicketStatus(
+  accessToken: string,
+  id: number,
+  companyId?: number
+): Promise<DailySummaryTicketStatusResult> {
+  const q = companyId ? `?company_id=${companyId}` : '';
+
+  return apiClient.request<DailySummaryTicketStatusResult>(
+    `/api/sales/daily-summaries/${id}/status-ticket${q}`,
     { method: 'PUT', headers: authHeaders(accessToken) }
   );
 }
