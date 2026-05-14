@@ -4,6 +4,7 @@ import {
   fetchSunatExceptionsAudit,
   manualConfirmSunatException,
 } from '../api';
+import { SummaryExceptionsPanel } from './SummaryExceptionsPanel';
 import type {
   ManualSunatConfirmPayload,
   PaginatedSunatExceptions,
@@ -53,6 +54,7 @@ function formatDateTime(value?: string | null): string {
 }
 
 export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
+  const [activeTab, setActiveTab] = useState<'documents' | 'summaries'>('documents');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
@@ -149,6 +151,44 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
     ? 'sunat-exceptions__chip sunat-exceptions__chip--danger'
     : 'sunat-exceptions__chip sunat-exceptions__chip--ok';
 
+  if (activeTab === 'summaries') {
+    return (
+      <section className="sunat-exceptions">
+        <header className="sunat-exceptions__header">
+          <div>
+            <h2 className="sunat-exceptions__title">Excepciones SUNAT</h2>
+            <p className="sunat-exceptions__subtitle">
+              Control unificado para documentos y resumenes RC/RA en un solo lugar.
+            </p>
+          </div>
+        </header>
+
+        <div className="sunat-exceptions__card" style={{ marginBottom: 12 }}>
+          <div className="sunat-exceptions__pager" style={{ justifyContent: 'flex-start' }}>
+            <button
+              type="button"
+              className="btn-mini"
+              style={{ fontWeight: activeTab === 'documents' ? 700 : 500 }}
+              onClick={() => setActiveTab('documents')}
+            >
+              Excepciones de Documentos
+            </button>
+            <button
+              type="button"
+              className="btn-mini"
+              style={{ fontWeight: activeTab === 'summaries' ? 700 : 500 }}
+              onClick={() => setActiveTab('summaries')}
+            >
+              Excepciones de Resumenes
+            </button>
+          </div>
+        </div>
+
+        <SummaryExceptionsPanel accessToken={accessToken} />
+      </section>
+    );
+  }
+
   return (
     <section className="sunat-exceptions">
       <header className="sunat-exceptions__header">
@@ -168,6 +208,27 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
           </span>
         </div>
       </header>
+
+      <section className="sunat-exceptions__card" style={{ marginBottom: 12 }}>
+        <div className="sunat-exceptions__pager" style={{ justifyContent: 'flex-start' }}>
+          <button
+            type="button"
+            className="btn-mini"
+            style={{ fontWeight: activeTab === 'documents' ? 700 : 500 }}
+            onClick={() => setActiveTab('documents')}
+          >
+            Excepciones de Documentos
+          </button>
+          <button
+            type="button"
+            className="btn-mini"
+            style={{ fontWeight: activeTab === 'summaries' ? 700 : 500 }}
+            onClick={() => setActiveTab('summaries')}
+          >
+            Excepciones de Resumenes
+          </button>
+        </div>
+      </section>
 
       <section className="sunat-exceptions__card">
         <div className="sunat-exceptions__filters">
