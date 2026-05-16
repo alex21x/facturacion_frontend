@@ -1,3 +1,38 @@
+function inferRailwayBackendOrigin(host: string): string | null {
+  const lowerHost = host.toLowerCase();
+  if (!lowerHost.endsWith('.up.railway.app')) {
+    return null;
+  }
+
+  const rawCandidates = [
+    lowerHost.replace('facturacionadmin', 'facturacionbackend'),
+    lowerHost.replace('facturacionfrontend', 'facturacionbackend'),
+    lowerHost.replace('facturacion-frontend', 'facturacion-backend'),
+    lowerHost.replace('-admin-', '-backend-'),
+    lowerHost.replace('-frontend-', '-backend-'),
+    lowerHost.replace('admin-production', 'backend-production'),
+    lowerHost.replace('frontend-production', 'backend-production'),
+    lowerHost.replace('admin', 'backend'),
+    lowerHost.replace('frontend', 'backend'),
+  ];
+
+  const seen = new Set<string>();
+  for (const candidate of rawCandidates) {
+    if (!candidate || candidate === lowerHost || seen.has(candidate)) {
+      continue;
+    }
+    seen.add(candidate);
+
+    if (!candidate.includes('backend')) {
+      continue;
+    }
+
+    return `https://${candidate}`;
+  }
+
+  return null;
+}
+
 export function getApiBaseUrl(): string {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
   if (configuredBaseUrl) {
@@ -23,6 +58,11 @@ export function getApiBaseUrl(): string {
 
   if (isLocalHost) {
     return `${protocol}//${host}:${backendPort}`;
+  }
+
+  const inferredRailwayBackend = inferRailwayBackendOrigin(host);
+  if (inferredRailwayBackend) {
+    return inferredRailwayBackend;
   }
 
   return '';
