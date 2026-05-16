@@ -56,6 +56,7 @@ Before saying a fix is complete:
 3. Verify target branches contain the fix (or cherry-pick equivalent).
 4. Push remote heads for the branches that should receive it.
 5. Report branch hashes in the final update.
+6. Do not leave the main user-reported issue pending. If blocked by missing access/config, explicitly ask the user and stop only after confirmation.
 
 ## What lives only on specific branches
 | Concern | Branch |
