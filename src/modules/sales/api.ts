@@ -207,7 +207,7 @@ export async function createCustomerVehicle(
     is_default?: boolean;
   }
 ): Promise<SalesCustomerVehicle> {
-  const response = await apiClient.request<{ data: SalesCustomerVehicle }>(
+  const response = await apiClient.request<{ data?: SalesCustomerVehicle; id?: number }>(
     `/api/sales/customers/${customerId}/vehicles`,
     {
       method: 'POST',
@@ -216,7 +216,24 @@ export async function createCustomerVehicle(
     }
   );
 
-  return response.data;
+  if (response.data && typeof response.data.id === 'number') {
+    return response.data;
+  }
+
+  const fallbackId = Number(response.id ?? 0);
+  if (fallbackId > 0) {
+    return {
+      id: fallbackId,
+      customer_id: customerId,
+      plate: String(payload.plate ?? '').trim().toUpperCase(),
+      brand: payload.brand ?? null,
+      model: payload.model ?? null,
+      is_default: Boolean(payload.is_default),
+      status: 1,
+    };
+  }
+
+  throw new Error('Respuesta invalida al crear vehiculo.');
 }
 
 export type ResolveCustomerByDocumentResponse = {
