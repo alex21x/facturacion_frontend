@@ -7,8 +7,8 @@ RUN npm ci
 
 COPY . .
 
-RUN npm run build
+RUN npm run build && npm run build:admin
 
 EXPOSE 3000
 
-CMD ["sh", "-lc", "node scripts/serve-static.mjs dist"]
+CMD ["sh", "-lc", "if [ \"${APP_VARIANT:-app}\" = \"admin\" ]; then node scripts/serve-static.mjs dist-admin; else node scripts/serve-static.mjs dist; fi"]
