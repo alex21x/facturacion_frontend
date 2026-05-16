@@ -3,6 +3,14 @@ import type { LoginPayload, LoginResponse } from './types';
 
 const baseUrl = getApiBaseUrl();
 
+function looksLikeHtmlResponse(contentType: string, text: string): boolean {
+  return contentType.includes('text/html') || /<html|<!doctype/i.test(text);
+}
+
+function apiConfigHint(): string {
+  return 'La API devolvio HTML en lugar de JSON. Verifica VITE_API_BASE_URL (frontend/admin) y FRONTEND_APP_URL/FRONTEND_URL (backend CORS) en Railway.';
+}
+
 async function postJson<T>(path: string, body: unknown, headers?: HeadersInit): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
@@ -13,8 +21,13 @@ async function postJson<T>(path: string, body: unknown, headers?: HeadersInit): 
     body: JSON.stringify(body),
   });
 
+  const text = await response.text();
+  const contentType = (response.headers.get('content-type') ?? '').toLowerCase();
+
   if (!response.ok) {
-    const text = await response.text();
+    if (looksLikeHtmlResponse(contentType, text)) {
+      throw new Error(apiConfigHint());
+    }
 
     try {
       const parsed = JSON.parse(text) as { message?: string };
@@ -28,7 +41,15 @@ async function postJson<T>(path: string, body: unknown, headers?: HeadersInit): 
     throw new Error(`No se pudo completar la solicitud (${response.status}).`);
   }
 
-  return (await response.json()) as T;
+  if (looksLikeHtmlResponse(contentType, text)) {
+    throw new Error(apiConfigHint());
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error('Respuesta invalida de la API (se esperaba JSON).');
+  }
 }
 
 export async function login(payload: LoginPayload): Promise<LoginResponse> {
