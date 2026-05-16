@@ -1,12 +1,29 @@
 export function getApiBaseUrl(): string {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
   if (configuredBaseUrl) {
-    return configuredBaseUrl;
+    return configuredBaseUrl.replace(/\/+$/, '');
   }
 
-  const host = typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1';
-  const protocol = typeof window !== 'undefined' ? window.location.protocol : 'http:';
+  if (typeof window === 'undefined') {
+    const backendPort = import.meta.env.VITE_BACKEND_PORT || '8000';
+    return `http://127.0.0.1:${backendPort}`;
+  }
+
+  const host = window.location.hostname;
+  const protocol = window.location.protocol;
   const backendPort = import.meta.env.VITE_BACKEND_PORT || '8000';
 
-  return `${protocol}//${host}:${backendPort}`;
+  const isLocalHost =
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '0.0.0.0' ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
+
+  if (isLocalHost) {
+    return `${protocol}//${host}:${backendPort}`;
+  }
+
+  return '';
 }
