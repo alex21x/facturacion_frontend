@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import '../../../styles/modules/sales.css';
 import { docKindLabel } from '../../../shared/utils/docKind';
 import { fmtDateLima, fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
@@ -4126,7 +4125,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
-  async function handleAddNewVehicle() {
+  async function handleAddNewVehicle(e: React.FormEvent) {
+    e.preventDefault();
     if (!form.customerId || !newVehiclePlate.trim()) {
       setMessage('Ingrese placa del vehículo');
       return;
@@ -4829,12 +4829,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         void_at: nowLimaIso(),
       };
 
-      let response: { sunat_void_status?: string | null; daily_summary_id?: unknown };
+      let response;
       try {
-        response = (await voidCommercialDocument(accessToken, row.id, basePayload)) as {
-          sunat_void_status?: string | null;
-          daily_summary_id?: unknown;
-        };
+        response = await voidCommercialDocument(accessToken, row.id, basePayload);
       } catch (error) {
         const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
         const needsPassword = /ingresar su clave|clave para confirmar la anulacion/i.test(text);
@@ -4860,15 +4857,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
         const validatedReason = passwordConfirmResult.reason.trim();
 
-        response = (await voidCommercialDocument(accessToken, row.id, {
+        response = await voidCommercialDocument(accessToken, row.id, {
           reason: validatedReason || undefined,
           notes: validatedReason || undefined,
           void_at: nowLimaIso(),
           void_password: passwordConfirmResult.password,
-        })) as {
-          sunat_void_status?: string | null;
-          daily_summary_id?: unknown;
-        };
+        });
       }
 
       const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
@@ -6708,26 +6702,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         </div>
       </form>
 
-      {showAddVehiclePopup && typeof document !== 'undefined' && createPortal(
+      {showAddVehiclePopup && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div
-            style={{ backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '20px', maxWidth: '400px', width: '90%', boxShadow: '0 20px 25px rgba(0,0,0,0.15)' }}
-            onKeyDown={(event) => {
-              if (event.key !== 'Enter') {
-                return;
-              }
-
-              event.preventDefault();
-              event.stopPropagation();
-              void handleAddNewVehicle();
-            }}
-          >
+          <div style={{ backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '20px', maxWidth: '400px', width: '90%', boxShadow: '0 20px 25px rgba(0,0,0,0.15)' }}>
             <h4 style={{ marginTop: 0, marginBottom: '12px' }}>Agregar Vehículo</h4>
             <p style={{ marginBottom: '16px', color: '#666', fontSize: '0.9rem' }}>Registra un nuevo vehículo para este cliente.</p>
-            <div>
+            <form onSubmit={(e) => void handleAddNewVehicle(e)}>
               <div style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Placa *</label>
-                <input type="text" maxLength={20} value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} placeholder="Ej. AXY-123" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
+                <input type="text" maxLength={20} required value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} placeholder="Ej. AXY-123" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
               </div>
               <div style={{ marginBottom: '12px' }}>
                 <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Marca</label>
@@ -6739,12 +6722,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </div>
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                 <button type="button" className="btn-mini" onClick={() => setShowAddVehiclePopup(false)}>Cancelar</button>
-                <button type="button" className="btn-mini" style={{ background: '#1e40af', color: '#fff', borderColor: '#1e40af' }} disabled={submittingNewVehicle} onClick={() => void handleAddNewVehicle()}>{submittingNewVehicle ? '⏳ Guardando...' : '✓ Guardar'}</button>
+                <button type="submit" className="btn-mini" style={{ background: '#1e40af', color: '#fff', borderColor: '#1e40af' }} disabled={submittingNewVehicle}>{submittingNewVehicle ? '⏳ Guardando...' : '✓ Guardar'}</button>
               </div>
-            </div>
+            </form>
           </div>
-        </div>,
-        document.body
+        </div>
       )}
 
       {issuedPreview && (
