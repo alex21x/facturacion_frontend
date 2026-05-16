@@ -5,6 +5,16 @@ function inferRailwayBackendOrigin(host: string): string | null {
   }
 
   const rawCandidates = [
+    lowerHost.replace('facturacionadmin', 'facturacionbackendapi'),
+    lowerHost.replace('facturacionfrontend', 'facturacionbackendapi'),
+    lowerHost.replace('facturacion-admin', 'facturacion-backend-api'),
+    lowerHost.replace('facturacion-frontend', 'facturacion-backend-api'),
+    lowerHost.replace('-admin-', '-backendapi-'),
+    lowerHost.replace('-frontend-', '-backendapi-'),
+    lowerHost.replace('admin-production', 'backendapi-production'),
+    lowerHost.replace('frontend-production', 'backendapi-production'),
+    lowerHost.replace('admin', 'backendapi'),
+    lowerHost.replace('frontend', 'backendapi'),
     lowerHost.replace('facturacionadmin', 'facturacionbackend'),
     lowerHost.replace('facturacionfrontend', 'facturacionbackend'),
     lowerHost.replace('facturacion-frontend', 'facturacion-backend'),
