@@ -4829,9 +4829,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         void_at: nowLimaIso(),
       };
 
-      let response;
+      let response: { sunat_void_status?: string | null; daily_summary_id?: unknown };
       try {
-        response = await voidCommercialDocument(accessToken, row.id, basePayload);
+        response = (await voidCommercialDocument(accessToken, row.id, basePayload)) as {
+          sunat_void_status?: string | null;
+          daily_summary_id?: unknown;
+        };
       } catch (error) {
         const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
         const needsPassword = /ingresar su clave|clave para confirmar la anulacion/i.test(text);
@@ -4857,12 +4860,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
         const validatedReason = passwordConfirmResult.reason.trim();
 
-        response = await voidCommercialDocument(accessToken, row.id, {
+        response = (await voidCommercialDocument(accessToken, row.id, {
           reason: validatedReason || undefined,
           notes: validatedReason || undefined,
           void_at: nowLimaIso(),
           void_password: passwordConfirmResult.password,
-        });
+        })) as {
+          sunat_void_status?: string | null;
+          daily_summary_id?: unknown;
+        };
       }
 
       const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
