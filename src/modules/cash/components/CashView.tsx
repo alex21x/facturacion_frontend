@@ -910,9 +910,9 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                 <div className="cash-section-head">
                   <div>
                     <h4>Registrar Movimiento</h4>
-                    <p>Registra ingresos o egresos manuales desde un formulario rapido.</p>
+                    <p>Registra ingresos o egresos manuales desde un formulario rapido. Disponible para Caja y Vendedor.</p>
                   </div>
-                  <button className="cash-btn cash-btn-primary" type="button" onClick={() => setShowMovementPopup(true)}>
+                  <button className="cash-btn cash-btn-primary" type="button" onClick={() => setShowMovementPopup(true)} disabled={loading}>
                     ➕ Nuevo movimiento
                   </button>
                 </div>

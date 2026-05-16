@@ -197,6 +197,28 @@ export async function fetchCustomerVehicles(
   return response.data;
 }
 
+export async function createCustomerVehicle(
+  accessToken: string,
+  customerId: number,
+  payload: {
+    plate: string;
+    brand?: string | null;
+    model?: string | null;
+    is_default?: boolean;
+  }
+): Promise<SalesCustomerVehicle> {
+  const response = await apiClient.request<{ data: SalesCustomerVehicle }>(
+    `/api/sales/customers/${customerId}/vehicles`,
+    {
+      method: 'POST',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(payload),
+    }
+  );
+
+  return response.data;
+}
+
 export type ResolveCustomerByDocumentResponse = {
   data: SalesCustomerSuggestion;
   source: 'local' | 'reniec' | 'sunat';
