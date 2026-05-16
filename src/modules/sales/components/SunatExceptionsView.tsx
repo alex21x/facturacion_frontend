@@ -168,7 +168,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
             <button
               type="button"
               className="btn-mini"
-              style={{ fontWeight: activeTab === 'documents' ? 700 : 500 }}
+              style={{ fontWeight: 500 }}
               onClick={() => setActiveTab('documents')}
             >
               Excepciones de Documentos
@@ -176,7 +176,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
             <button
               type="button"
               className="btn-mini"
-              style={{ fontWeight: activeTab === 'summaries' ? 700 : 500 }}
+              style={{ fontWeight: 700 }}
               onClick={() => setActiveTab('summaries')}
             >
               Excepciones de Resumenes
@@ -214,7 +214,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
           <button
             type="button"
             className="btn-mini"
-            style={{ fontWeight: activeTab === 'documents' ? 700 : 500 }}
+            style={{ fontWeight: 700 }}
             onClick={() => setActiveTab('documents')}
           >
             Excepciones de Documentos
@@ -222,7 +222,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
           <button
             type="button"
             className="btn-mini"
-            style={{ fontWeight: activeTab === 'summaries' ? 700 : 500 }}
+            style={{ fontWeight: 500 }}
             onClick={() => setActiveTab('summaries')}
           >
             Excepciones de Resumenes
@@ -282,7 +282,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
               <tbody>
                 {queue.data.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="sunat-exceptions__empty-cell">
+                    <td colSpan={5}>
                       {loading ? 'Cargando excepciones...' : 'Sin excepciones con los filtros actuales'}
                     </td>
                   </tr>

@@ -32,6 +32,12 @@ Every functional change committed to `cambios-generales` must be propagated to *
 2. Merge or cherry-pick into `docker-multi-entorno` → rebuild and test local docker.
 3. Merge or cherry-pick into `railway` → trigger Railway deploy and verify cloud.
 
+## Railway deploy rule (mandatory)
+- For this repository, cloud deploys must be triggered only from the Railway deploy branch.
+- Do not push release/deploy commits from `docker-multi-entorno` when the intention is Railway deployment.
+- First propagate functional commits to Railway branch, then push that Railway branch to trigger CI/CD.
+- If a commit was pushed from the wrong branch by mistake, cherry-pick it into Railway branch and redeploy from Railway.
+
 ## What lives only on specific branches
 | Concern | Branch |
 |---|---|
