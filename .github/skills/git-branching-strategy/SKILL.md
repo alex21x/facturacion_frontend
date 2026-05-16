@@ -37,6 +37,7 @@ Every functional change committed to `cambios-generales` must be propagated to *
 - Do not push release/deploy commits from `docker-multi-entorno` when the intention is Railway deployment.
 - First propagate functional commits to Railway branch, then push that Railway branch to trigger CI/CD.
 - If a commit was pushed from the wrong branch by mistake, cherry-pick it into Railway branch and redeploy from Railway.
+- For the frontend Railway image, prefer the static server entrypoint (`node scripts/serve-static.mjs dist`) over `vite preview` so healthchecks stay stable in production.
 
 ## What lives only on specific branches
 | Concern | Branch |
