@@ -38,6 +38,25 @@ Every functional change committed to `cambios-generales` must be propagated to *
 - First propagate functional commits to Railway branch, then push that Railway branch to trigger CI/CD.
 - If a commit was pushed from the wrong branch by mistake, cherry-pick it into Railway branch and redeploy from Railway.
 
+## Change classification (must decide before committing)
+Use this table to avoid ambiguity:
+
+| Change type | Examples | Branch propagation |
+|---|---|---|
+| Functional (business/app logic) | `src/**`, controllers, API payloads, feature behavior, auth flow logic, UI behavior | `cambios-generales` first, then propagate to `docker-multi-entorno` and `railway` |
+| Cloud deploy/infrastructure only | `Dockerfile.railway`, `railway.json`, Railway runtime env wiring, healthcheck tuning | Keep in `railway` deploy branch only |
+| Local installer/infrastructure only | `docker-compose.local.yml`, installer scripts, local entrypoints | Keep in `docker-multi-entorno` (and local-focused branches) |
+
+If a commit mixes functional + infrastructure changes, split it into separate commits by concern.
+
+## Task closure checklist (mandatory)
+Before saying a fix is complete:
+1. Classify the change (functional vs deploy-only).
+2. Apply propagation based on classification table.
+3. Verify target branches contain the fix (or cherry-pick equivalent).
+4. Push remote heads for the branches that should receive it.
+5. Report branch hashes in the final update.
+
 ## What lives only on specific branches
 | Concern | Branch |
 |---|---|
@@ -50,3 +69,4 @@ Every functional change committed to `cambios-generales` must be propagated to *
 - When the user asks "how do I deploy locally?": guide toward `docker-multi-entorno`.
 - When the user asks "how do I deploy to the cloud?": guide toward `railway`.
 - Always remind: both `docker-multi-entorno` and `railway` must receive the same functional patches to avoid drift.
+- Do not ask the user to re-state this policy; apply it automatically on every fix.
