@@ -1336,6 +1336,23 @@ export function buildCashReportHtml80mm(
             </table>
           </div>` : ''}
 
+          ${(data.movements && data.movements.length > 0) ? `
+          <div class="section">
+            <div class="section-title">MOVIMIENTOS DE CAJA</div>
+            <table>
+              <thead><tr><th>Tipo</th><th class="ta-r">Monto</th><th>Descripción</th></tr></thead>
+              <tbody>
+                ${data.movements.map((m) => `
+                <tr>
+                  <td style="font-size:8px">${m.movement_type === 'IN' ? 'ENTRADA' : m.movement_type === 'OUT' ? 'SALIDA' : m.movement_type}</td>
+                  <td class="ta-r" style="font-size:8px;color:${m.movement_type === 'IN' ? '#008000' : '#cc0000'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
+                  <td style="font-size:8px">${escapeHtml(m.description || '-')}</td>
+                </tr>`).join('')}
+                <tr class="total-row"><td>TOTAL MOVIMIENTOS</td><td class="ta-r">S/ ${formatMoney(data.movements.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+              </tbody>
+            </table>
+          </div>` : ''}
+
           <div class="footer">Emitido: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}</div>
         </div>
       </body>
@@ -1538,6 +1555,23 @@ export function buildCashReportHtmlA4(
               </tbody>
             </table>
           </div>
+
+          ${(data.movements && data.movements.length > 0) ? `
+          <div class="section">
+            <div class="section-title">Movimientos de caja</div>
+            <table>
+              <thead><tr><th style="width:15%">Tipo de movimiento</th><th class="ta-r" style="width:20%">Monto</th><th style="width:65%">Descripción</th></tr></thead>
+              <tbody>
+                ${data.movements.map((m) => `
+                <tr>
+                  <td>${m.movement_type === 'IN' ? 'Entrada (+)' : m.movement_type === 'OUT' ? 'Salida (-)' : m.movement_type}</td>
+                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
+                  <td>${escapeHtml(m.description || '-')}</td>
+                </tr>`).join('')}
+                <tr class="total-row"><td>TOTAL MOVIMIENTOS</td><td class="ta-r">S/ ${formatMoney(data.movements.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+              </tbody>
+            </table>
+          </div>` : ''}
 
           <div class="footer">Reporte generado: ${new Date().toLocaleString('es-PE', { timeZone: 'America/Lima' })}</div>
         </div>

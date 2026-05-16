@@ -19,6 +19,7 @@ import {
 import {
   convertCommercialDocument,
   createCommercialDocument,
+  createCustomerVehicle,
   fetchCommercialDocuments,
   exportCommercialDocumentsExcel,
   exportCommercialDocumentsJson,
@@ -1311,6 +1312,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [selectedCustomer, setSelectedCustomer] = useState<SalesCustomerSuggestion | null>(null);
   const [customerVehicles, setCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
   const [loadingCustomerVehicles, setLoadingCustomerVehicles] = useState(false);
+  const [showAddVehiclePopup, setShowAddVehiclePopup] = useState(false);
+  const [newVehiclePlate, setNewVehiclePlate] = useState('');
+  const [newVehicleBrand, setNewVehicleBrand] = useState('');
+  const [newVehicleModel, setNewVehicleModel] = useState('');
+  const [submittingNewVehicle, setSubmittingNewVehicle] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<InventoryProduct | null>(null);
   const [selectedProductCommercialConfig, setSelectedProductCommercialConfig] = useState<ProductCommercialConfig | null>(null);
   const [selectedProductUnitOptions, setSelectedProductUnitOptions] = useState<SalesLookups['units']>([]);
@@ -4119,6 +4125,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  async function handleAddNewVehicle(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.customerId || !newVehiclePlate.trim()) {
+      setMessage('Ingrese placa del vehículo');
+      return;
+    }
+    setSubmittingNewVehicle(true);
+    setMessage('');
+    try {
+      const newVeh = await createCustomerVehicle(accessToken, Number(form.customerId), {
+        plate: newVehiclePlate.trim(),
+        brand: newVehicleBrand.trim() || null,
+        model: newVehicleModel.trim() || null,
+        is_default: false,
+      });
+      setCustomerVehicles((prev) => [...prev, newVeh]);
+      setForm((prev) => ({ ...prev, customerVehicleId: newVeh.id }));
+      setNewVehiclePlate('');
+      setNewVehicleBrand('');
+      setNewVehicleModel('');
+      setShowAddVehiclePopup(false);
+      setMessage('Vehículo agregado correctamente');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Error al agregar vehículo');
+    } finally {
+      setSubmittingNewVehicle(false);
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -5644,28 +5679,39 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
 
           {workshopMultiVehicleEnabled && (
-            <label className="sales-field-customer-vehicle">
-              Vehículo
-              <select
-                value={form.customerVehicleId ?? ''}
-                disabled={loadingCustomerVehicles || Number(form.customerId) <= 0 || customerVehicles.length === 0}
-                onChange={(e) => {
-                  const nextId = e.target.value ? Number(e.target.value) : null;
-                  setForm((prev) => ({ ...prev, customerVehicleId: nextId }));
-                }}
-              >
-                <option value="">
-                  {loadingCustomerVehicles
-                    ? 'Cargando vehículos...'
-                    : (Number(form.customerId) <= 0 ? 'Seleccione un cliente' : 'Sin vehículo')}
-                </option>
-                {customerVehicles.map((row) => (
-                  <option key={row.id} value={row.id}>
-                    {row.plate}{row.brand ? ` | ${row.brand}` : ''}{row.model ? ` ${row.model}` : ''}
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
+              <label className="sales-field-customer-vehicle" style={{ flex: 1 }}>
+                Vehículo
+                <select
+                  value={form.customerVehicleId ?? ''}
+                  disabled={loadingCustomerVehicles || Number(form.customerId) <= 0 || customerVehicles.length === 0}
+                  onChange={(e) => {
+                    const nextId = e.target.value ? Number(e.target.value) : null;
+                    setForm((prev) => ({ ...prev, customerVehicleId: nextId }));
+                  }}
+                >
+                  <option value="">
+                    {loadingCustomerVehicles
+                      ? 'Cargando vehículos...'
+                      : (Number(form.customerId) <= 0 ? 'Seleccione un cliente' : 'Sin vehículo')}
                   </option>
-                ))}
-              </select>
-            </label>
+                  {customerVehicles.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.plate}{row.brand ? ` | ${row.brand}` : ''}{row.model ? ` ${row.model}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn-mini"
+                onClick={() => setShowAddVehiclePopup(true)}
+                disabled={loadingCustomerVehicles || Number(form.customerId) <= 0}
+                title="Agregar nuevo vehículo para este cliente"
+              >
+                ➕ Vehículo
+              </button>
+            </div>
           )}
 
           <label className="sales-field-address">
@@ -6655,6 +6701,33 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </aside>
         </div>
       </form>
+
+      {showAddVehiclePopup && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '20px', maxWidth: '400px', width: '90%', boxShadow: '0 20px 25px rgba(0,0,0,0.15)' }}>
+            <h4 style={{ marginTop: 0, marginBottom: '12px' }}>Agregar Vehículo</h4>
+            <p style={{ marginBottom: '16px', color: '#666', fontSize: '0.9rem' }}>Registra un nuevo vehículo para este cliente.</p>
+            <form onSubmit={(e) => void handleAddNewVehicle(e)}>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Placa *</label>
+                <input type="text" maxLength={20} required value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} placeholder="Ej. AXY-123" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ marginBottom: '12px' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Marca</label>
+                <input type="text" maxLength={60} value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} placeholder="Ej. Toyota" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Modelo</label>
+                <input type="text" maxLength={60} value={newVehicleModel} onChange={(e) => setNewVehicleModel(e.target.value)} placeholder="Ej. Corolla 2024" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn-mini" onClick={() => setShowAddVehiclePopup(false)}>Cancelar</button>
+                <button type="submit" className="btn-mini" style={{ background: '#1e40af', color: '#fff', borderColor: '#1e40af' }} disabled={submittingNewVehicle}>{submittingNewVehicle ? '⏳ Guardando...' : '✓ Guardar'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {issuedPreview && (
         <div className="issued-preview">
