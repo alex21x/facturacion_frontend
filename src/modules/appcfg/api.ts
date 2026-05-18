@@ -29,8 +29,15 @@ function authHeaders(accessToken: string): HeadersInit {
   };
 }
 
-export async function fetchModules(accessToken: string): Promise<ModuleRow[]> {
-  const response = await apiClient.request<{ modules: ModuleRow[] }>('/api/appcfg/modules', {
+export async function fetchModules(accessToken: string, branchId?: number | null): Promise<ModuleRow[]> {
+  const query = new URLSearchParams();
+  if (branchId !== null && branchId !== undefined) {
+    query.set('branch_id', String(branchId));
+  }
+
+  const path = query.toString() ? `/api/appcfg/modules?${query.toString()}` : '/api/appcfg/modules';
+
+  const response = await apiClient.request<{ modules: ModuleRow[] }>(path, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });

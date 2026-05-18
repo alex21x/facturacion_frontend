@@ -28,6 +28,7 @@ type CashViewProps = {
   accessToken: string;
   cashRegisterId: number | null;
   salesFlowMode?: 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
+  canViewNetMargin?: boolean;
 };
 
 type MetricGlyphKind = 'status' | 'opening' | 'in' | 'out' | 'expected';
@@ -92,7 +93,7 @@ function MetricGlyph({ kind }: { kind: MetricGlyphKind }) {
   );
 }
 
-export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_CASHIER' }: CashViewProps) {
+export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_CASHIER', canViewNetMargin = false }: CashViewProps) {
   const [activeTab, setActiveTab] = useState<'sesion' | 'historial'>('sesion');
   const [currentSession, setCurrentSession] = useState<CashSession | null>(null);
   const [movements, setMovements] = useState<CashMovement[]>([]);
@@ -122,7 +123,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     title: string;
     subtitle: string;
     html: string;
-    variant: 'compact' | 'wide';
+    variant: 'compact' | 'wide' | 'xwide';
   }>(null);
   const [closeResponse, setCloseResponse] = useState<CloseSessionResponse | null>(null);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
@@ -368,8 +369,12 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
             SubtotalNeto: Number(item.line_subtotal ?? item.line_total ?? 0),
             CostoUnitario: Number(item.unit_cost ?? 0),
             CostoTotal: Number(item.cost_total ?? 0),
-            MargenTotal: Number(item.margin_total_net ?? item.margin_total ?? 0),
-            MargenPorcentaje: Number(item.margin_percent_net ?? item.margin_percent ?? 0),
+            ...(canViewNetMargin
+              ? {
+                  MargenTotal: Number(item.margin_total_net ?? item.margin_total ?? 0),
+                  MargenPorcentaje: Number(item.margin_percent_net ?? item.margin_percent ?? 0),
+                }
+              : {}),
             MargenComercial: Number(item.margin_total_commercial ?? 0),
             MargenComercialPct: Number(item.margin_percent_commercial ?? 0),
             TotalLinea: Number(item.line_total ?? 0),
@@ -390,8 +395,12 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
         VentaNeta: row.netAmount,
         VentaBruta: row.grossAmount,
         Costo: row.costAmount,
-        Margen: row.marginAmount,
-        MargenPct: row.marginPercent,
+        ...(canViewNetMargin
+          ? {
+              Margen: row.marginAmount,
+              MargenPct: row.marginPercent,
+            }
+          : {}),
         MargenComercial: row.marginAmountCommercial,
         MargenComercialPct: row.marginPercentCommercial,
         FuenteMargen: row.marginSource,
@@ -628,6 +637,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
         ...doc,
         user_name: resolveCashDocumentActorLabel(doc),
       })) as any,
+      showNetMargin: canViewNetMargin,
       showVehicleInfo: workshopMultiVehicleEnabled,
       company: companyProfile
         ? {
@@ -730,7 +740,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
         title: 'Previsualizacion de cierre de caja',
         subtitle: 'Revisa el reporte antes de confirmar el cierre.',
         html: buildCashReportHtmlA4(printData, { embedded: true }),
-        variant: 'wide',
+        variant: 'xwide',
       });
     } catch (e) {
       setIsError(true);
@@ -1405,20 +1415,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                               <div className="cash-detail-card" style={{ padding: '12px', backgroundColor: '#fff', border: '1px solid #ddd', borderRadius: '6px' }}>
                                 <h5 style={{ margin: '0 0 10px 0' }}>Productos vendidos ({soldProducts.length})</h5>
                                 <div style={{ overflowX: 'auto' }}>
-                                  <table style={{ width: '100%', fontSize: '0.8rem', tableLayout: 'fixed' }}>
-                                    <colgroup>
-                                      <col style={{ width: '22%' }} />
-                                      <col style={{ width: '10%' }} />
-                                      <col style={{ width: '10%' }} />
-                                      <col style={{ width: '5%' }} />
-                                      <col style={{ width: '6%' }} />
-                                      <col style={{ width: '9%' }} />
-                                      <col style={{ width: '9%' }} />
-                                      <col style={{ width: '7%' }} />
-                                      <col style={{ width: '5%' }} />
-                                      <col style={{ width: '8%' }} />
-                                      <col style={{ width: '9%' }} />
-                                    </colgroup>
+                                  <table style={{ width: '100%', minWidth: workshopMultiVehicleEnabled ? '1320px' : '1200px', fontSize: '0.8rem' }}>
                                     <thead>
                                       <tr style={{ borderBottom: '2px solid #ddd' }}>
                                         <th style={{ textAlign: 'left', padding: '6px' }}>Producto</th>
@@ -1432,7 +1429,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                                         <th style={{ textAlign: 'center', padding: '6px' }}>Sesion</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Total venta</th>
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Costo</th>
-                                        <th style={{ textAlign: 'right', padding: '6px' }}>Margen neto</th>
+                                        {canViewNetMargin && <th style={{ textAlign: 'right', padding: '6px' }}>Margen neto</th>}
                                         <th style={{ textAlign: 'right', padding: '6px' }}>Margen comercial</th>
                                       </tr>
                                     </thead>
@@ -1450,14 +1447,21 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                                           <td style={{ padding: '6px', textAlign: 'center', fontWeight: 600 }}>#{sessionDetail.session.id}</td>
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 600 }}>{row.grossAmount.toFixed(2)}</td>
                                           <td style={{ padding: '6px', textAlign: 'right' }}>{row.costAmount.toFixed(2)}</td>
-                                          <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmount >= 0 ? '#0f766e' : '#b91c1c' }}>
-                                            {row.marginAmount.toFixed(2)} ({row.marginPercent.toFixed(1)}%)
-                                            <div style={{ fontWeight: 500, fontSize: '0.68rem', color: '#64748b' }}>
-                                              {row.marginSource === 'REAL' ? 'Costo real' : row.marginSource === 'MIXED' ? 'Mixto' : 'Estimado'}
-                                            </div>
-                                          </td>
+                                          {canViewNetMargin && (
+                                            <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmount >= 0 ? '#0f766e' : '#b91c1c' }}>
+                                              {row.marginAmount.toFixed(2)}
+                                              <div style={{ fontWeight: 500, fontSize: '0.68rem', color: '#64748b' }}>
+                                                {row.marginSource === 'REAL' ? 'Costo real' : row.marginSource === 'MIXED' ? 'Mixto' : 'Estimado'}
+                                              </div>
+                                            </td>
+                                          )}
                                           <td style={{ padding: '6px', textAlign: 'right', fontWeight: 700, color: row.marginAmountCommercial >= 0 ? '#0369a1' : '#b91c1c' }}>
                                             {row.marginAmountCommercial.toFixed(2)}
+                                            {!canViewNetMargin && (
+                                              <div style={{ fontWeight: 500, fontSize: '0.68rem', color: '#64748b' }}>
+                                                {row.marginSource === 'REAL' ? 'Costo real' : row.marginSource === 'MIXED' ? 'Mixto' : 'Estimado'}
+                                              </div>
+                                            )}
                                           </td>
                                         </tr>
                                       ))}
@@ -1465,7 +1469,9 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                                   </table>
                                 </div>
                                 <p style={{ marginTop: '8px', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
-                                  * Total venta = monto completo cobrado al cliente (con IGV). Margen neto (contable): sobre subtotal sin IGV. Margen comercial: monto referencial ganado sobre el total cobrado. Estimado cuando no hay costo trazable.
+                                  {canViewNetMargin
+                                    ? '* Total venta = monto completo cobrado al cliente (con IGV). Margen neto (contable): sobre subtotal sin IGV. Margen comercial: monto referencial ganado sobre el total cobrado. Estimado cuando no hay costo trazable.'
+                                    : '* Total venta = monto completo cobrado al cliente (con IGV). Se muestra margen comercial (operativo) sobre total cobrado. Estimado cuando no hay costo trazable.'}
                                 </p>
                               </div>
                             )}

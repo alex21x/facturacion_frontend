@@ -883,7 +883,7 @@ export function ProductsView({
         ['SKU/CODIGO_BARRAS', 'Si coincide con uno existente, se actualiza.'],
         ['STOCK_INICIAL', 'Opcional. Si es > 0, registra una entrada de Kardex.'],
         ['ALMACEN_CODIGO', 'Opcional. Si va vacio y STOCK_INICIAL > 0, se aplica al almacen principal/preferente.'],
-        ['COSTO_INICIAL', 'Opcional. Si va vacio, usa PRECIO_COSTO.'],
+        ['COSTO_INICIAL', 'Opcional. Si va vacio, usa PRECIO_COSTO comercial (con IGV).'],
       ]);
       instructionsSheet['!cols'] = [{ wch: 26 }, { wch: 78 }];
 
@@ -1095,7 +1095,7 @@ export function ProductsView({
                   <th>Marca</th>
                   <th>Unidad</th>
                   <th>Precio Venta</th>
-                  <th>Precio Costo</th>
+                  <th>Costo comercial</th>
                   <th>Estado</th>
                   <th>Acciones</th>
                 </tr>
@@ -1414,7 +1414,7 @@ export function ProductsView({
           />
         </label>
         <label>
-          Precio costo
+          Costo comercial (con IGV)
           <input
             type="number"
             step="0.01"
@@ -1422,6 +1422,7 @@ export function ProductsView({
             value={form.cost_price}
             onChange={(event) => setForm((prev) => ({ ...prev, cost_price: Number(event.target.value) }))}
           />
+          <small className="products-field-hint">El costo se registra como valor comercial. Internamente se normaliza para margen y stock.</small>
         </label>
         <label>
           URL Imagen

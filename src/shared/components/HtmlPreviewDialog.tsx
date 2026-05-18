@@ -4,7 +4,7 @@ type HtmlPreviewDialogProps = {
   title: string;
   subtitle?: string;
   html: string;
-  variant?: 'compact' | 'wide';
+  variant?: 'compact' | 'wide' | 'xwide';
   onClose: () => void;
 };
 
@@ -32,8 +32,13 @@ export function HtmlPreviewDialog({
     >
       <div
         style={{
-          width: variant === 'compact' ? 'min(560px, 96vw)' : 'min(1100px, 96vw)',
-          height: variant === 'compact' ? 'min(860px, 94vh)' : 'min(820px, 94vh)',
+          width:
+            variant === 'compact'
+              ? 'min(560px, 96vw)'
+              : variant === 'xwide'
+                ? 'min(1320px, 98vw)'
+                : 'min(1100px, 96vw)',
+          height: variant === 'compact' ? 'min(860px, 94vh)' : variant === 'xwide' ? 'min(900px, 96vh)' : 'min(820px, 94vh)',
           background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)',
           border: '1px solid #dbe4f0',
           borderRadius: '14px',
@@ -95,7 +100,7 @@ export function HtmlPreviewDialog({
             style={{
               width: '100%',
               height: '100%',
-              minHeight: variant === 'compact' ? '620px' : '540px',
+              minHeight: variant === 'compact' ? '620px' : variant === 'xwide' ? '640px' : '540px',
               border: '1px solid #cbd5e1',
               borderRadius: '10px',
               background: '#fff',

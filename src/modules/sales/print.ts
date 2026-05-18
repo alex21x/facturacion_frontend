@@ -1035,6 +1035,45 @@ export type CashReportMovement = {
   movement_at: string;
 };
 
+function isCashMovementFromSales(refType: string | null | undefined): boolean {
+  const normalized = String(refType ?? '').trim().toUpperCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return [
+    'COMMERCIAL_DOCUMENT',
+    'COMMERCIAL_DOCUMENT_EDIT',
+    'COMMERCIAL_DOCUMENT_VOID',
+    'INVOICE',
+    'RECEIPT',
+    'SALES_ORDER',
+    'QUOTATION',
+    'CREDIT_NOTE',
+    'DEBIT_NOTE',
+  ].includes(normalized);
+}
+
+function splitCashMovementsByOrigin(movements: CashReportMovement[]): { manual: CashReportMovement[]; sales: CashReportMovement[] } {
+  const manual: CashReportMovement[] = [];
+  const sales: CashReportMovement[] = [];
+
+  for (const movement of movements) {
+    if (isCashMovementFromSales(movement.ref_type)) {
+      sales.push(movement);
+    } else {
+      manual.push(movement);
+    }
+  }
+
+  return { manual, sales };
+}
+
+function resolveCashMovementLabel(movement: CashReportMovement, origin: 'manual' | 'sales'): string {
+  const base = movement.movement_type === 'IN' ? 'Ingreso' : 'Salida';
+  return origin === 'sales' ? `${base} por venta` : `${base} manual`;
+}
+
 export type CashReportPrintData = {
   cashRegisterCode: string;
   cashRegisterName: string;
@@ -1050,6 +1089,7 @@ export type CashReportPrintData = {
   paymentMethodBreakdown: PaymentMethodBreakdown[];
   movements?: CashReportMovement[];
   documents?: CashReportDocument[];
+  showNetMargin?: boolean;
   showVehicleInfo?: boolean;
   company?: PrintableCompanyProfile | null;
 };
@@ -1132,6 +1172,7 @@ export function buildCashReportHtml80mm(
   options?: { embedded?: boolean },
 ): string {
   const isEmbedded = options?.embedded === true;
+  const showNetMargin = data.showNetMargin === true;
   const company = resolvePrintableCompanyProfile(data);
   const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
   const companyTaxId = String(company.taxId || '').trim();
@@ -1224,7 +1265,7 @@ export function buildCashReportHtml80mm(
             <div><b>Modelo:</b> ${escapeHtml(row.vehicleModel)}</div>
           </td>` : ''}
           <td class="ta-r" style="font-size:8px;font-weight:700">${formatMoney(row.grossAmount)}</td>
-          <td class="ta-r" style="font-size:8px;color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmount)}${row.netAmount > 0 ? `<div style="font-size:7px;color:#64748b">${((row.marginAmount / row.netAmount) * 100).toFixed(1)}%</div>` : ''}</td>
+          ${showNetMargin ? `<td class="ta-r" style="font-size:8px;color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmount)}</td>` : ''}
           <td class="ta-r" style="font-size:8px;color:${row.marginAmountCommercial >= 0 ? '#0369a1' : '#dc2626'};font-weight:700">${formatMoney(row.marginAmountCommercial)}</td>
         </tr>`,
     )
@@ -1237,6 +1278,16 @@ export function buildCashReportHtml80mm(
   const totalProductMarginPercent = totalProductNet > 0 ? (totalProductMargin / totalProductNet) * 100 : 0;
   const totalProductMarginCommercial = productRowsData.reduce((sum, row) => sum + row.marginAmountCommercial, 0);
   const totalProductMarginCommercialPercent = totalProductGross > 0 ? (totalProductMarginCommercial / totalProductGross) * 100 : 0;
+  const movements = data.movements ?? [];
+  const cashMovementsByOrigin = splitCashMovementsByOrigin(movements);
+  const renderMovementRows = (rows: CashReportMovement[], origin: 'manual' | 'sales') => rows.length > 0
+    ? rows.map((m) => `
+                <tr>
+                  <td>${resolveCashMovementLabel(m, origin)}</td>
+                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
+                  <td>${escapeHtml(m.description || '-')}</td>
+                </tr>`).join('')
+    : `<tr><td colspan="3" class="ta-c">Sin movimientos ${origin === 'sales' ? 'por ventas' : 'manuales'}</td></tr>`;
 
   return `
     <html>
@@ -1306,7 +1357,7 @@ export function buildCashReportHtml80mm(
             <div class="row"><div class="label">Saldo Inicial:</div><div class="value">S/ ${formatMoney(data.openingBalance)}</div></div>
             <div class="row"><div class="label">Entradas (+):</div><div class="value">S/ ${formatMoney(data.totalIn)}</div></div>
             <div class="row"><div class="label">Salidas (-):</div><div class="value">S/ ${formatMoney(data.totalOut)}</div></div>
-            <div class="row"><div class="label">Margen neto:</div><div class="value">S/ ${formatMoney(totalProductMargin)} (${totalProductMarginPercent.toFixed(1)}%)</div></div>
+            ${showNetMargin ? `<div class="row"><div class="label">Margen neto:</div><div class="value">S/ ${formatMoney(totalProductMargin)}</div></div>` : ''}
             <div class="row"><div class="label">Margen comercial:</div><div class="value">S/ ${formatMoney(totalProductMarginCommercial)}</div></div>
             <div class="row"><div class="label">Esperado:</div><div class="value">S/ ${formatMoney(data.expectedBalance)}</div></div>
             <div class="row" style="font-weight:700;border-top:1px solid #000;padding-top:1mm"><div class="label">Real:</div><div class="value">S/ ${formatMoney(data.closingBalance)}</div></div>
@@ -1328,27 +1379,32 @@ export function buildCashReportHtml80mm(
           <div class="section">
             <div class="section-title">PRODUCTOS VENDIDOS</div>
             <table class="product-table">
-              <thead><tr><th>Producto</th><th>Solicita / Emite</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total venta</th><th class="ta-r">M. neto</th><th class="ta-r">M. comercial</th></tr></thead>
+              <thead><tr><th>Producto</th><th>Solicita / Emite</th><th>Pago</th><th class="ta-r">Cant.</th><th>Comp.</th><th>Serie</th>${data.showVehicleInfo ? '<th>Vehículo</th>' : ''}<th class="ta-r">Total venta</th>${showNetMargin ? '<th class="ta-r">M. neto</th>' : ''}<th class="ta-r">M. comercial</th></tr></thead>
               <tbody>
                 ${productRows}
-                <tr class="total-row"><td colspan="3">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductGross)}</td><td class="ta-r">${formatMoney(totalProductMargin)} (${totalProductMarginPercent.toFixed(1)}%)</td><td class="ta-r">${formatMoney(totalProductMarginCommercial)}</td></tr>
+                <tr class="total-row"><td colspan="3">TOTAL</td><td class="ta-r">${totalProductQty.toFixed(2)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">${formatMoney(totalProductGross)}</td>${showNetMargin ? `<td class="ta-r">${formatMoney(totalProductMargin)}</td>` : ''}<td class="ta-r">${formatMoney(totalProductMarginCommercial)}</td></tr>
               </tbody>
             </table>
           </div>` : ''}
 
-          ${(data.movements && data.movements.length > 0) ? `
+          ${movements.length > 0 ? `
           <div class="section">
-            <div class="section-title">MOVIMIENTOS DE CAJA</div>
+            <div class="section-title">MOVIMIENTOS MANUALES</div>
             <table>
               <thead><tr><th>Tipo</th><th class="ta-r">Monto</th><th>Descripción</th></tr></thead>
               <tbody>
-                ${data.movements.map((m) => `
-                <tr>
-                  <td style="font-size:8px">${m.movement_type === 'IN' ? 'ENTRADA' : m.movement_type === 'OUT' ? 'SALIDA' : m.movement_type}</td>
-                  <td class="ta-r" style="font-size:8px;color:${m.movement_type === 'IN' ? '#008000' : '#cc0000'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
-                  <td style="font-size:8px">${escapeHtml(m.description || '-')}</td>
-                </tr>`).join('')}
-                <tr class="total-row"><td>TOTAL MOVIMIENTOS</td><td class="ta-r">S/ ${formatMoney(data.movements.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+                ${renderMovementRows(cashMovementsByOrigin.manual, 'manual')}
+                <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="section">
+            <div class="section-title">MOVIMIENTOS POR VENTAS</div>
+            <table>
+              <thead><tr><th>Tipo</th><th class="ta-r">Monto</th><th>Descripción</th></tr></thead>
+              <tbody>
+                ${renderMovementRows(cashMovementsByOrigin.sales, 'sales')}
+                <tr class="total-row"><td>TOTAL VENTAS</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.sales.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
               </tbody>
             </table>
           </div>` : ''}
@@ -1364,6 +1420,7 @@ export function buildCashReportHtmlA4(
   options?: { embedded?: boolean },
 ): string {
   const isEmbedded = options?.embedded === true;
+  const showNetMargin = data.showNetMargin === true;
   const company = resolvePrintableCompanyProfile(data);
   const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
   const companyTaxId = String(company.taxId || '').trim();
@@ -1453,7 +1510,7 @@ export function buildCashReportHtmlA4(
         <td>${escapeHtml(row.documentNumber)}</td>
         ${data.showVehicleInfo ? `<td class="cash-vehicle-cell"><div><b>Placa:</b> ${escapeHtml(row.vehiclePlate)}</div><div><b>Marca:</b> ${escapeHtml(row.vehicleBrand)}</div><div><b>Modelo:</b> ${escapeHtml(row.vehicleModel)}</div></td>` : ''}
         <td class="ta-r">S/ ${formatMoney(row.grossAmount)}</td>
-        <td class="ta-r" style="color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(row.marginAmount)}${row.netAmount > 0 ? `<div style="font-size:10px;color:#64748b">${((row.marginAmount / row.netAmount) * 100).toFixed(1)}%</div>` : ''}</td>
+        ${showNetMargin ? `<td class="ta-r" style="color:${row.marginAmount >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(row.marginAmount)}</td>` : ''}
         <td class="ta-r" style="color:${row.marginAmountCommercial >= 0 ? '#0369a1' : '#dc2626'}">S/ ${formatMoney(row.marginAmountCommercial)}</td>
       </tr>`,
     )
@@ -1466,6 +1523,16 @@ export function buildCashReportHtmlA4(
   const totalProductMarginPercent = totalProductNet > 0 ? (totalProductMargin / totalProductNet) * 100 : 0;
   const totalProductMarginCommercial = productRowsData.reduce((sum, row) => sum + row.marginAmountCommercial, 0);
   const totalProductMarginCommercialPercent = totalProductGross > 0 ? (totalProductMarginCommercial / totalProductGross) * 100 : 0;
+  const movements = data.movements ?? [];
+  const cashMovementsByOrigin = splitCashMovementsByOrigin(movements);
+  const renderMovementRows = (rows: CashReportMovement[], origin: 'manual' | 'sales') => rows.length > 0
+    ? rows.map((m) => `
+                <tr>
+                  <td>${resolveCashMovementLabel(m, origin)}</td>
+                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
+                  <td>${escapeHtml(m.description || '-')}</td>
+                </tr>`).join('')
+    : `<tr><td colspan="3" class="ta-c">Sin movimientos ${origin === 'sales' ? 'por ventas' : 'manuales'}</td></tr>`;
 
   return `
     <html>
@@ -1478,12 +1545,12 @@ export function buildCashReportHtmlA4(
           body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; color: #1f2937; background: #fff; }
           .print-bar { background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%); color: #fff; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
           .print-bar button { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; padding: 7px 16px; font-size: 13px; font-weight: 700; border-radius: 8px; cursor: pointer; margin-left: 8px; }
-          .page { max-width: 210mm; margin: 0 auto; padding: 14px; }
+          .page { max-width: ${isEmbedded ? '320mm' : '210mm'}; margin: 0 auto; padding: 14px; }
           .header { text-align: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 8px; margin-bottom: 10px; }
           .header-logo { width: 88px; height: 88px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; display: block; margin: 0 auto 6px; }
           .header h1 { margin: 0; font-size: 18px; font-weight: 700; }
           .header p { margin: 1px 0; font-size: 11px; color: #64748b; }
-          .summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }
+          .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; margin-bottom: 10px; }
           .metric { border: 1px solid #d1d5db; border-radius: 6px; padding: 8px; }
           .metric span { display: block; font-size: 10px; color: #64748b; }
           .metric strong { display: block; margin-top: 2px; font-size: 14px; }
@@ -1530,7 +1597,7 @@ export function buildCashReportHtmlA4(
             <article class="metric"><span>Saldo esperado</span><strong>S/ ${formatMoney(data.expectedBalance)}</strong></article>
             <article class="metric"><span>Saldo real</span><strong>S/ ${formatMoney(data.closingBalance)}</strong></article>
             <article class="metric"><span>Diferencia</span><strong style="color:${data.difference >= 0 ? '#059669' : '#dc2626'}">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</strong></article>
-            <article class="metric"><span>Margen neto</span><strong style="color:${totalProductMargin >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(totalProductMargin)}</strong><span>${totalProductMarginPercent.toFixed(1)}%</span></article>
+            ${showNetMargin ? `<article class="metric"><span>Margen neto</span><strong style="color:${totalProductMargin >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(totalProductMargin)}</strong></article>` : ''}
             <article class="metric"><span>Margen comercial</span><strong style="color:${totalProductMarginCommercial >= 0 ? '#0369a1' : '#dc2626'}">S/ ${formatMoney(totalProductMarginCommercial)}</strong></article>
           </div>
 
@@ -1548,27 +1615,32 @@ export function buildCashReportHtmlA4(
           <div class="section">
             <div class="section-title">Productos vendidos en la sesion</div>
             <table class="cash-products-table">
-              <thead><tr><th style="width:${data.showVehicleInfo ? '17%' : '22%'}">Producto</th><th style="width:${data.showVehicleInfo ? '11%' : '12%'}">Solicita / Emite</th><th style="width:${data.showVehicleInfo ? '9%' : '10%'}">Tipo de pago</th><th class="ta-c" style="width:5%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '7%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '9%' : '9%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '9%' : '9%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:13%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '9%'}">Total venta</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '8%'}">M. neto</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '8%'}">M. comercial</th></tr></thead>
+              <thead><tr><th style="width:${data.showVehicleInfo ? '17%' : '22%'}">Producto</th><th style="width:${data.showVehicleInfo ? '11%' : '12%'}">Solicita / Emite</th><th style="width:${data.showVehicleInfo ? '9%' : '10%'}">Tipo de pago</th><th class="ta-c" style="width:5%">Unidad</th><th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '7%'}">Cantidad</th><th style="width:${data.showVehicleInfo ? '9%' : '9%'}">Tipo comprobante</th><th style="width:${data.showVehicleInfo ? '9%' : '9%'}">Serie-correlativo</th>${data.showVehicleInfo ? '<th style="width:13%">Vehículo</th>' : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '7%' : '9%'}">Total venta</th>${showNetMargin ? `<th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '8%'}">M. neto</th>` : ''}<th class="ta-r" style="width:${data.showVehicleInfo ? '6%' : '8%'}">M. comercial</th></tr></thead>
               <tbody>
-                ${productRows || `<tr><td colspan="${data.showVehicleInfo ? '11' : '10'}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
-                <tr class="total-row"><td colspan="4">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductGross)}</td><td class="ta-r">S/ ${formatMoney(totalProductMargin)} (${totalProductMarginPercent.toFixed(1)}%)</td><td class="ta-r">S/ ${formatMoney(totalProductMarginCommercial)}</td></tr>
+                ${productRows || `<tr><td colspan="${showNetMargin ? (data.showVehicleInfo ? '11' : '10') : (data.showVehicleInfo ? '10' : '9')}" class="ta-c">Sin productos vendidos en la sesion</td></tr>`}
+                <tr class="total-row"><td colspan="4">Total general</td><td class="ta-r">${totalProductQty.toFixed(3)}</td><td colspan="${data.showVehicleInfo ? '3' : '2'}"></td><td class="ta-r">S/ ${formatMoney(totalProductGross)}</td>${showNetMargin ? `<td class="ta-r">S/ ${formatMoney(totalProductMargin)}</td>` : ''}<td class="ta-r">S/ ${formatMoney(totalProductMarginCommercial)}</td></tr>
               </tbody>
             </table>
           </div>
 
-          ${(data.movements && data.movements.length > 0) ? `
+          ${movements.length > 0 ? `
           <div class="section">
-            <div class="section-title">Movimientos de caja</div>
+            <div class="section-title">MOVIMIENTOS MANUALES</div>
             <table>
               <thead><tr><th style="width:15%">Tipo de movimiento</th><th class="ta-r" style="width:20%">Monto</th><th style="width:65%">Descripción</th></tr></thead>
               <tbody>
-                ${data.movements.map((m) => `
-                <tr>
-                  <td>${m.movement_type === 'IN' ? 'Entrada (+)' : m.movement_type === 'OUT' ? 'Salida (-)' : m.movement_type}</td>
-                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
-                  <td>${escapeHtml(m.description || '-')}</td>
-                </tr>`).join('')}
-                <tr class="total-row"><td>TOTAL MOVIMIENTOS</td><td class="ta-r">S/ ${formatMoney(data.movements.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+                ${renderMovementRows(cashMovementsByOrigin.manual, 'manual')}
+                <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="section">
+            <div class="section-title">MOVIMIENTOS POR VENTAS</div>
+            <table>
+              <thead><tr><th style="width:15%">Tipo de movimiento</th><th class="ta-r" style="width:20%">Monto</th><th style="width:65%">Descripción</th></tr></thead>
+              <tbody>
+                ${renderMovementRows(cashMovementsByOrigin.sales, 'sales')}
+                <tr class="total-row"><td>TOTAL VENTAS</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.sales.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
               </tbody>
             </table>
           </div>` : ''}

@@ -211,7 +211,7 @@ async function fetchCustomers(
 }
 
 async function createCustomer(accessToken: string, payload: CustomerFormState) {
-  return apiClient.request('/api/sales/customers', {
+  return apiClient.request<{ message?: string; id?: number; reactivated?: boolean }>('/api/sales/customers', {
     method: 'POST',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
@@ -525,11 +525,11 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
     try {
       if (editingId) {
-        await updateCustomer(accessToken, editingId, form);
-        setMessage('Cliente actualizado correctamente.');
+        const response = await updateCustomer(accessToken, editingId, form);
+        setMessage((response as { message?: string } | undefined)?.message ?? 'Cliente actualizado correctamente.');
       } else {
-        await createCustomer(accessToken, form);
-        setMessage('Cliente creado correctamente.');
+        const response = await createCustomer(accessToken, form);
+        setMessage(response.message ?? 'Cliente creado correctamente.');
       }
 
       closeCustomerModal();

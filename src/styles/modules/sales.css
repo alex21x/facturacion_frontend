@@ -268,3 +268,160 @@
   background: #b91c1c;
   color: #fff;
 }
+
+.sales-customer-vehicle-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-end;
+  grid-column: span 2;
+}
+
+.sales-field-customer-vehicle--stretch {
+  flex: 1;
+}
+
+.btn-mini.sales-add-vehicle-btn {
+  min-height: 2rem;
+  min-width: 88px;
+  padding: 0.36rem 0.68rem;
+  border-radius: 9px;
+  border: 1px solid #9bb0a7;
+  background: #e8f0ec;
+  color: #2d4d41;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.05;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.28rem;
+  box-shadow: none;
+  transition: border-color 130ms ease, background 130ms ease, color 130ms ease;
+}
+
+.btn-mini.sales-add-vehicle-btn:hover:not(:disabled) {
+  border-color: #7f978d;
+  background: #dce8e2;
+  color: #1f3f33;
+}
+
+.btn-mini.sales-add-vehicle-btn:active:not(:disabled) {
+  background: #d2e0d9;
+}
+
+.btn-mini.sales-add-vehicle-btn:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.sales-vehicle-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 0.75rem;
+}
+
+.sales-vehicle-modal {
+  background: #fff;
+  border: 1px solid #d6dee9;
+  border-top: 5px solid #5f7f72;
+  border-radius: 12px;
+  padding: 1rem;
+  max-width: 430px;
+  width: 100%;
+  box-shadow: 0 24px 45px rgba(15, 23, 42, 0.2);
+}
+
+.sales-vehicle-modal-title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 1.02rem;
+}
+
+.sales-vehicle-modal-copy {
+  margin: 0.5rem 0 0.9rem;
+  color: #64748b;
+  font-size: 0.86rem;
+}
+
+.sales-vehicle-modal-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-bottom: 0.7rem;
+}
+
+.sales-vehicle-modal-field span {
+  font-size: 0.82rem;
+  color: #334155;
+  font-weight: 600;
+}
+
+.sales-vehicle-modal-field input {
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  padding: 0.5rem 0.58rem;
+  font: inherit;
+  color: #0f172a;
+  background: #fff;
+}
+
+.sales-vehicle-modal-field input:focus {
+  outline: none;
+  border-color: #7f9d91;
+  box-shadow: 0 0 0 3px rgba(95, 127, 114, 0.18);
+}
+
+.sales-vehicle-modal-field--last {
+  margin-bottom: 0.95rem;
+}
+
+.sales-vehicle-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.48rem;
+}
+
+.sales-vehicle-modal-btn-cancel {
+  border: 1px solid #d4dbe4;
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 600;
+}
+
+.sales-vehicle-modal-btn-save {
+  border: 1px solid #4f6f63;
+  background: linear-gradient(180deg, #6f8f82 0%, #5d7a6f 100%);
+  color: #fff;
+  font-weight: 700;
+}
+
+.sales-vehicle-modal-btn-save:disabled {
+  opacity: 0.72;
+  cursor: wait;
+}
+
+@media (max-width: 740px) {
+  .sales-customer-vehicle-row {
+    flex-wrap: wrap;
+  }
+
+  .sales-add-vehicle-btn {
+    width: 100%;
+  }
+
+  .sales-vehicle-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .sales-vehicle-modal-actions .btn-mini {
+    width: 100%;
+  }
+}
