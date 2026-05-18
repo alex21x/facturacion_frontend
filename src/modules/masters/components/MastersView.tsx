@@ -1,4 +1,6 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
+import { fetchModules } from '../../appcfg/api';
+import type { ModuleRow } from '../../appcfg/types';
 import { todayLima } from '../../../shared/utils/lima';
 import {
   createFunctionalProfile,
@@ -176,6 +178,77 @@ function parseTaxTypesText(value: string): Array<{ code: string; name: string; r
     .filter((row) => row.code !== '');
 }
 
+const ACCESS_GUIDE_ROWS: Array<{
+  area: string;
+  requirement: string;
+  notes: string;
+}> = [
+  {
+    area: 'Productos',
+    requirement: 'INVENTORY · Ver',
+    notes: 'Si este check está en NO, el módulo de productos/inventario mostrará acceso denegado.',
+  },
+  {
+    area: 'Inventario general',
+    requirement: 'INVENTORY · Ver',
+    notes: 'Movimientos, consultas y vistas de inventario dependen del módulo INVENTORY.',
+  },
+  {
+    area: 'Ventas',
+    requirement: 'SALES · Ver',
+    notes: 'Si falta este permiso, aparecerá Forbidden [SALES:view].',
+  },
+  {
+    area: 'Apertura/Cierre de caja',
+    requirement: 'SALES · Crear (+ Ver)',
+    notes: 'Caja usa endpoints del módulo SALES para abrir/cerrar sesión.',
+  },
+];
+
+const MODULE_NAVIGATION_MAP: Array<{
+  moduleCode: string;
+  moduleName: string;
+  tabs: string;
+}> = [
+  {
+    moduleCode: 'SALES',
+    moduleName: 'Ventas y caja',
+    tabs: 'Caja, Comercial/Ventas, Clientes, Resumen diario, GRE, Excepciones SUNAT',
+  },
+  {
+    moduleCode: 'INVENTORY',
+    moduleName: 'Inventario y productos',
+    tabs: 'Inventario, Productos, Compras, Reportes, Menu/Insumos/Recetas (restaurant)',
+  },
+  {
+    moduleCode: 'APPCFG',
+    moduleName: 'Configuracion y maestros',
+    tabs: 'Maestros, Configuracion, Mi Empresa, paneles de administracion',
+  },
+];
+
+const POS_MODE_ACCESS_GUIDE: Array<{
+  mode: string;
+  profile: string;
+  expected: string;
+}> = [
+  {
+    mode: 'Venta directa en punto de venta (DIRECT_CASHIER)',
+    profile: 'Vendedor',
+    expected: 'SALES.view + SALES.create; INVENTORY.view para productos/inventario',
+  },
+  {
+    mode: 'Vendedor a cajero (SELLER_TO_CASHIER)',
+    profile: 'Vendedor',
+    expected: 'SALES.view (sin caja), INVENTORY.view según operación',
+  },
+  {
+    mode: 'Vendedor a cajero (SELLER_TO_CASHIER)',
+    profile: 'Cajero',
+    expected: 'SALES.view + SALES.create para apertura/cierre de caja',
+  },
+];
+
 function defaultOperationTypesText(): string {
   return '0101:Venta interna:NONE | 1001:Operación sujeta a detracción:DETRACCION | 2001:Operación sujeta a retención:RETENCION | 3001:Operación sujeta a percepción:PERCEPCION';
 }
@@ -258,6 +331,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   const [documentKinds, setDocumentKinds] = useState<DocumentKindRow[]>([]);
   const [commerceFeatures, setCommerceFeatures] = useState<CommerceFeatureRow[]>([]);
   const [accessModules, setAccessModules] = useState<AccessModuleRow[]>([]);
+  const [accessModuleCatalog, setAccessModuleCatalog] = useState<ModuleRow[]>([]);
   const [accessRoles, setAccessRoles] = useState<AccessRoleRow[]>([]);
   const [accessUsers, setAccessUsers] = useState<AccessUserRow[]>([]);
   const [accessFunctionalProfiles, setAccessFunctionalProfiles] = useState<AccessFunctionalProfileRow[]>([]);
@@ -508,6 +582,27 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
     () => Object.fromEntries(accessModules.map((m) => [m.code, m.name])),
     [accessModules]
   );
+
+  const accessPermissionCodeSet = useMemo(() => {
+    return new Set(roleEditorPermissions.map((row) => row.module_code));
+  }, [roleEditorPermissions]);
+
+  const missingModulesForSelectedRole = useMemo(() => {
+    return accessModuleCatalog
+      .filter((row) => !accessPermissionCodeSet.has(row.code))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [accessModuleCatalog, accessPermissionCodeSet]);
+
+  const availableModulesForSelectedRole = roleEditorPermissions.length;
+  const totalCatalogModules = accessModuleCatalog.length;
+
+  const usersInSelectedRole = useMemo(() => {
+    if (!selectedRoleId) {
+      return [] as AccessUserRow[];
+    }
+
+    return accessUsers.filter((row) => row.role_id === selectedRoleId);
+  }, [accessUsers, selectedRoleId]);
 
   const activeFunctionalProfiles = useMemo(
     () => accessFunctionalProfiles.filter((row) => row.status === 1),
@@ -1003,13 +1098,15 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       setStats(dashboard.stats);
 
       if (isAdminUser) {
-        const [commerce, access] = await Promise.all([
+        const [commerce, access, moduleCatalog] = await Promise.all([
           fetchCommerceSettings(accessToken),
           fetchAccessControl(accessToken),
+          fetchModules(accessToken, branchId),
         ]);
 
         setCommerceFeatures(commerce.features ?? []);
         setAccessModules(access.modules ?? []);
+        setAccessModuleCatalog(moduleCatalog ?? []);
         setAccessRoles(access.roles ?? []);
         setAccessUsers(access.users ?? []);
         setAccessFunctionalProfiles(access.functional_profiles ?? []);
@@ -1036,6 +1133,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       } else {
         setCommerceFeatures([]);
         setAccessModules([]);
+        setAccessModuleCatalog([]);
         setAccessRoles([]);
         setAccessUsers([]);
         setAccessFunctionalProfiles([]);
@@ -1059,7 +1157,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   useEffect(() => {
     void loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [accessToken, isAdminUser]);
+  }, [accessToken, isAdminUser, branchId]);
 
   useEffect(() => {
     setWarehouseForm((prev) => ({ ...prev, branch_id: branchId }));
@@ -1535,7 +1633,10 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
         ])
       )
     );
-    accessRoleFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    // Open the fine-grained permissions editor directly for this role.
+    setAccessSubTab('permissions');
+    selectRoleForEditing(row.id);
   }
 
   function resetAccessRoleEditor() {
@@ -1723,6 +1824,26 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
       prev.map((row) => {
         if (row.module_code !== moduleCode) {
           return row;
+        }
+
+        if (field === 'can_view' && value === false) {
+          return {
+            ...row,
+            can_view: false,
+            can_create: false,
+            can_update: false,
+            can_delete: false,
+            can_export: false,
+            can_approve: false,
+          };
+        }
+
+        if (field !== 'can_view' && value === true) {
+          return {
+            ...row,
+            can_view: true,
+            [field]: true,
+          };
         }
 
         return {
@@ -2901,7 +3022,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
 
             {accessRoleEditingId && (
               <p className="access-inline-note" style={{ gridColumn: '1 / -1' }}>
-                Para ajustar permisos finos (ver, crear, editar, aprobar) usa la tabla de permisos de la parte inferior.
+                Para ajustar permisos finos (ver, crear, editar, aprobar) usa la pestaña Permisos.
               </p>
             )}
 
@@ -3287,11 +3408,80 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
             <div className="perm-section-header">
               <div>
                 <h4>Permisos por perfil</h4>
-                <p className="perm-hint">Selecciona un perfil para editar sus permisos de acceso a cada módulo.</p>
+                <p className="perm-hint">Selecciona un perfil para editar permisos. Si persiste un bloqueo, revisa override por usuario y vuelve a iniciar sesión.</p>
               </div>
               <button type="button" onClick={() => void saveRoleEditor()} disabled={!selectedRoleId} style={{ whiteSpace: 'nowrap' }}>
                 Guardar cambios
               </button>
+            </div>
+
+            <div className="perm-diagnostics-grid">
+              <article className="perm-diagnostic-card">
+                <h5>Diagnóstico rápido de acceso</h5>
+                <ul>
+                  <li>Módulos editables en perfil: <strong>{availableModulesForSelectedRole}</strong></li>
+                  <li>Módulos totales del catálogo: <strong>{totalCatalogModules}</strong></li>
+                  <li>Módulos no asignables a este perfil: <strong>{missingModulesForSelectedRole.length}</strong></li>
+                  <li>Usuarios con este perfil: <strong>{usersInSelectedRole.length}</strong></li>
+                </ul>
+                <p className="perm-note">Si cambias permisos del rol, el usuario debe cerrar sesión e ingresar de nuevo para refrescar permisos en token.</p>
+              </article>
+
+              <article className="perm-diagnostic-card">
+                <h5>Mapa funcional de permisos</h5>
+                <table className="perm-guide-table">
+                  <thead>
+                    <tr><th>Función</th><th>Permiso requerido</th><th>Detalle</th></tr>
+                  </thead>
+                  <tbody>
+                    {ACCESS_GUIDE_ROWS.map((row) => (
+                      <tr key={row.area}>
+                        <td>{row.area}</td>
+                        <td>{row.requirement}</td>
+                        <td>{row.notes}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </article>
+            </div>
+
+            <div className="perm-diagnostics-grid">
+              <article className="perm-diagnostic-card">
+                <h5>Módulo del backend vs navegación</h5>
+                <table className="perm-guide-table">
+                  <thead>
+                    <tr><th>Código módulo</th><th>Nombre</th><th>Pantallas que controla</th></tr>
+                  </thead>
+                  <tbody>
+                    {MODULE_NAVIGATION_MAP.map((row) => (
+                      <tr key={row.moduleCode}>
+                        <td>{row.moduleCode}</td>
+                        <td>{row.moduleName}</td>
+                        <td>{row.tabs}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </article>
+
+              <article className="perm-diagnostic-card">
+                <h5>Guía por modo de venta</h5>
+                <table className="perm-guide-table">
+                  <thead>
+                    <tr><th>Modo</th><th>Perfil</th><th>Permisos mínimos</th></tr>
+                  </thead>
+                  <tbody>
+                    {POS_MODE_ACCESS_GUIDE.map((row) => (
+                      <tr key={`${row.mode}-${row.profile}`}>
+                        <td>{row.mode}</td>
+                        <td>{row.profile}</td>
+                        <td>{row.expected}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </article>
             </div>
 
             <div className="role-permissions-toolbar">
@@ -3307,6 +3497,45 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
                   ))}
                 </select>
               </label>
+            </div>
+
+            {missingModulesForSelectedRole.length > 0 && (
+              <details className="perm-missing-modules" open>
+                <summary>Módulos que no aparecen en este perfil ({missingModulesForSelectedRole.length})</summary>
+                <p>
+                  Estos módulos no llegan al editor de rol porque están inactivos o deshabilitados en el catálogo operativo de módulos.
+                </p>
+                <div className="table-wrap" style={{ marginTop: '8px' }}>
+                  <table>
+                    <thead>
+                      <tr><th>Módulo</th><th>Código</th><th>Estado base</th><th>Empresa/Sucursal</th></tr>
+                    </thead>
+                    <tbody>
+                      {missingModulesForSelectedRole.map((row) => (
+                        <tr key={row.code}>
+                          <td>{row.name}</td>
+                          <td>{row.code}</td>
+                          <td>{row.status === 1 ? 'Activo' : 'Inactivo'}</td>
+                          <td>
+                            {row.is_enabled
+                              ? 'Habilitado'
+                              : (row.branch_enabled === false
+                                ? 'Bloqueado por sucursal'
+                                : (row.company_enabled === false ? 'Bloqueado por empresa' : 'No habilitado'))}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+
+            <div className="perm-note perm-note-warning">
+              Si el rol ya tiene permiso pero el usuario aún recibe Forbidden, revisar overrides en auth.user_module_overrides para ese usuario.
+            </div>
+            <div className="perm-note">
+              Regla automática: cualquier permiso distinto de Ver activa Ver; y si desactivas Ver, se limpian Crear/Editar/Eliminar/Exportar/Aprobar.
             </div>
 
             <div className="role-permissions-fields">

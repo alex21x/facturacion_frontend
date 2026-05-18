@@ -1688,7 +1688,7 @@ export function PurchasesView({
           <summary className="sales-meta-collapse-summary">Datos adicionales</summary>
           <div className="sales-grid-meta sales-grid-meta-secondary">
             <div className="sales-igv-toggle-row">
-              <div className="tax-mode-toggle" role="group" aria-label="Modo de costo IGV">
+              <div className="tax-mode-toggle" role="group" aria-label="Modo de costo comercial con IGV">
                 <label className="tax-mode-toggle-label">
                   <input
                     type="checkbox"
@@ -1703,7 +1703,7 @@ export function PurchasesView({
                 </label>
               </div>
               <span className="sales-igv-toggle-row-hint">
-                {priceTaxMode === 'INCLUSIVE' ? 'Modo por defecto para items nuevos: el costo ingresado ya incluye IGV' : 'Modo por defecto para items nuevos: el IGV se calcula sobre el costo base'}
+                {priceTaxMode === 'INCLUSIVE' ? 'Modo por defecto para items nuevos: el costo ingresado es comercial (con IGV).' : 'Modo por defecto para items nuevos: el IGV se calcula sobre el costo base.'}
               </span>
             </div>
             <label className="sales-field-address">
@@ -1958,7 +1958,7 @@ export function PurchasesView({
                 </label>
 
                 <label className="sales-field-price">
-                  Costo unitario
+                  Costo unitario comercial
                   <input
                     type="number"
                     step="0.000001"
@@ -1968,6 +1968,7 @@ export function PurchasesView({
                     onKeyDown={handleQuickAppendRow}
                     placeholder="0.00"
                   />
+                  <small className="sales-field-hint">Por defecto se captura con IGV incluido y luego se normaliza a costo neto internamente.</small>
                 </label>
 
                 {lotTrackingEnabled && (

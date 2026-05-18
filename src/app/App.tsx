@@ -158,6 +158,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Tesoreria',
     label: 'Caja',
     hint: 'Sesiones y movimientos',
+    moduleCode: 'SALES',
     verticalLabels: {
       RESTAURANT: {
         kicker: 'Caja del Dia',
@@ -233,6 +234,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Restaurante',
     label: 'Recetas',
     hint: 'Ingredientes y cantidades por plato',
+    moduleCode: 'INVENTORY',
     onlyVerticals: ['RESTAURANT'],
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -377,6 +379,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Carta',
     label: 'Menu',
     hint: 'Platos, bebidas, combos y precios',
+    moduleCode: 'INVENTORY',
     onlyVerticals: ['RESTAURANT'],
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -390,6 +393,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Bodega',
     label: 'Insumos',
     hint: 'Ingredientes, abarrotes y bebidas base',
+    moduleCode: 'INVENTORY',
     onlyVerticals: ['RESTAURANT'],
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -403,6 +407,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Catalogo',
     label: 'Productos',
     hint: 'SKU, precios y estado',
+    moduleCode: 'INVENTORY',
     verticalLabels: {
       RESTAURANT: {
         kicker: 'Carta',
@@ -427,6 +432,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Relacion',
     label: 'Clientes',
     hint: 'Documentos y datos',
+    moduleCode: 'SALES',
     verticalLabels: {
       RESTAURANT: {
         kicker: 'Salon',
@@ -451,6 +457,7 @@ const MENU_ITEMS: Array<{
     kicker: 'Catalogos',
     label: 'Maestros',
     hint: 'Series, cajas y reglas',
+    moduleCode: 'APPCFG',
     verticalLabels: {
       RESTAURANT: {
         hint: 'Series de comprobantes, modos de pago y configuracion de cajas',
@@ -803,10 +810,16 @@ export function App() {
     && !isCashierUser
     && !isAdminUser;
   const inventoryPermissions = session?.user?.permissions?.INVENTORY;
+  const appcfgPermissions = session?.user?.permissions?.APPCFG;
+  const canViewBusinessPulse = isAdminUser || Boolean(appcfgPermissions?.can_view);
   const canEditPurchaseEntries = Boolean(inventoryPermissions?.can_update) && Boolean(inventoryPermissions?.can_approve);
 
   const permittedMenuItems = useMemo(() => {
     return MENU_ITEMS.filter((item) => {
+      if (item.id === 'home') {
+        return true;
+      }
+
       if (item.id === 'cash' && shouldHideCashModule) {
         return false;
       }
@@ -825,11 +838,15 @@ export function App() {
         return false;
       }
 
+      if (isAdminUser) {
+        return true;
+      }
+
       if (!item.moduleCode) return true;
       const perms = session?.user?.permissions;
-      if (!perms) return true;
+      if (!perms) return false;
       const perm = perms[item.moduleCode];
-      if (!perm) return true;
+      if (!perm) return false;
       return perm.can_view;
     });
   }, [
@@ -1383,6 +1400,7 @@ export function App() {
                     companyId={Number(session.user.company_id)}
                     branchId={selectedBranchId}
                     warehouseId={selectedWarehouseId}
+                    canViewBusinessPulse={canViewBusinessPulse}
                     quickAccessItems={quickAccessItems}
                     onTabSelect={handleMenuTabSelect}
                   />
@@ -1532,6 +1550,7 @@ export function App() {
                     accessToken={session.accessToken}
                     cashRegisterId={selectedCashRegisterId}
                     salesFlowMode={salesFlowMode}
+                    canViewNetMargin={false}
                   />
                 )}
                 {activeTab === 'racing-ops' && (
