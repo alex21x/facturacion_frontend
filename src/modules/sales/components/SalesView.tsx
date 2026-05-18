@@ -5685,8 +5685,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
 
           {workshopMultiVehicleEnabled && (
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
-              <label className="sales-field-customer-vehicle" style={{ flex: 1 }}>
+            <div className="sales-customer-vehicle-row">
+              <label className="sales-field-customer-vehicle sales-field-customer-vehicle--stretch">
                 Vehículo
                 <select
                   value={form.customerVehicleId ?? ''}
@@ -5710,12 +5710,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </label>
               <button
                 type="button"
-                className="btn-mini"
+                className="btn-mini sales-add-vehicle-btn"
                 onClick={() => setShowAddVehiclePopup(true)}
                 disabled={loadingCustomerVehicles || Number(form.customerId) <= 0}
                 title="Agregar nuevo vehículo para este cliente"
               >
-                ➕ Vehículo
+                + Nuevo
               </button>
             </div>
           )}
@@ -6709,9 +6709,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       </form>
 
       {showAddVehiclePopup && typeof document !== 'undefined' && createPortal(
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+        <div className="sales-vehicle-modal-backdrop">
           <div
-            style={{ backgroundColor: '#fff', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '20px', maxWidth: '400px', width: '90%', boxShadow: '0 20px 25px rgba(0,0,0,0.15)' }}
+            className="sales-vehicle-modal"
             onKeyDown={(event) => {
               if (event.key !== 'Enter') {
                 return;
@@ -6722,24 +6722,24 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               void handleAddNewVehicle();
             }}
           >
-            <h4 style={{ marginTop: 0, marginBottom: '12px' }}>Agregar Vehículo</h4>
-            <p style={{ marginBottom: '16px', color: '#666', fontSize: '0.9rem' }}>Registra un nuevo vehículo para este cliente.</p>
+            <h4 className="sales-vehicle-modal-title">Agregar vehículo</h4>
+            <p className="sales-vehicle-modal-copy">Registra un nuevo vehículo para este cliente.</p>
             <div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Placa *</label>
-                <input type="text" maxLength={20} value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} placeholder="Ej. AXY-123" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
-              </div>
-              <div style={{ marginBottom: '12px' }}>
-                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Marca</label>
-                <input type="text" maxLength={60} value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} placeholder="Ej. Toyota" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
-              </div>
-              <div style={{ marginBottom: '16px' }}>
-                <label style={{ display: 'block', marginBottom: '4px', fontSize: '0.9rem', fontWeight: 600 }}>Modelo</label>
-                <input type="text" maxLength={60} value={newVehicleModel} onChange={(e) => setNewVehicleModel(e.target.value)} placeholder="Ej. Corolla 2024" style={{ width: '100%', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', boxSizing: 'border-box' }} />
-              </div>
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button type="button" className="btn-mini" onClick={() => setShowAddVehiclePopup(false)}>Cancelar</button>
-                <button type="button" className="btn-mini" style={{ background: '#1e40af', color: '#fff', borderColor: '#1e40af' }} disabled={submittingNewVehicle} onClick={() => void handleAddNewVehicle()}>{submittingNewVehicle ? '⏳ Guardando...' : '✓ Guardar'}</button>
+              <label className="sales-vehicle-modal-field">
+                <span>Placa *</span>
+                <input type="text" maxLength={20} value={newVehiclePlate} onChange={(e) => setNewVehiclePlate(e.target.value)} placeholder="Ej. AXY-123" />
+              </label>
+              <label className="sales-vehicle-modal-field">
+                <span>Marca</span>
+                <input type="text" maxLength={60} value={newVehicleBrand} onChange={(e) => setNewVehicleBrand(e.target.value)} placeholder="Ej. Toyota" />
+              </label>
+              <label className="sales-vehicle-modal-field sales-vehicle-modal-field--last">
+                <span>Modelo</span>
+                <input type="text" maxLength={60} value={newVehicleModel} onChange={(e) => setNewVehicleModel(e.target.value)} placeholder="Ej. Corolla 2024" />
+              </label>
+              <div className="sales-vehicle-modal-actions">
+                <button type="button" className="btn-mini sales-vehicle-modal-btn-cancel" onClick={() => setShowAddVehiclePopup(false)}>Cancelar</button>
+                <button type="button" className="btn-mini sales-vehicle-modal-btn-save" disabled={submittingNewVehicle} onClick={() => void handleAddNewVehicle()}>{submittingNewVehicle ? 'Guardando...' : 'Guardar vehículo'}</button>
               </div>
             </div>
           </div>

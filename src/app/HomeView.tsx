@@ -103,6 +103,7 @@ type HomeViewProps = {
   companyId: number;
   branchId: number | null;
   warehouseId: number | null;
+  canViewBusinessPulse: boolean;
   quickAccessItems: QuickAccessItem[];
   onTabSelect: (tab: ModuleTab) => void;
 };
@@ -113,6 +114,7 @@ export function HomeView({
   companyId,
   branchId,
   warehouseId,
+  canViewBusinessPulse,
   quickAccessItems,
   onTabSelect,
 }: HomeViewProps) {
@@ -196,6 +198,12 @@ export function HomeView({
 
   // ── data fetch ─────────────────────────────────────────────────────────────
   useEffect(() => {
+    if (!canViewBusinessPulse) {
+      setBusinessPulseLoading(false);
+      setBusinessPulseError(null);
+      return;
+    }
+
     // HomeView only renders when the home tab is active, so no activeTab guard needed.
     let cancelled = false;
     let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -253,7 +261,7 @@ export function HomeView({
 
     timerId = setTimeout(() => { if (!cancelled) void load(); }, 350);
     return () => { cancelled = true; if (timerId) clearTimeout(timerId); };
-  }, [accessToken, companyId, branchId, warehouseId, businessPulseRange]);
+  }, [accessToken, companyId, branchId, warehouseId, businessPulseRange, canViewBusinessPulse]);
 
   // ── render ─────────────────────────────────────────────────────────────────
   return (
@@ -317,6 +325,7 @@ export function HomeView({
         </section>
       )}
 
+      {canViewBusinessPulse && (
       <section className="quick-home-pulse" aria-label="Pulso del negocio">
         <div className="quick-home-pulse-head">
           <div>
@@ -410,6 +419,7 @@ export function HomeView({
           </div>
         )}
       </section>
+      )}
     </section>
   );
 }

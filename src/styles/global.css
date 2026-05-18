@@ -7647,6 +7647,77 @@ th {
 }
 .perm-section-header h4 { margin: 0; font-size: 0.95rem; font-weight: 700; }
 .perm-hint { font-size: 0.78rem; color: #9ca3af; margin: 0; }
+.perm-diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.perm-diagnostic-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.perm-diagnostic-card h5 {
+  margin: 0 0 8px;
+  font-size: 0.83rem;
+  color: #1f2937;
+}
+.perm-diagnostic-card ul {
+  margin: 0;
+  padding-left: 17px;
+}
+.perm-diagnostic-card li {
+  font-size: 0.78rem;
+  color: #4b5563;
+  margin: 2px 0;
+}
+.perm-guide-table th,
+.perm-guide-table td {
+  font-size: 0.74rem;
+  padding: 6px;
+}
+.perm-guide-table th {
+  background: #eef2f7;
+  color: #4b5563;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.perm-guide-table td:nth-child(2) {
+  font-weight: 700;
+  color: #1f4f7a;
+}
+.perm-missing-modules {
+  margin-bottom: 12px;
+  border: 1px dashed #d1d5db;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #fbfdff;
+}
+.perm-missing-modules summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #374151;
+}
+.perm-missing-modules p {
+  margin: 8px 0 0;
+  font-size: 0.76rem;
+  color: #6b7280;
+}
+.perm-note {
+  margin: 6px 0 10px;
+  font-size: 0.76rem;
+  color: #475569;
+}
+.perm-note-warning {
+  color: #7c2d12;
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 7px 9px;
+}
 .perm-table th {
   font-size: 0.7rem;
   font-weight: 700;
@@ -7695,6 +7766,10 @@ th {
 
   .access-row-button {
     width: 100%;
+  }
+
+  .perm-diagnostics-grid {
+    grid-template-columns: 1fr;
   }
 }
 
