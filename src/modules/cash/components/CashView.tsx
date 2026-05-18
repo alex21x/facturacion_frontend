@@ -143,8 +143,6 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     () => movements.filter((m) => m.movement_type === 'OUT').reduce((a, m) => a + Number(m.amount), 0),
     [movements]
   );
-  const inMovements = useMemo(() => movements.filter((m) => m.movement_type === 'IN'), [movements]);
-  const outMovements = useMemo(() => movements.filter((m) => m.movement_type === 'OUT'), [movements]);
 
   function formatMovementType(type: CashMovement['movement_type']): string {
     return type === 'IN' ? 'Ingreso' : 'Egreso';
@@ -1000,69 +998,37 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
               {/* Movimientos de la sesion */}
               <div className="table-wrap cash-table-wrap">
                 <h4>Movimientos de esta sesion</h4>
-                {movements.length === 0 && <p style={{ textAlign: 'center' }}>Sin movimientos</p>}
-
-                {movements.length > 0 && (
-                  <>
-                    <h5 style={{ marginTop: 0, marginBottom: '0.5rem', color: 'var(--color-ok)' }}>Ingresos</h5>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Fecha</th>
-                          <th>Usuario</th>
-                          <th>Monto</th>
-                          <th>Descripcion</th>
-                          <th>Forma de pago</th>
-                          <th>Referencia</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {inMovements.length === 0 && (
-                          <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin ingresos</td></tr>
-                        )}
-                        {inMovements.map((m) => (
-                          <tr key={m.id}>
-                            <td>{m.movement_at}</td>
-                            <td>{m.user_name?.trim() || '-'}</td>
-                            <td style={{ color: 'var(--color-ok)' }}>{Number(m.amount).toFixed(2)}</td>
-                            <td>{m.description}</td>
-                            <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
-                            <td>{formatReferenceValue(m)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-
-                    <h5 style={{ marginTop: '1rem', marginBottom: '0.5rem', color: 'var(--color-err)' }}>Egresos</h5>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Fecha</th>
-                          <th>Usuario</th>
-                          <th>Monto</th>
-                          <th>Descripcion</th>
-                          <th>Forma de pago</th>
-                          <th>Referencia</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {outMovements.length === 0 && (
-                          <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin egresos</td></tr>
-                        )}
-                        {outMovements.map((m) => (
-                          <tr key={m.id}>
-                            <td>{m.movement_at}</td>
-                            <td>{m.user_name?.trim() || '-'}</td>
-                            <td style={{ color: 'var(--color-err)' }}>{Number(m.amount).toFixed(2)}</td>
-                            <td>{m.description}</td>
-                            <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
-                            <td>{formatReferenceValue(m)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </>
-                )}
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Usuario</th>
+                      <th>Tipo</th>
+                      <th>Monto</th>
+                      <th>Descripcion</th>
+                      <th>Forma de pago</th>
+                      <th>Referencia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movements.length === 0 && (
+                      <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin movimientos</td></tr>
+                    )}
+                    {movements.map((m) => (
+                      <tr key={m.id}>
+                        <td>{m.movement_at}</td>
+                        <td>{m.user_name?.trim() || '-'}</td>
+                        <td style={{ color: m.movement_type === 'IN' ? 'var(--color-ok)' : 'var(--color-err)' }}>
+                          {formatMovementType(m.movement_type)}
+                        </td>
+                        <td>{Number(m.amount).toFixed(2)}</td>
+                        <td>{m.description}</td>
+                        <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
+                        <td>{formatReferenceValue(m)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
 
               {/* Cierre de caja */}
