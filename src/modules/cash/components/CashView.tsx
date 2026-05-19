@@ -320,8 +320,8 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     }));
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(paymentRows), 'VentasPorPago');
 
-    const movementRows = (detail.movements ?? []).map((row) => ({
-      ID: row.id,
+    const movementRows = (detail.movements ?? []).map((row, movIdx) => ({
+      N: movIdx + 1,
       Tipo: row.movement_type === 'IN' ? 'Ingreso' : 'Egreso',
       Monto: Number(row.amount ?? 0),
       Descripcion: row.description ?? '',

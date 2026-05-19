@@ -261,7 +261,7 @@ export function ReportsCenterView({ accessToken, branchId, warehouseId }: Report
         <table>
           <thead>
             <tr>
-              <th>ID</th>
+              <th>N°</th>
               <th>Modulo</th>
               <th>Codigo</th>
               <th>Estado</th>
@@ -276,9 +276,9 @@ export function ReportsCenterView({ accessToken, branchId, warehouseId }: Report
                 <td colSpan={7} style={{ textAlign: 'center' }}>Sin solicitudes</td>
               </tr>
             )}
-            {filteredRequests.map((row) => (
+            {filteredRequests.map((row, reqIdx) => (
               <tr key={row.id}>
-                <td>{row.id}</td>
+                <td>{reqIdx + 1}</td>
                 <td>{String(row.report_code).startsWith('SALES_') ? 'VENTAS' : 'INVENTARIO'}</td>
                 <td>{row.report_code}</td>
                 <td>{STATUS_LABELS[row.status] ?? row.status}</td>
