@@ -1764,6 +1764,22 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
   font-size: 0.8rem;
 }
 
+@media (max-width: 1200px) {
+  .adm-content {
+    padding: 1rem;
+  }
+
+  .adm-kpi-chip {
+    min-width: 140px;
+  }
+
+  .adm-panel-nav {
+    overflow-x: auto;
+    white-space: nowrap;
+    scrollbar-width: thin;
+  }
+}
+
 @media (max-width: 900px) {
   .adm-workspace-hero {
     flex-direction: column;

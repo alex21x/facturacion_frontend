@@ -18,6 +18,13 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  max-width: 100%;
+}
+
 body {
   margin: 0;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
@@ -27,6 +34,22 @@ body {
     radial-gradient(circle at 82% 92%, #e6e8e5, transparent 28%),
     var(--bg);
   min-height: 100vh;
+  overflow-x: hidden;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+input,
+select,
+textarea,
+button {
+  max-width: 100%;
 }
 
 .app-shell {
@@ -34,6 +57,46 @@ body {
   max-width: 1920px;
   margin: 0 auto;
   padding: 8px 10px 12px;
+}
+
+@media (max-width: 1366px) {
+  .app-shell {
+    width: min(100%, calc(100vw - 12px));
+    padding: 8px 8px 10px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .app-shell {
+    width: 100%;
+    padding: 7px;
+  }
+
+  .hero {
+    border-radius: 12px;
+    padding: 6px 8px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-shell {
+    padding: 6px;
+  }
+
+  .hero {
+    border-radius: 10px;
+    padding: 6px;
+  }
+}
+
+@media (max-width: 480px) {
+  .app-shell {
+    padding: 4px;
+  }
+
+  .workspace-head h1 {
+    font-size: 0.96rem;
+  }
 }
 
 .hero {

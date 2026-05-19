@@ -93,6 +93,7 @@
   border-radius: 12px;
   padding: 8px;
   background: #fffdfa;
+  overflow-x: auto;
 }
 
 .inventory-module .table-wrap > h4 {
