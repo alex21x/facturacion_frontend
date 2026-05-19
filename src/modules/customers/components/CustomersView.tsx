@@ -683,7 +683,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         <table>
           <thead>
             <tr>
-              <th>ID</th>
+              <th>N°</th>
               <th>Doc.</th>
               <th>Nombre</th>
               <th>Comercial</th>
@@ -695,9 +695,9 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
             </tr>
           </thead>
           <tbody>
-            {pagedRows.map((row) => (
+            {pagedRows.map((row, rowIdx) => (
               <tr key={row.id}>
-                <td>{row.id}</td>
+                <td>{(page - 1) * PAGE_SIZE + rowIdx + 1}</td>
                 <td>{row.doc_type ?? '-'} {row.doc_number ?? ''}</td>
                 <td>{row.name}</td>
                 <td>{row.trade_name ?? '-'}</td>

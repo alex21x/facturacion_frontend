@@ -1087,7 +1087,7 @@ export function ProductsView({
             <table className="inventory-table products-catalog-table">
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th>N°</th>
                   <th>SKU</th>
                   <th>Nombre</th>
                   <th>Tipo</th>
@@ -1101,9 +1101,9 @@ export function ProductsView({
                 </tr>
               </thead>
               <tbody>
-                {paginatedProducts.map((row) => (
+                {paginatedProducts.map((row, prodIdx) => (
                   <tr key={row.id}>
-                    <td>{row.id}</td>
+                    <td>{(productsPage - 1) * productsPerPage + prodIdx + 1}</td>
                     <td>{row.sku ?? '-'}</td>
                     <td>{row.name}</td>
                     <td>{row.product_nature === 'SUPPLY' ? 'Insumo' : 'Producto'}</td>
