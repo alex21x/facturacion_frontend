@@ -3965,11 +3965,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         max: 20000,
       });
 
-      const sheetRows = (rows as CommercialDocumentListItem[]).map((row) => {
+      const sheetRows = (rows as CommercialDocumentListItem[]).map((row, rowIdx) => {
         const trace = resolveDocumentActorTrace(row);
 
         return {
-          ID: row.id,
+          N: rowIdx + 1,
           Solicita: trace.seller,
           Emite: trace.issuer,
           Actor: trace.compact,
@@ -4080,7 +4080,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       });
 
       const detailRows = rows as Array<Record<string, unknown>>;
-      const sheetRows = detailRows.map((row) => ({
+      const sheetRows = detailRows.map((row, detailIdx) => ({
         ...(() => {
           const issuer = String(row.created_by_user_name ?? '').trim();
           const seller = String(row.origin_seller_user_name ?? '').trim();
@@ -4093,7 +4093,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             Actor: actor,
           };
         })(),
-        ID: Number(row.id ?? 0),
+        N: detailIdx + 1,
         Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
         Serie: String(row.series ?? ''),
         Numero: String(row.number ?? ''),
@@ -7097,7 +7097,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </tr>
           </thead>
           <tbody>
-            {documents.map((row) => {
+            {documents.map((row, docIdx) => {
               const sunatUi = resolveSunatUiState(row);
               const declarationSummaryId = toPositiveInt(row.sunat_summary_id);
               const cancellationSummaryId = toPositiveInt(row.sunat_void_summary_id);
@@ -7118,7 +7118,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   Number(row.id) === pinnedDocumentId ? 'sales-row-selected' : '',
                 ].filter(Boolean).join(' ')}
               >
-                <td>{row.id}</td>
+                <td>{(documentsPage - 1) * documentsMeta.per_page + docIdx + 1}</td>
                 <td>
                   {(() => {
                     if (salesFlowMode !== 'SELLER_TO_CASHIER') {

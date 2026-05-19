@@ -2067,7 +2067,7 @@ export function InventoryView({
             <table className="inventory-table">
               <thead>
                 <tr>
-                  <th>ID</th>
+                  <th>N°</th>
                   <th>Tipo</th>
                   <th>Estado</th>
                   <th>Solicitado</th>
@@ -2079,9 +2079,9 @@ export function InventoryView({
                 {reportRequests.length === 0 && (
                   <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin solicitudes de reporte</td></tr>
                 )}
-                {reportRequests.map((row) => (
+                {reportRequests.map((row, reqIdx) => (
                   <tr key={row.id}>
-                    <td>{row.id}</td>
+                    <td>{reqIdx + 1}</td>
                     <td>{REPORT_TYPE_LABELS[row.report_code] ?? row.report_code}</td>
                     <td>{REPORT_STATUS_LABELS[row.status] ?? row.status}</td>
                     <td>{fmtDateTime(row.requested_at)}</td>

@@ -2507,7 +2507,7 @@ export function PurchasesView({
         <table>
           <thead>
             <tr>
-              <th>ID</th>
+              <th>N°</th>
               <th>Tipo</th>
               <th>Estado</th>
               <th style={{ minWidth: '10rem' }}>Fecha</th>
@@ -2525,13 +2525,13 @@ export function PurchasesView({
                 <td colSpan={10} style={{ textAlign: 'center' }}>No hay registros para los filtros actuales.</td>
               </tr>
             )}
-            {visibleReportRows.map((entry) => (
+            {visibleReportRows.map((entry, entryIdx) => (
               <tr
                 key={entry.id}
                 ref={Number(entry.id) === focusReportEntryId ? focusedReportRowRef : null}
                 className={Number(entry.id) === highlightedReportEntryId ? 'sales-row-focused' : ''}
               >
-                <td>{entry.id}</td>
+                <td>{(reportPage - 1) * 10 + entryIdx + 1}</td>
                 <td>{entryTypeLabel(entry.entry_type)}</td>
                 <td>{purchaseStatusLabel(entry.status, entry.status_label)}</td>
                 <td>{formatDateTime(entry.issue_at)}</td>
