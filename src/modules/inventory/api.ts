@@ -71,13 +71,17 @@ export async function fetchInventoryStock(
 
 export async function fetchInventoryLots(
   accessToken: string,
-  context?: { warehouseId?: number | null }
+  context?: { warehouseId?: number | null; productId?: number | null; onlyWithStock?: boolean }
 ): Promise<InventoryLotRow[]> {
   const query = new URLSearchParams();
-  query.set('only_with_stock', 'true');
+  query.set('only_with_stock', String(context?.onlyWithStock ?? true));
 
   if (context?.warehouseId) {
     query.set('warehouse_id', String(context.warehouseId));
+  }
+
+  if (context?.productId) {
+    query.set('product_id', String(context.productId));
   }
 
   const response = await apiClient.request<{ data: InventoryLotRow[] }>(`/api/inventory/lots?${query.toString()}`, {

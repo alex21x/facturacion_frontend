@@ -194,6 +194,11 @@ const ACCESS_GUIDE_ROWS: Array<{
     notes: 'Movimientos, consultas y vistas de inventario dependen del módulo INVENTORY.',
   },
   {
+    area: 'Compras (registro)',
+    requirement: 'INVENTORY · Crear (+ Ver)',
+    notes: 'Registrar ingresos de compra usa alta de stock (POST /inventory/stock-entries), por eso requiere Crear.',
+  },
+  {
     area: 'Ventas',
     requirement: 'SALES · Ver',
     notes: 'Si falta este permiso, aparecerá Forbidden [SALES:view].',
