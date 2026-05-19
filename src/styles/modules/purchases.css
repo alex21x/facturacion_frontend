@@ -44,3 +44,74 @@
 .purchases-entry-row .sales-field-action button {
   max-width: 168px;
 }
+
+/* Prevent two-line label wrap in unit-cost field to keep input row aligned. */
+.purchases-entry-row .sales-field-price {
+  grid-column: span 3;
+}
+
+.purchases-entry-row .sales-field-lot {
+  display: flex;
+  flex-direction: column;
+  gap: 0.32rem;
+}
+
+.purchases-entry-row .sales-field-lot .purchases-lot-select {
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+
+.purchases-section-head {
+  display: block;
+}
+
+.purchases-entry-hint {
+  margin: 0.2rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.3;
+  color: #7b6a50;
+}
+
+@media (max-width: 1200px) {
+  .purchases-entry-row.has-line-tools .sales-field-product {
+    grid-column: span 6;
+  }
+
+  .purchases-entry-row.has-line-tools .sales-field-qty,
+  .purchases-entry-row.has-line-tools .sales-field-price,
+  .purchases-entry-row.has-line-tools .sales-field-igv,
+  .purchases-entry-row.has-line-tools .sales-field-inline-discount,
+  .purchases-entry-row.has-line-tools .sales-field-inline-toggle,
+  .purchases-entry-row.has-line-tools .sales-field-action {
+    grid-column: span 3;
+  }
+
+  .purchases-entry-row.has-line-tools .purchases-field-dates,
+  .purchases-entry-row.has-line-tools .sales-field-lot {
+    grid-column: span 6;
+  }
+}
+
+@media (max-width: 900px) {
+  .purchases-entry-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 6px;
+  }
+
+  .purchases-entry-row .sales-field-product,
+  .purchases-entry-row .sales-field-qty,
+  .purchases-entry-row .sales-field-price,
+  .purchases-entry-row .sales-field-lot,
+  .purchases-entry-row .purchases-field-dates,
+  .purchases-entry-row .sales-field-igv,
+  .purchases-entry-row .sales-field-inline-discount,
+  .purchases-entry-row .sales-field-inline-toggle,
+  .purchases-entry-row .sales-field-action {
+    grid-column: 1 / -1 !important;
+  }
+
+  .purchases-entry-row .sales-field-action button {
+    width: 100%;
+    max-width: none;
+  }
+}

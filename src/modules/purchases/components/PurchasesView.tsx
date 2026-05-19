@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import '../../../styles/modules/purchases.css';
-import { fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
-import type { InventoryProduct, InventoryStockRow } from '../../inventory/types';
+import { fetchInventoryLots, fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
+import type { InventoryLotRow, InventoryProduct, InventoryStockRow } from '../../inventory/types';
 import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import { fetchCompanyProfile } from '../../company/api';
@@ -158,6 +158,7 @@ export function PurchasesView({
   const [notes, setNotes] = useState('');
   const [rows, setRows] = useState<EntryRowDraft[]>([]);
   const [draftItem, setDraftItem] = useState<EntryRowDraft>(buildEmptyRow(1));
+  const [draftProductLots, setDraftProductLots] = useState<InventoryLotRow[]>([]);
   const [hasDetraccion, setHasDetraccion] = useState(false);
   const [detraccionServiceCode, setDetraccionServiceCode] = useState('');
   const [hasRetencion, setHasRetencion] = useState(false);
@@ -206,6 +207,17 @@ export function PurchasesView({
     return rows.reduce((acc, row) => acc + (Number(row.qty) || 0), 0);
   }, [rows]);
 
+  const purchaseEntryHint = useMemo(() => {
+    const modeLabel = priceTaxMode === 'INCLUSIVE' ? 'con IGV incluido' : 'sin IGV incluido';
+    const countLabel = rows.length === 1 ? 'item' : 'items';
+
+    if (rows.length === 0) {
+      return `Agrega productos para armar el detalle. El costo se captura ${modeLabel} y se normaliza a costo neto internamente.`;
+    }
+
+    return `${rows.length} ${countLabel} en el detalle. El costo se captura ${modeLabel} y se normaliza a costo neto internamente.`;
+  }, [priceTaxMode, rows.length]);
+
   const inventorySettings = lookups?.inventory_settings ?? null;
   const inventoryProEnabled = Boolean(inventorySettings?.enable_inventory_pro);
   const lotTrackingEnabled = inventoryProEnabled && Boolean(inventorySettings?.enable_lot_tracking);
@@ -229,6 +241,36 @@ export function PurchasesView({
       })
       .slice(0, 20);
   }, [draftItem.product_query, isProductSuggestOpen, selectableProducts]);
+
+  const normalizedDraftLotCode = useMemo(() => draftItem.lot_code.trim().toUpperCase(), [draftItem.lot_code]);
+  const availableDraftLots = useMemo(() => {
+    const map = new Map<string, InventoryLotRow>();
+
+    draftProductLots.forEach((lot) => {
+      const key = String(lot.lot_code ?? '').trim().toUpperCase();
+      if (!key) {
+        return;
+      }
+
+      const current = map.get(key);
+      if (!current) {
+        map.set(key, lot);
+        return;
+      }
+
+      const currentMovedAt = Date.parse(String(current.received_at ?? ''));
+      const candidateMovedAt = Date.parse(String(lot.received_at ?? ''));
+      if (Number.isFinite(candidateMovedAt) && (!Number.isFinite(currentMovedAt) || candidateMovedAt > currentMovedAt)) {
+        map.set(key, lot);
+      }
+    });
+
+    return Array.from(map.values());
+  }, [draftProductLots]);
+  const selectedDraftLot = useMemo(
+    () => availableDraftLots.find((lot) => String(lot.lot_code ?? '').trim().toUpperCase() === normalizedDraftLotCode) ?? null,
+    [availableDraftLots, normalizedDraftLotCode]
+  );
 
   useEffect(() => {
     if (activeProductSuggestions.length === 0) {
@@ -279,6 +321,40 @@ export function PurchasesView({
       window.clearTimeout(timer);
     };
   }, [accessToken, supplierInputFocused, supplierReference]);
+
+  useEffect(() => {
+    if (!lotTrackingEnabled || !warehouseId || !draftItem.product_id) {
+      setDraftProductLots([]);
+      return;
+    }
+
+    let canceled = false;
+
+    const loadLots = async () => {
+      try {
+        const rows = await fetchInventoryLots(accessToken, {
+          warehouseId,
+          productId: draftItem.product_id,
+          onlyWithStock: false,
+        });
+        if (canceled) {
+          return;
+        }
+        setDraftProductLots(rows);
+      } catch {
+        if (canceled) {
+          return;
+        }
+        setDraftProductLots([]);
+      }
+    };
+
+    void loadLots();
+
+    return () => {
+      canceled = true;
+    };
+  }, [accessToken, draftItem.product_id, lotTrackingEnabled, warehouseId]);
 
   useEffect(() => {
     if (lotTrackingEnabled) {
@@ -847,6 +923,38 @@ export function PurchasesView({
     });
     setIsProductSuggestOpen(false);
     setActiveProductIndex(-1);
+  }
+
+  function handleDraftLotCodeChange(value: string) {
+    const normalized = value.trim().toUpperCase();
+    const matched = availableDraftLots.find((lot) => String(lot.lot_code ?? '').trim().toUpperCase() === normalized) ?? null;
+
+    updateDraftItem({
+      lot_code: value,
+      lot_id: matched ? Number(matched.id) : null,
+      manufacture_at: matched && expiryTrackingEnabled ? (matched.manufacture_at ?? '') : draftItem.manufacture_at,
+      expires_at: matched && expiryTrackingEnabled ? (matched.expires_at ?? '') : draftItem.expires_at,
+    });
+  }
+
+  function handleDraftLotSelection(value: string) {
+    if (value === '') {
+      updateDraftItem({ lot_id: null });
+      return;
+    }
+
+    const lotId = Number(value);
+    const matched = availableDraftLots.find((lot) => Number(lot.id) === lotId) ?? null;
+    if (!matched) {
+      return;
+    }
+
+    updateDraftItem({
+      lot_id: Number(matched.id),
+      lot_code: matched.lot_code,
+      manufacture_at: expiryTrackingEnabled ? (matched.manufacture_at ?? '') : draftItem.manufacture_at,
+      expires_at: expiryTrackingEnabled ? (matched.expires_at ?? '') : draftItem.expires_at,
+    });
   }
 
   function canAddDraftItem(row: EntryRowDraft): boolean {
@@ -1894,9 +2002,9 @@ export function PurchasesView({
 
         <div className="sales-concepts-shell">
           <section className="sales-concepts-main">
-            <header className="sales-section-head">
+            <header className="sales-section-head purchases-section-head">
               <h4>Lineas de compra</h4>
-              <p>Agrega productos y arma el detalle de ingreso antes de registrar.</p>
+              <p className="purchases-entry-hint">{purchaseEntryHint}</p>
             </header>
 
             <div className="sales-grid-main">
@@ -1968,13 +2076,33 @@ export function PurchasesView({
                     onKeyDown={handleQuickAppendRow}
                     placeholder="0.00"
                   />
-                  <small className="sales-field-hint">Por defecto se captura con IGV incluido y luego se normaliza a costo neto internamente.</small>
                 </label>
 
                 {lotTrackingEnabled && (
                 <label className="sales-field-lot">
                   Lote
-                  <input value={draftItem.lot_code} onChange={(e) => updateDraftItem({ lot_code: e.target.value })} placeholder="Lote o codigo" />
+                  <input
+                    value={draftItem.lot_code}
+                    onChange={(e) => handleDraftLotCodeChange(e.target.value)}
+                    placeholder="Lote o codigo"
+                  />
+                  {availableDraftLots.length > 0 && (
+                    <select
+                      className="purchases-lot-select"
+                      value={draftItem.lot_id ? String(draftItem.lot_id) : ''}
+                      onChange={(e) => handleDraftLotSelection(e.target.value)}
+                    >
+                      <option value="">Usar lote guardado (opcional)</option>
+                      {availableDraftLots.map((lot) => {
+                        const expires = lot.expires_at ? lot.expires_at.slice(0, 10) : 'sin venc.';
+                        return (
+                          <option key={lot.id} value={lot.id}>
+                            {lot.lot_code} · Vence: {expires}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
                 </label>
                 )}
 
