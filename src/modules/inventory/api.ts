@@ -25,7 +25,8 @@ export async function fetchInventoryProducts(
   params?: { search?: string; warehouseId?: number | null; status?: number | null; limit?: number; autocomplete?: boolean }
 ): Promise<InventoryProduct[]> {
   const query = new URLSearchParams();
-  query.set('limit', String(params?.limit ?? 50));
+  const defaultLimit = params?.autocomplete ? 50 : 5000;
+  query.set('limit', String(params?.limit ?? defaultLimit));
 
   if (params?.search) {
     query.set('search', params.search);
