@@ -364,6 +364,64 @@ export async function importInventoryProductsBulk(
   });
 }
 
+/**
+ * Import products in chunks to avoid timeout on large files.
+ * Sends batches of up to 500 rows, aggregating results across all batches.
+ */
+export async function importInventoryProductsBulkWithChunking(
+  accessToken: string,
+  rows: InventoryBulkImportRow[],
+  filename?: string,
+  chunkSize: number = 500
+): Promise<InventoryBulkImportResponse> {
+  if (rows.length <= chunkSize) {
+    return importInventoryProductsBulk(accessToken, rows, filename);
+  }
+
+  const chunks: InventoryBulkImportRow[][] = [];
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    chunks.push(rows.slice(i, i + chunkSize));
+  }
+
+  let totalCreated = 0;
+  let totalUpdated = 0;
+  let totalSkipped = 0;
+  let allErrors: Array<{ row: number; message: string }> = [];
+  let lastBatchId: number | null = null;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkFilename = filename ? `${filename} (parte ${i + 1}/${chunks.length})` : undefined;
+
+    const result = await importInventoryProductsBulk(accessToken, chunk, chunkFilename);
+
+    totalCreated += result.summary.created;
+    totalUpdated += result.summary.updated;
+    totalSkipped += result.summary.skipped;
+    allErrors = allErrors.concat(result.errors);
+    if (result.batch_id) {
+      lastBatchId = result.batch_id;
+    }
+
+    // Small delay between requests to avoid overwhelming the server
+    if (i < chunks.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  return {
+    summary: {
+      created: totalCreated,
+      updated: totalUpdated,
+      skipped: totalSkipped,
+      stock_applied: 0,
+      stock_skipped: 0,
+    },
+    errors: allErrors,
+    batch_id: lastBatchId,
+  };
+}
+
 export async function fetchInventoryProductImportBatches(
   accessToken: string,
   limit = 30

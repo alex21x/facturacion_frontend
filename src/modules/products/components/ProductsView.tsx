@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
-import { fetchInventoryProducts, importInventoryProductsBulk, type InventoryBulkImportRow } from '../../inventory/api';
+import { fetchInventoryProducts, importInventoryProductsBulkWithChunking, type InventoryBulkImportRow } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
 import '../products.css';
 
@@ -930,7 +930,7 @@ export function ProductsView({
         throw new Error('No se encontraron filas válidas para importar.');
       }
 
-      const response = await importInventoryProductsBulk(accessToken, rows, file.name);
+      const response = await importInventoryProductsBulkWithChunking(accessToken, rows, file.name);
       const summary = response.summary;
       const firstError = response.errors[0]?.message;
       const batchRef = response.batch_id ? ` (lote #${response.batch_id})` : '';
