@@ -162,6 +162,37 @@ function Get-ApiBaseUrlConfigValue {
     return "http://127.0.0.1:$BackendPort"
 }
 
+function Test-IsPrivateLanIpv4 {
+    param([string]$IpAddress)
+
+    if ([string]::IsNullOrWhiteSpace($IpAddress)) {
+        return $false
+    }
+
+    return $IpAddress -match '^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[0-1])\.)'
+}
+
+function Test-IsVirtualAdapter {
+    param(
+        [string]$Alias,
+        [string]$Description
+    )
+
+    $adapterText = ("$Alias $Description").ToLowerInvariant()
+    $virtualHints = @(
+        'vethernet', 'hyper-v', 'virtual', 'vmware', 'docker', 'wsl',
+        'loopback', 'tunnel', 'teredo', 'isatap', 'tailscale', 'zerotier'
+    )
+
+    foreach ($hint in $virtualHints) {
+        if ($adapterText.Contains($hint)) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Get-PrimaryLanIpv4 {
     try {
         $cfg = Get-NetIPConfiguration -ErrorAction Stop |
@@ -171,7 +202,9 @@ function Get-PrimaryLanIpv4 {
                 $_.IPv4Address.IPAddress -and
                 $_.IPv4Address.IPAddress -ne '127.0.0.1' -and
                 $_.IPv4Address.IPAddress -ne '0.0.0.0' -and
-                -not $_.IPv4Address.IPAddress.StartsWith('169.254.')
+                -not $_.IPv4Address.IPAddress.StartsWith('169.254.') -and
+                (Test-IsPrivateLanIpv4 -IpAddress $_.IPv4Address.IPAddress) -and
+                -not (Test-IsVirtualAdapter -Alias $_.InterfaceAlias -Description $_.InterfaceDescription)
             } |
             Select-Object -First 1
 
@@ -213,14 +246,20 @@ function Get-LocalIpv4Addresses {
     $addresses = @()
 
     try {
-        $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+        $addresses = Get-NetIPConfiguration -ErrorAction Stop |
             Where-Object {
-                $_.IPAddress -and
-                $_.IPAddress -ne '127.0.0.1' -and
-                $_.IPAddress -ne '0.0.0.0' -and
-                -not $_.IPAddress.StartsWith('169.254.')
+                $_.IPv4Address -and
+                -not (Test-IsVirtualAdapter -Alias $_.InterfaceAlias -Description $_.InterfaceDescription)
             } |
-            Select-Object -ExpandProperty IPAddress -Unique
+            ForEach-Object { $_.IPv4Address.IPAddress } |
+            Where-Object {
+                $_ -and
+                $_ -ne '127.0.0.1' -and
+                $_ -ne '0.0.0.0' -and
+                -not $_.StartsWith('169.254.') -and
+                (Test-IsPrivateLanIpv4 -IpAddress $_)
+            } |
+            Select-Object -Unique
     } catch {
         $addresses = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
             Where-Object { $_.IPEnabled -and $_.IPAddress } |
@@ -229,7 +268,8 @@ function Get-LocalIpv4Addresses {
                 $_ -match '^(\d{1,3}\.){3}\d{1,3}$' -and
                 $_ -ne '127.0.0.1' -and
                 $_ -ne '0.0.0.0' -and
-                -not $_.StartsWith('169.254.')
+                -not $_.StartsWith('169.254.') -and
+                (Test-IsPrivateLanIpv4 -IpAddress $_)
             } |
             Select-Object -Unique
     }
