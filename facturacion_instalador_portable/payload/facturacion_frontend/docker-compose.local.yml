@@ -1,6 +1,9 @@
+<<<<<<< HEAD
 env_file:
   - .client-config.env
 
+=======
+>>>>>>> feature/cambios-generales
 services:
   postgres:
     image: postgres:18-alpine
@@ -17,11 +20,7 @@ services:
       retries: 5
 
   pgadmin:
-    image: dpage/pgadmin4:8
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-Admin123!}
-      PGADMIN_CONFIG_SERVER_MODE: "False"
+    services:
       PGADMIN_CONFIG_ENHANCED_COOKIE_PROTECTION: "False"
     ports:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${PGADMIN_PORT:-5050}:80"
@@ -53,8 +52,13 @@ services:
       DB_USERNAME: ${POSTGRES_USER:-facturacion}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-facturacion}
       FILESYSTEM_DRIVER: local
+<<<<<<< HEAD
       FRONTEND_URL: ${FRONTEND_URL:-http://127.0.0.1:5173}
       FRONTEND_APP_URL: ${FRONTEND_APP_URL:-http://127.0.0.1:5174}
+=======
+      FRONTEND_URL: ${FRONTEND_URL:-http://127.0.0.1:${FRONTEND_PORT:-5173}}
+      FRONTEND_APP_URL: ${FRONTEND_APP_URL:-http://127.0.0.1:${ADMIN_PORT:-5174}}
+>>>>>>> feature/cambios-generales
       PORT: 8000
     ports:
       - "${DOCKER_BIND_HOST:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"

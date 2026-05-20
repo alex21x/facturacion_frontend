@@ -1,3 +1,4 @@
+
 param(
     [string]$ComposeFile = (Join-Path $PSScriptRoot "..\docker-compose.local.yml"),
     [switch]$SkipOpenBrowser
@@ -163,6 +164,7 @@ function Set-ConfigValue {
     Set-Content -Path $FilePath -Value $lines
 }
 
+<<<<<<< HEAD
 function Test-IsPrivateLanIpv4 {
     param([string]$IpAddress)
 
@@ -194,10 +196,13 @@ function Test-IsVirtualAdapter {
     return $false
 }
 
+=======
+>>>>>>> feature/cambios-generales
 function Get-LocalIpv4Addresses {
     $addresses = @()
 
     try {
+<<<<<<< HEAD
         $addresses = Get-NetIPConfiguration -ErrorAction Stop |
             Where-Object {
                 $_.IPv4Address -and
@@ -212,6 +217,16 @@ function Get-LocalIpv4Addresses {
                 (Test-IsPrivateLanIpv4 -IpAddress $_)
             } |
             Select-Object -Unique
+=======
+        $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object {
+                $_.IPAddress -and
+                $_.IPAddress -ne '127.0.0.1' -and
+                $_.IPAddress -ne '0.0.0.0' -and
+                -not $_.IPAddress.StartsWith('169.254.')
+            } |
+            Select-Object -ExpandProperty IPAddress -Unique
+>>>>>>> feature/cambios-generales
     } catch {
         $addresses = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
             Where-Object { $_.IPEnabled -and $_.IPAddress } |
@@ -220,8 +235,12 @@ function Get-LocalIpv4Addresses {
                 $_ -match '^(\d{1,3}\.){3}\d{1,3}$' -and
                 $_ -ne '127.0.0.1' -and
                 $_ -ne '0.0.0.0' -and
+<<<<<<< HEAD
                 -not $_.StartsWith('169.254.') -and
                 (Test-IsPrivateLanIpv4 -IpAddress $_)
+=======
+                -not $_.StartsWith('169.254.')
+>>>>>>> feature/cambios-generales
             } |
             Select-Object -Unique
     }
@@ -238,9 +257,13 @@ function Get-PrimaryLanIpv4 {
                 $_.IPv4Address.IPAddress -and
                 $_.IPv4Address.IPAddress -ne '127.0.0.1' -and
                 $_.IPv4Address.IPAddress -ne '0.0.0.0' -and
+<<<<<<< HEAD
                 -not $_.IPv4Address.IPAddress.StartsWith('169.254.') -and
                 (Test-IsPrivateLanIpv4 -IpAddress $_.IPv4Address.IPAddress) -and
                 -not (Test-IsVirtualAdapter -Alias $_.InterfaceAlias -Description $_.InterfaceDescription)
+=======
+                -not $_.IPv4Address.IPAddress.StartsWith('169.254.')
+>>>>>>> feature/cambios-generales
             } |
             Select-Object -First 1
 

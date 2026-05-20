@@ -38,6 +38,7 @@ Every functional change committed to `cambios-generales` must be propagated to *
 - First propagate functional commits to Railway branch, then push that Railway branch to trigger CI/CD.
 - If a commit was pushed from the wrong branch by mistake, cherry-pick it into Railway branch and redeploy from Railway.
 
+<<<<<<< HEAD
 ## Change classification (must decide before committing)
 Use this table to avoid ambiguity:
 
@@ -58,6 +59,8 @@ Before saying a fix is complete:
 5. Report branch hashes in the final update.
 6. Do not leave the main user-reported issue pending. If blocked by missing access/config, explicitly ask the user and stop only after confirmation.
 
+=======
+>>>>>>> feature/cambios-generales
 ## What lives only on specific branches
 | Concern | Branch |
 |---|---|
