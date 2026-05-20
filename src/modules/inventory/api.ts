@@ -387,8 +387,10 @@ export async function importInventoryProductsBulkWithChunking(
   let totalCreated = 0;
   let totalUpdated = 0;
   let totalSkipped = 0;
+  let totalStockApplied = 0;
+  let totalStockSkipped = 0;
   let allErrors: Array<{ row: number; message: string }> = [];
-  let lastBatchId: number | null = null;
+  let lastBatchId = 0;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -399,6 +401,8 @@ export async function importInventoryProductsBulkWithChunking(
     totalCreated += result.summary.created;
     totalUpdated += result.summary.updated;
     totalSkipped += result.summary.skipped;
+    totalStockApplied += result.summary.stock_applied ?? 0;
+    totalStockSkipped += result.summary.stock_skipped ?? 0;
     allErrors = allErrors.concat(result.errors);
     if (result.batch_id) {
       lastBatchId = result.batch_id;
@@ -411,12 +415,15 @@ export async function importInventoryProductsBulkWithChunking(
   }
 
   return {
+    message: 'Importación masiva procesada.',
     summary: {
+      total: rows.length,
       created: totalCreated,
       updated: totalUpdated,
       skipped: totalSkipped,
-      stock_applied: 0,
-      stock_skipped: 0,
+      errors: allErrors.length,
+      stock_applied: totalStockApplied,
+      stock_skipped: totalStockSkipped,
     },
     errors: allErrors,
     batch_id: lastBatchId,
