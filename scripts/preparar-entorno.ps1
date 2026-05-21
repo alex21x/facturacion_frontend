@@ -299,7 +299,7 @@ function Apply-InstallerDockerOverrides {
     )
 
     foreach ($item in $frontendOverrides) {
-        if (Test-Path $item.From) {
+        if ((Test-Path $item.From) -and -not (Test-Path $item.To)) {
             Copy-Item -Path $item.From -Destination $item.To -Force
         }
     }
@@ -310,7 +310,10 @@ function Apply-InstallerDockerOverrides {
             New-Item -ItemType Directory -Path $targetScriptsDir -Force | Out-Null
         }
 
-        Copy-Item -Path $installerSetupScript -Destination (Join-Path $targetScriptsDir 'setup-local.ps1') -Force
+        $targetSetupScript = Join-Path $targetScriptsDir 'setup-local.ps1'
+        if (-not (Test-Path $targetSetupScript)) {
+            Copy-Item -Path $installerSetupScript -Destination $targetSetupScript -Force
+        }
     }
 
     $backendOverrides = @(
@@ -319,7 +322,7 @@ function Apply-InstallerDockerOverrides {
     )
 
     foreach ($item in $backendOverrides) {
-        if (Test-Path $item.From) {
+        if ((Test-Path $item.From) -and -not (Test-Path $item.To)) {
             Copy-Item -Path $item.From -Destination $item.To -Force
         }
     }
