@@ -489,6 +489,13 @@ function Ensure-UbuntuInWSL2 {
         return $false
     }
 
+    # Primary check: if distro 'Ubuntu' can start, skip installation flow.
+    wsl -d Ubuntu -e sh -lc "exit 0" >$null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Ubuntu en WSL2 detectado y operativo." -ForegroundColor Green
+        return $true
+    }
+
     $ubuntuDistributions = @(wsl --list --quiet 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^(?i)Ubuntu($|[- ].*)' })
     if ($ubuntuDistributions.Count -gt 0) {
         Write-Host "Ubuntu en WSL2 detectado: $($ubuntuDistributions -join ', ')." -ForegroundColor Green
@@ -506,6 +513,14 @@ function Ensure-UbuntuInWSL2 {
     $installText = ($installOutput | Out-String)
     if ($installText -match '(?i)ERROR_ALREADY_EXISTS|already exists|Ya existe una distribuci') {
         Write-Host "Ubuntu ya existia en WSL2; se continuara con esa instalacion." -ForegroundColor Yellow
+        return $true
+    }
+
+    # Fallback check: even if localized output is not parsed as expected,
+    # continue when Ubuntu can be launched after the install attempt.
+    wsl -d Ubuntu -e sh -lc "exit 0" >$null 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Ubuntu ya estaba disponible en WSL2; se continuara con esa instalacion." -ForegroundColor Yellow
         return $true
     }
 
