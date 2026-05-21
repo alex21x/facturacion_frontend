@@ -489,9 +489,9 @@ function Ensure-UbuntuInWSL2 {
         return $false
     }
 
-    $ubuntuExists = wsl -l -v 2>$null | Select-String "Ubuntu"
-    if ($ubuntuExists) {
-        Write-Host "Ubuntu en WSL2 detectado." -ForegroundColor Green
+    $ubuntuDistributions = @(wsl --list --quiet 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^(?i)Ubuntu($|[- ].*)' })
+    if ($ubuntuDistributions.Count -gt 0) {
+        Write-Host "Ubuntu en WSL2 detectado: $($ubuntuDistributions -join ', ')." -ForegroundColor Green
         return $true
     }
 
@@ -506,6 +506,12 @@ function Ensure-UbuntuInWSL2 {
     $installText = ($installOutput | Out-String)
     if ($installText -match '(?i)ERROR_ALREADY_EXISTS|already exists|Ya existe una distribuci') {
         Write-Host "Ubuntu ya existia en WSL2; se continuara con esa instalacion." -ForegroundColor Yellow
+        return $true
+    }
+
+    $ubuntuDistributions = @(wsl --list --quiet 2>$null | ForEach-Object { $_.Trim() } | Where-Object { $_ -match '^(?i)Ubuntu($|[- ].*)' })
+    if ($ubuntuDistributions.Count -gt 0) {
+        Write-Host "Ubuntu ya estaba registrado en WSL2: $($ubuntuDistributions -join ', ')." -ForegroundColor Yellow
         return $true
     }
 

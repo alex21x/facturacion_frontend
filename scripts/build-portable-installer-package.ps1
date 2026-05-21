@@ -2,6 +2,8 @@ param(
     [string]$OutputRoot = (Join-Path (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path "facturacion_instalador_portable")
 )
 
+$ErrorActionPreference = 'Stop'
+
 $frontendRoot = Resolve-Path (Join-Path $PSScriptRoot "..") -ErrorAction SilentlyContinue
 if (-not $frontendRoot) {
     throw "No se encontro la carpeta frontend actual."
@@ -33,7 +35,28 @@ function Copy-PayloadFile {
         New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
     }
 
-    Copy-Item -Path $From -Destination $To -Force
+    Copy-Item -Path $From -Destination $To -Force -ErrorAction Stop
+
+    $copiedFile = Get-Item -Path $To -ErrorAction Stop
+    if ($copiedFile.Length -le 0) {
+        throw "Archivo payload copiado con tamano invalido: $To"
+    }
+}
+
+function Assert-RequiredFileCopied {
+    param(
+        [string]$Path,
+        [string]$Label
+    )
+
+    if (-not (Test-Path $Path)) {
+        throw "No se encontro el archivo requerido en el paquete portable: $Label ($Path)"
+    }
+
+    $fileInfo = Get-Item -Path $Path -ErrorAction Stop
+    if ($fileInfo.Length -le 0) {
+        throw "El archivo requerido quedo vacio en el paquete portable: $Label ($Path)"
+    }
 }
 
 $trackedScripts = @(
@@ -55,7 +78,7 @@ $trackedScripts = @(
 )
 
 if (Test-Path $OutputRoot) {
-    Remove-Item -Path $OutputRoot -Recurse -Force
+    Remove-Item -Path $OutputRoot -Recurse -Force -ErrorAction Stop
 }
 
 New-Item -ItemType Directory -Path $portableScripts -Force | Out-Null
@@ -69,7 +92,9 @@ foreach ($scriptName in $trackedScripts) {
         throw "Falta script requerido para el paquete portable: $scriptName"
     }
 
-    Copy-Item -Path $sourceScript -Destination (Join-Path $portableScripts $scriptName) -Force
+    $destinationScript = Join-Path $portableScripts $scriptName
+    Copy-Item -Path $sourceScript -Destination $destinationScript -Force -ErrorAction Stop
+    Assert-RequiredFileCopied -Path $destinationScript -Label "scripts/$scriptName"
 }
 
 # Keep payload minimal: only files used by Apply-InstallerDockerOverrides and
@@ -99,7 +124,9 @@ if (-not (Test-Path $cleanupSqlSource)) {
     throw 'Falta el SQL de limpieza transaccional en facturacion_backend\database\sql\clean_transactional_operational.sql'
 }
 
-Copy-Item -Path $cleanupSqlSource -Destination (Join-Path $portableDatabaseSql 'clean_transactional_operational.sql') -Force
+$cleanupSqlTarget = Join-Path $portableDatabaseSql 'clean_transactional_operational.sql'
+Copy-Item -Path $cleanupSqlSource -Destination $cleanupSqlTarget -Force -ErrorAction Stop
+Assert-RequiredFileCopied -Path $cleanupSqlTarget -Label 'database/sql/clean_transactional_operational.sql'
 
 $launcher = Join-Path $OutputRoot "INSTALAR-FACTURACION.bat"
 Set-Content -Path $launcher -Value @(
@@ -136,6 +163,17 @@ Set-Content -Path $cleaner -Value @(
     'call "%~dp0scripts\limpiar-transaccionales-local.bat"',
     'exit /b %errorlevel%'
 )
+
+$requiredLaunchers = @(
+    (Join-Path $OutputRoot 'INSTALAR-FACTURACION.bat'),
+    (Join-Path $OutputRoot 'ACTUALIZAR-FACTURACION.bat'),
+    (Join-Path $OutputRoot 'DESINSTALAR-FACTURACION.bat'),
+    (Join-Path $OutputRoot 'LIMPIAR-TRANSACCIONALES.bat')
+)
+
+foreach ($launcherPath in $requiredLaunchers) {
+    Assert-RequiredFileCopied -Path $launcherPath -Label (Split-Path -Path $launcherPath -Leaf)
+}
 
 Write-Host "Paquete portable generado correctamente." -ForegroundColor Green
 Write-Host "Ruta: $OutputRoot" -ForegroundColor Green

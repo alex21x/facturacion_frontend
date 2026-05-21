@@ -290,6 +290,7 @@ function Apply-InstallerDockerOverrides {
 
     $installerPayloadFrontend = Join-Path $installerRoot.Path "payload\facturacion_frontend"
     $installerPayloadBackend = Join-Path $installerRoot.Path "payload\facturacion_backend"
+    $installerSetupScript = Join-Path $InstallerScriptsPath 'setup-local.ps1'
 
     $frontendOverrides = @(
         @{ From = (Join-Path $installerPayloadFrontend 'docker-compose.local.yml'); To = (Join-Path $TargetFrontendPath 'docker-compose.local.yml') },
@@ -301,6 +302,15 @@ function Apply-InstallerDockerOverrides {
         if (Test-Path $item.From) {
             Copy-Item -Path $item.From -Destination $item.To -Force
         }
+    }
+
+    if (Test-Path $installerSetupScript) {
+        $targetScriptsDir = Join-Path $TargetFrontendPath 'scripts'
+        if (-not (Test-Path $targetScriptsDir)) {
+            New-Item -ItemType Directory -Path $targetScriptsDir -Force | Out-Null
+        }
+
+        Copy-Item -Path $installerSetupScript -Destination (Join-Path $targetScriptsDir 'setup-local.ps1') -Force
     }
 
     $backendOverrides = @(
@@ -316,6 +326,7 @@ function Apply-InstallerDockerOverrides {
 
     Convert-FileToLf -Path (Join-Path $TargetFrontendPath 'docker-entrypoint.frontend.sh')
     Convert-FileToLf -Path (Join-Path $TargetFrontendPath 'docker-entrypoint.admin.sh')
+    Convert-FileToLf -Path (Join-Path $TargetFrontendPath 'scripts\setup-local.ps1')
     Convert-FileToLf -Path (Join-Path $TargetBackendPath 'docker\entrypoint.local.sh')
     Ensure-ComposeCompatibility -ComposePath (Join-Path $TargetFrontendPath 'docker-compose.local.yml')
 }
@@ -344,6 +355,84 @@ function Resolve-InstallScriptPath {
     }
 
     return $null
+}
+
+function Test-IsAntivirusBlockedExecution {
+    param(
+        [System.Exception]$Exception
+    )
+
+    if (-not $Exception) {
+        return $false
+    }
+
+    $errorText = $Exception.ToString()
+    return $errorText -match '(?i)contains a virus|potentially unwanted software|archivo contiene un virus|software potencialmente no deseado'
+}
+
+function Invoke-InstallScriptWithFallback {
+    param(
+        [string]$PrimaryInstallScript,
+        [hashtable]$InstallParams,
+        [string]$ClonedFrontendPath
+    )
+
+    $candidateScripts = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($PrimaryInstallScript) -and (Test-Path $PrimaryInstallScript)) {
+        $candidateScripts += $PrimaryInstallScript
+    }
+
+    $clonedInstallScript = Join-Path $ClonedFrontendPath 'scripts\setup-local.ps1'
+    if ((Test-Path $clonedInstallScript) -and ($candidateScripts -notcontains $clonedInstallScript)) {
+        $candidateScripts += $clonedInstallScript
+    }
+
+    foreach ($candidate in $candidateScripts) {
+        try {
+            Unblock-File -Path $candidate -ErrorAction SilentlyContinue
+            Write-Host "Ejecutando instalador principal..." -ForegroundColor Cyan
+            & $candidate @InstallParams
+            if ($LASTEXITCODE -ne 0) {
+                throw "La instalacion principal fallo."
+            }
+
+            return
+        }
+        catch {
+            if (-not (Test-IsAntivirusBlockedExecution -Exception $_.Exception)) {
+                throw
+            }
+
+            Write-Host "Windows bloqueo la ejecucion de: $candidate" -ForegroundColor Yellow
+        }
+    }
+
+    if ($candidateScripts.Count -eq 0) {
+        throw "No se encontro un script instalador ejecutable."
+    }
+
+    $tempScript = Join-Path $env:TEMP ("facturacion_setup_{0}.ps1" -f ([Guid]::NewGuid().ToString('N')))
+    try {
+        Copy-Item -Path $candidateScripts[0] -Destination $tempScript -Force -ErrorAction Stop
+        Unblock-File -Path $tempScript -ErrorAction SilentlyContinue
+
+        Write-Host "Reintentando instalador desde carpeta temporal..." -ForegroundColor Yellow
+        & $tempScript @InstallParams
+        if ($LASTEXITCODE -ne 0) {
+            throw "La instalacion principal fallo."
+        }
+    }
+    catch {
+        if (Test-IsAntivirusBlockedExecution -Exception $_.Exception) {
+            throw "Windows Defender bloqueo setup-local.ps1. Agrega una exclusion temporal para la carpeta del instalador y para %TEMP%, o restaura el archivo desde Cuarentena y reintenta."
+        }
+
+        throw
+    }
+    finally {
+        Remove-Item -Path $tempScript -Force -ErrorAction SilentlyContinue
+    }
 }
 
 $resolvedInstallRoot = Get-PreferredInstallRoot -InstallRootOverride $InstallRoot
@@ -406,10 +495,7 @@ if ($PSBoundParameters.ContainsKey('EnableLanAccess')) {
 }
 
 Write-Host "Ejecutando instalador principal..." -ForegroundColor Cyan
-& $installScript @installParams
-if ($LASTEXITCODE -ne 0) {
-    throw "La instalacion principal fallo."
-}
+Invoke-InstallScriptWithFallback -PrimaryInstallScript $installScript -InstallParams $installParams -ClonedFrontendPath $targetFrontendRoot
 
 Write-Host ""
 Write-Host "INSTALACION GUIADA COMPLETADA" -ForegroundColor Green
