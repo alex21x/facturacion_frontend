@@ -761,23 +761,18 @@ $allowNetworkAccess = $false
 if ($NonInteractive) {
     $allowNetworkAccess = $EnableLanAccess.IsPresent
 } else {
-    Write-Host "
-" -ForegroundColor White
+    Write-Host "" -ForegroundColor White
     Write-Host "======================================" -ForegroundColor Yellow
     Write-Host "  ACCESO REMOTO" -ForegroundColor Yellow
     Write-Host "======================================" -ForegroundColor Yellow
-    Write-Host "
-" -ForegroundColor White
-    Write-Host "┬┐Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
-    Write-Host "
-" -ForegroundColor White
+    Write-Host "" -ForegroundColor White
+    Write-Host "Deseas permitir acceso desde otras PCs en la red?" -ForegroundColor Cyan
+    Write-Host "" -ForegroundColor White
     Write-Host "  [s] Si  - Accesible desde cualquier PC de la red" -ForegroundColor Green
     Write-Host "          (puertos abiertos: backend 8000, frontend 5173, admin 5174)" -ForegroundColor DarkGray
-    Write-Host "
-" -ForegroundColor White
-    Write-Host "  [n] No - Solo accesible localmente en esta PC (m├ís seguro)" -ForegroundColor Yellow
-    Write-Host "
-" -ForegroundColor White
+    Write-Host "" -ForegroundColor White
+    Write-Host "  [n] No - Solo accesible localmente en esta PC (mas seguro)" -ForegroundColor Yellow
+    Write-Host "" -ForegroundColor White
     $choice = Read-Host "Opcion"
     if ($choice -eq 's' -or $choice -eq 'S') { $allowNetworkAccess = $true }
 }
