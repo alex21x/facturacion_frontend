@@ -769,6 +769,12 @@ function Ensure-DockerAvailable {
         Write-Host "Docker CLI no esta disponible en Windows." -ForegroundColor Yellow
     }
 
+    if (Test-DockerViaWSL2) {
+        $global:DOCKER_WSL2_MODE = $true
+        Write-Host "Docker en WSL2 ya esta operativo." -ForegroundColor Green
+        return
+    }
+
     Write-Host "Instalacion ligera por defecto: Docker Engine en WSL2 (sin Docker Desktop)." -ForegroundColor Cyan
 
     Enable-WSL2
