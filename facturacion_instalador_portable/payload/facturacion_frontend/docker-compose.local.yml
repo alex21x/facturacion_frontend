@@ -12,6 +12,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   pgadmin:
     image: dpage/pgadmin4:8
@@ -63,6 +64,7 @@ services:
       - backend_vendor:/var/www/html/vendor
       - backend_storage_app:/var/www/html/storage/app
       - backend_storage_logs:/var/www/html/storage/logs
+    restart: unless-stopped
 
   frontend:
     image: node:22-alpine
@@ -84,6 +86,7 @@ services:
     volumes:
       - .:/app
       - frontend_node_modules:/app/node_modules
+    restart: unless-stopped
 
   admin:
     image: node:22-alpine
@@ -106,6 +109,7 @@ services:
     volumes:
       - .:/app
       - admin_node_modules:/app/node_modules
+    restart: unless-stopped
 
 volumes:
   postgres_data:

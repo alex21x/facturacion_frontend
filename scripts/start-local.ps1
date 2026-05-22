@@ -166,6 +166,53 @@ function Enable-DockerWslProxy {
     }
 }
 
+function Test-IsAdministrator {
+    $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-WslPrimaryIpv4 {
+    $ip = wsl -d Ubuntu -u root -e sh -lc "hostname -I 2>/dev/null | cut -d' ' -f1" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+
+    $resolved = ($ip | Out-String).Trim()
+    if ([string]::IsNullOrWhiteSpace($resolved)) {
+        return $null
+    }
+
+    return $resolved
+}
+
+function Ensure-WslLocalhostPortProxy {
+    param([int[]]$Ports)
+
+    if (-not $script:DOCKER_WSL2_MODE) {
+        return
+    }
+
+    if (-not (Test-IsAdministrator)) {
+        Write-Host 'ADVERTENCIA: No se pudo aplicar puente WSL->127.0.0.1 porque PowerShell no tiene permisos de Administrador.' -ForegroundColor Yellow
+        return
+    }
+
+    $wslIp = Get-WslPrimaryIpv4
+    if ([string]::IsNullOrWhiteSpace($wslIp)) {
+        Write-Host 'ADVERTENCIA: No se pudo detectar IP de WSL para configurar portproxy.' -ForegroundColor Yellow
+        return
+    }
+
+    foreach ($port in $Ports) {
+        netsh interface portproxy delete v4tov4 listenaddress=127.0.0.1 listenport=$port | Out-Null
+        netsh interface portproxy add v4tov4 listenaddress=127.0.0.1 listenport=$port connectaddress=$wslIp connectport=$port protocol=tcp | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "ADVERTENCIA: No se pudo crear portproxy para 127.0.0.1:${port} -> ${wslIp}:${port}" -ForegroundColor Yellow
+        }
+    }
+}
+
 function Get-ConfigValue {
     param(
         [string]$FilePath,
@@ -390,6 +437,10 @@ docker compose @composeArgs up -d
 
 if ($LASTEXITCODE -ne 0) {
     throw "No se pudo levantar el sistema local."
+}
+
+if ($script:DOCKER_WSL2_MODE -and $dockerBindHost -eq '127.0.0.1') {
+    Ensure-WslLocalhostPortProxy -Ports @([int]$backendPort, [int]$frontendPort, [int]$adminPort, [int]$pgadminPort)
 }
 
 $frontendUrl = "http://${displayHost}:${frontendPort}"

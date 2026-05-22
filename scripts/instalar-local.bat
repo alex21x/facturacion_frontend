@@ -1,6 +1,14 @@
 @echo off
 setlocal
 
+net session >nul 2>&1
+if not "%errorlevel%"=="0" (
+  echo.
+  echo Solicitando permisos de Administrador...
+  PowerShell -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
+
 set "SCRIPT_DIR=%~dp0"
 set "ROOT_DIR=%SCRIPT_DIR%.."
 set "PREPARAR_PS1=%SCRIPT_DIR%preparar-entorno.ps1"
@@ -12,6 +20,7 @@ if exist "%PREPARAR_PS1%" (
   echo.
   echo Preparando entorno local ^(Git frontend/backend + Docker^) ...
   echo.
+  PowerShell -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -Path '%ROOT_DIR%' -Recurse -File | ForEach-Object { Unblock-File -Path $_.FullName -ErrorAction SilentlyContinue }" >nul 2>&1
   PowerShell -NoProfile -ExecutionPolicy Bypass -File "%PREPARAR_PS1%" -ScriptsDir "%SCRIPT_DIR%"
   if errorlevel 1 (
     echo.
