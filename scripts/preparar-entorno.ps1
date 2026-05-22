@@ -131,7 +131,39 @@ function Ensure-Repository {
     }
 
     if (Test-Path $TargetPath) {
-        Remove-Item -Path $TargetPath -Recurse -Force
+        try {
+            Remove-Item -Path $TargetPath -Recurse -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Host "No se pudo limpiar $TargetPath. Intentando recuperacion en la carpeta existente..." -ForegroundColor Yellow
+
+            git -C $TargetPath init --quiet 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                if (Test-IsAntivirusBlockedExecution -Exception $_.Exception) {
+                    throw "Windows Defender bloqueo la limpieza de $TargetPath. Agrega exclusion temporal para $TargetPath y vuelve a ejecutar."
+                }
+
+                throw "No se pudo limpiar ni inicializar $TargetPath para $Name. Error: $($_.Exception.Message)"
+            }
+
+            git -C $TargetPath remote remove origin 2>&1 | Out-Null
+            git -C $TargetPath remote add origin $RepoUrl 2>&1 | Out-Null
+
+            foreach ($branch in $normalizedCandidates) {
+                git -C $TargetPath fetch --prune --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    continue
+                }
+
+                git -C $TargetPath checkout -q -B $branch "origin/$branch" 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Rama activa tras recuperacion: $branch" -ForegroundColor Green
+                    return
+                }
+            }
+
+            throw "No se pudo recuperar $Name en carpeta existente. Revisa exclusion antivirus y permisos en $TargetPath."
+        }
     }
 
     foreach ($branch in $normalizedCandidates) {
@@ -144,6 +176,30 @@ function Ensure-Repository {
         if (Test-Path $TargetPath) {
             Remove-Item -Path $TargetPath -Recurse -Force -ErrorAction SilentlyContinue
         }
+    }
+
+    if (Test-Path $TargetPath) {
+        Remove-Item -Path $TargetPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host "Reintentando clon de $Name sin rama fija..." -ForegroundColor Yellow
+    git clone --quiet $RepoUrl $TargetPath 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        foreach ($branch in $normalizedCandidates) {
+            git -C $TargetPath fetch --prune --quiet origin "refs/heads/$branch:refs/remotes/origin/$branch" 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                continue
+            }
+
+            git -C $TargetPath checkout -q -B $branch "origin/$branch" 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "Rama activa tras clon fallback: $branch" -ForegroundColor Green
+                return
+            }
+        }
+
+        Write-Host "Clonado $Name con rama por defecto del remoto." -ForegroundColor Yellow
+        return
     }
 
     throw "No se pudo clonar $Name desde $RepoUrl en ninguna rama candidata: $($normalizedCandidates -join ', ')."
@@ -439,17 +495,62 @@ function Invoke-InstallScriptWithFallback {
 }
 
 $resolvedInstallRoot = Get-PreferredInstallRoot -InstallRootOverride $InstallRoot
-$targetFrontendRoot = Join-Path $resolvedInstallRoot "facturacion_frontend"
-$targetBackendRoot = Join-Path $resolvedInstallRoot "facturacion_backend"
 
-Write-Host "Preparando arquitectura en: $resolvedInstallRoot" -ForegroundColor Cyan
-New-Item -ItemType Directory -Path $resolvedInstallRoot -Force | Out-Null
+$candidateInstallRoots = @($resolvedInstallRoot)
+if ([string]::IsNullOrWhiteSpace($InstallRoot) -and ($resolvedInstallRoot -ieq "D:\FacturacionLocal")) {
+    $candidateInstallRoots += "C:\FacturacionLocal"
+    $candidateInstallRoots += ("C:\FacturacionLocal_{0}" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+}
 
 Ensure-GitAvailable
-Ensure-Repository -TargetPath $targetFrontendRoot -RepoUrl $FrontendRepoUrl -BranchCandidates @($FrontendBranch, "feature/docker-multientorno", "docker-multi-entorno") -Name "frontend"
-Ensure-Repository -TargetPath $targetBackendRoot -RepoUrl $BackendRepoUrl -BranchCandidates @($BackendBranch, "feature/docker-multientorno", "docker-multi-entorno") -Name "backend"
-Ensure-FrontendDockerBranch -FrontendPath $targetFrontendRoot -CandidateBranches @($FrontendBranch, "feature/docker-multientorno", "docker-multi-entorno")
-Ensure-BackendDockerBranch -BackendPath $targetBackendRoot -CandidateBranches @($BackendBranch, "feature/docker-multientorno", "docker-multi-entorno")
+
+$targetFrontendRoot = $null
+$targetBackendRoot = $null
+$prepareError = $null
+$uniqueCandidateRoots = $candidateInstallRoots | Select-Object -Unique
+
+for ($idx = 0; $idx -lt $uniqueCandidateRoots.Count; $idx++) {
+    $candidateRoot = $uniqueCandidateRoots[$idx]
+    try {
+        Write-Host "Preparando arquitectura en: $candidateRoot" -ForegroundColor Cyan
+        New-Item -ItemType Directory -Path $candidateRoot -Force | Out-Null
+
+        $candidateFrontendRoot = Join-Path $candidateRoot "facturacion_frontend"
+        $candidateBackendRoot = Join-Path $candidateRoot "facturacion_backend"
+
+        Ensure-Repository -TargetPath $candidateFrontendRoot -RepoUrl $FrontendRepoUrl -BranchCandidates @($FrontendBranch, "feature/docker-multientorno", "docker-multi-entorno") -Name "frontend"
+        Ensure-Repository -TargetPath $candidateBackendRoot -RepoUrl $BackendRepoUrl -BranchCandidates @($BackendBranch, "feature/docker-multientorno", "docker-multi-entorno") -Name "backend"
+        Ensure-FrontendDockerBranch -FrontendPath $candidateFrontendRoot -CandidateBranches @($FrontendBranch, "feature/docker-multientorno", "docker-multi-entorno")
+        Ensure-BackendDockerBranch -BackendPath $candidateBackendRoot -CandidateBranches @($BackendBranch, "feature/docker-multientorno", "docker-multi-entorno")
+
+        # Force LF for shell scripts that are bind-mounted at runtime.
+        Convert-FileToLf -Path (Join-Path $candidateFrontendRoot 'docker-entrypoint.frontend.sh')
+        Convert-FileToLf -Path (Join-Path $candidateFrontendRoot 'docker-entrypoint.admin.sh')
+        Convert-FileToLf -Path (Join-Path $candidateFrontendRoot 'scripts\setup-local.ps1')
+        Convert-FileToLf -Path (Join-Path $candidateBackendRoot 'docker\entrypoint.local.sh')
+        Ensure-ComposeCompatibility -ComposePath (Join-Path $candidateFrontendRoot 'docker-compose.local.yml')
+
+        $resolvedInstallRoot = $candidateRoot
+        $targetFrontendRoot = $candidateFrontendRoot
+        $targetBackendRoot = $candidateBackendRoot
+        $prepareError = $null
+        break
+    }
+    catch {
+        $prepareError = $_
+        if ($idx -lt ($uniqueCandidateRoots.Count - 1)) {
+            $nextRoot = $uniqueCandidateRoots[$idx + 1]
+            Write-Host "No se pudo preparar $candidateRoot. Reintentando automaticamente en $nextRoot..." -ForegroundColor Yellow
+            continue
+        }
+
+        throw
+    }
+}
+
+if ($prepareError -and (-not $targetFrontendRoot -or -not $targetBackendRoot)) {
+    throw $prepareError
+}
 
 $resolvedScriptsDir = if (-not [string]::IsNullOrWhiteSpace($PSScriptRoot)) {
     $PSScriptRoot
