@@ -354,6 +354,39 @@ function Invoke-ComposePostgresSqlFile {
     docker compose @ComposeArgs exec -T postgres rm -f /tmp/runtime-script.sql | Out-Null
 }
 
+function Test-BackendRuntimeReady {
+    param(
+        [string[]]$ComposeArgs
+    )
+
+    docker compose @ComposeArgs exec -T backend php -v >$null 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
+function Wait-BackendRuntimeReady {
+    param(
+        [string[]]$ComposeArgs,
+        [int]$MaxAttempts = 60,
+        [int]$DelaySeconds = 3
+    )
+
+    docker compose @ComposeArgs up -d backend >$null 2>&1
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        if (Test-BackendRuntimeReady -ComposeArgs $ComposeArgs) {
+            return $true
+        }
+
+        if (($attempt % 5) -eq 0) {
+            Write-Host "Backend aun no responde (intento $attempt/$MaxAttempts)." -ForegroundColor Yellow
+        }
+
+        Start-Sleep -Seconds $DelaySeconds
+    }
+
+    return $false
+}
+
 function Resolve-TransactionalCleanupSqlPath {
     param(
         [string]$FrontendRoot,
@@ -1029,32 +1062,8 @@ if ($dockerBindHost -eq '0.0.0.0') {
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
-    $backendReady = $false
-    for ($backendAttempt = 1; $backendAttempt -le 15; $backendAttempt++) {
-        $backendPs = docker compose @composeArgs ps --format json backend 2>$null
-        $backendState = $null
-        if ($backendPs) {
-            $backendState = $backendPs | ConvertFrom-Json -ErrorAction SilentlyContinue
-        }
-
-        if ($backendState -and $backendState.State -eq 'running') {
-            $backendReady = $true
-            break
-        }
-
-        if ($backendAttempt -eq 1) {
-            Write-Host 'Backend no esta en running. Intentando recuperacion automatica sin rebuild...' -ForegroundColor Yellow
-        }
-
-        docker compose @composeArgs up -d backend 2>&1 | ForEach-Object {
-            Write-Host $_ -ForegroundColor DarkGray
-            Append-InstallLog $_
-        }
-
-        Write-Host "Esperando backend en running (intento $backendAttempt/15)..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 2
-    }
-
+    Write-Host 'Verificando disponibilidad real del backend...' -ForegroundColor Cyan
+    $backendReady = Wait-BackendRuntimeReady -ComposeArgs $composeArgs -MaxAttempts 60 -DelaySeconds 3
     if (-not $backendReady) {
         Write-Host 'Backend sigue sin running. Ultimos logs del backend:' -ForegroundColor Red
         docker compose @composeArgs logs --tail=120 backend 2>&1 | ForEach-Object {
@@ -1085,9 +1094,17 @@ if ($runMigrations -eq 'true') {
     Write-Host 'Aplicando migraciones...' -ForegroundColor Cyan
     $ok = $false
     for ($attempt=1; $attempt -le 20; $attempt++) {
+        if (-not (Test-BackendRuntimeReady -ComposeArgs $composeArgs)) {
+            if (($attempt % 4) -eq 0) {
+                docker compose @composeArgs up -d backend | Out-Null
+            }
+            Write-Host "Backend aun no responde para migrar (intento $attempt/20)..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 3
+            continue
+        }
+
         docker compose @composeArgs exec -T backend php artisan migrate --force
         if ($LASTEXITCODE -eq 0) { $ok = $true; break }
-        docker compose @composeArgs up -d backend | Out-Null
         Write-Host "Esperando backend para migrar (intento $attempt/20)..." -ForegroundColor Yellow
         Start-Sleep -Seconds 3
     }
