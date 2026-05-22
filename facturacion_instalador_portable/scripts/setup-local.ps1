@@ -5,6 +5,9 @@
     [switch]$EnableLanAccess
 )
 
+$script:SETUP_VERSION = '2026-05-22-e55c549-r2'
+Write-Host ("Setup local version: {0}" -f $script:SETUP_VERSION) -ForegroundColor Cyan
+
 function Get-ConfigValue {
     param([string]$FilePath,[string]$Key,[string]$DefaultValue)
     if (-not (Test-Path $FilePath)) { return $DefaultValue }
@@ -910,6 +913,8 @@ function Append-InstallLog {
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     Add-Content -Path $installLog -Value ("[$timestamp] $Message")
 }
+
+Append-InstallLog ("setup-local version: {0}" -f $script:SETUP_VERSION)
 
 $composeVersion = docker compose version 2>&1
 if ($LASTEXITCODE -ne 0) {
