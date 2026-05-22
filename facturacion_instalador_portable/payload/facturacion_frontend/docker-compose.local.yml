@@ -72,7 +72,7 @@ services:
       - -lc
       - sed -i 's/\r$//' /app/docker-entrypoint.frontend.sh; exec sh /app/docker-entrypoint.frontend.sh
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+      VITE_API_BASE_URL: ""
       VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
       DOCKER_BIND_HOST: ${DOCKER_BIND_HOST:-127.0.0.1}
       VITE_HOST: 0.0.0.0
@@ -93,7 +93,7 @@ services:
       - -lc
       - sed -i 's/\r$//' /app/docker-entrypoint.admin.sh; exec sh /app/docker-entrypoint.admin.sh
     environment:
-      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+      VITE_API_BASE_URL: ""
       VITE_BACKEND_PORT: ${BACKEND_PORT:-8000}
       DOCKER_BIND_HOST: ${DOCKER_BIND_HOST:-127.0.0.1}
       VITE_HOST: 0.0.0.0

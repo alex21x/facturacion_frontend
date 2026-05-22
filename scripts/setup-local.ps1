@@ -1018,33 +1018,39 @@ if ($dockerBindHost -eq '0.0.0.0') {
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
-    $backendPs = docker compose @composeArgs ps --format json backend 2>$null
-    $backendState = $null
-    if ($backendPs) {
-        $backendState = $backendPs | ConvertFrom-Json -ErrorAction SilentlyContinue
-    }
-
-    if (-not $backendState -or $backendState.State -ne 'running') {
-        Write-Host 'Backend no esta en running. Intentando recuperacion automatica...' -ForegroundColor Yellow
-        docker compose @composeArgs up -d --build backend 2>&1 | ForEach-Object {
-            Write-Host $_ -ForegroundColor DarkGray
-            Append-InstallLog $_
-        }
-
+    $backendReady = $false
+    for ($backendAttempt = 1; $backendAttempt -le 15; $backendAttempt++) {
         $backendPs = docker compose @composeArgs ps --format json backend 2>$null
         $backendState = $null
         if ($backendPs) {
             $backendState = $backendPs | ConvertFrom-Json -ErrorAction SilentlyContinue
         }
 
-        if (-not $backendState -or $backendState.State -ne 'running') {
-            Write-Host 'Backend sigue sin running. Ultimos logs del backend:' -ForegroundColor Red
-            docker compose @composeArgs logs --tail=120 backend 2>&1 | ForEach-Object {
-                Write-Host $_ -ForegroundColor DarkYellow
-                Append-InstallLog $_
-            }
-            throw 'No se pudo dejar backend en running antes de aplicar migraciones.'
+        if ($backendState -and $backendState.State -eq 'running') {
+            $backendReady = $true
+            break
         }
+
+        if ($backendAttempt -eq 1) {
+            Write-Host 'Backend no esta en running. Intentando recuperacion automatica sin rebuild...' -ForegroundColor Yellow
+        }
+
+        docker compose @composeArgs up -d backend 2>&1 | ForEach-Object {
+            Write-Host $_ -ForegroundColor DarkGray
+            Append-InstallLog $_
+        }
+
+        Write-Host "Esperando backend en running (intento $backendAttempt/15)..." -ForegroundColor Yellow
+        Start-Sleep -Seconds 2
+    }
+
+    if (-not $backendReady) {
+        Write-Host 'Backend sigue sin running. Ultimos logs del backend:' -ForegroundColor Red
+        docker compose @composeArgs logs --tail=120 backend 2>&1 | ForEach-Object {
+            Write-Host $_ -ForegroundColor DarkYellow
+            Append-InstallLog $_
+        }
+        throw 'No se pudo dejar backend en running antes de aplicar migraciones.'
     }
 
     $bootstrapRestored = Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
@@ -1070,6 +1076,7 @@ if ($runMigrations -eq 'true') {
     for ($attempt=1; $attempt -le 20; $attempt++) {
         docker compose @composeArgs exec -T backend php artisan migrate --force
         if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+        docker compose @composeArgs up -d backend | Out-Null
         Write-Host "Esperando backend para migrar (intento $attempt/20)..." -ForegroundColor Yellow
         Start-Sleep -Seconds 3
     }
