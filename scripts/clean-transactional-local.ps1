@@ -67,6 +67,62 @@ function Resolve-CleanupSqlPath {
     return $null
 }
 
+function Test-DockerViaWSL2 {
+    $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        return $false
+    }
+
+    wsl -d Ubuntu -u root -e service docker start >$null 2>&1
+    wsl -d Ubuntu -u root -e docker info >$null 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
+function Convert-ToWslPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+
+    if ($Path -match '^[A-Za-z]:\\') {
+        $drive = $Path.Substring(0,1).ToLowerInvariant()
+        $tail = $Path.Substring(2) -replace '\\','/'
+        return "/mnt/$drive$tail"
+    }
+
+    return $Path
+}
+
+function Enable-DockerWslProxy {
+    function global:docker {
+        $mappedArgs = @()
+        foreach ($arg in $args) {
+            $mappedArgs += Convert-ToWslPath -Path $arg
+        }
+
+        wsl -d Ubuntu -u root -e docker @mappedArgs
+    }
+}
+
+function Ensure-DockerEngineRunning {
+    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    if ($dockerCommand) {
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+    }
+
+    if (Test-DockerViaWSL2) {
+        Enable-DockerWslProxy
+        Write-Host "Docker operativo via WSL2 (sin Docker Desktop)." -ForegroundColor Green
+        return
+    }
+
+    throw "Docker no esta disponible. Activa Docker en WSL2 (Ubuntu) o Docker Desktop y vuelve a ejecutar."
+}
+
 $composeFilePath = Resolve-ComposeFilePath -ComposeFileValue $ComposeFile -ScriptRoot $PSScriptRoot
 if (-not $composeFilePath) {
     throw "No se encontro docker-compose.local.yml. Rutas probadas: $ComposeFile, ..\docker-compose.local.yml, ..\payload\facturacion_frontend\docker-compose.local.yml"
@@ -98,6 +154,8 @@ $env:PGADMIN_PORT = $pgadminPort
 $env:POSTGRES_DB = $postgresDb
 $env:POSTGRES_USER = $postgresUser
 $env:POSTGRES_PASSWORD = $postgresPassword
+
+Ensure-DockerEngineRunning
 
 $composeArgs = @('-p',$composeProject,'-f',$composeFilePath)
 

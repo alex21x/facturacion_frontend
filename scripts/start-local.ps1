@@ -87,8 +87,20 @@ function Resolve-ClientConfig {
 }
 
 function Ensure-DockerEngineRunning {
-    docker info | Out-Null 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $script:DOCKER_WSL2_MODE = $false
+
+    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    if ($dockerCommand) {
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            return
+        }
+    }
+
+    if (Test-DockerViaWSL2) {
+        Enable-DockerWslProxy
+        $script:DOCKER_WSL2_MODE = $true
+        Write-Host "Docker operativo via WSL2 (sin Docker Desktop)." -ForegroundColor Green
         return
     }
 
@@ -98,7 +110,7 @@ function Ensure-DockerEngineRunning {
     ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
     if (-not $dockerDesktopExe) {
-        throw "Docker no esta disponible. Instala o activa Docker Engine (WSL2) o Docker Desktop y vuelve a ejecutar."
+        throw "Docker no esta disponible. Activa Docker en WSL2 (Ubuntu) o Docker Desktop y vuelve a ejecutar."
     }
 
     Write-Host "Iniciando Docker Desktop..." -ForegroundColor Yellow
@@ -114,6 +126,44 @@ function Ensure-DockerEngineRunning {
     }
 
     throw "El engine Docker no respondio a tiempo. Espera un momento y vuelve a intentar."
+}
+
+function Test-DockerViaWSL2 {
+    $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        return $false
+    }
+
+    wsl -d Ubuntu -u root -e service docker start >$null 2>&1
+    wsl -d Ubuntu -u root -e docker info >$null 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
+function Convert-ToWslPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+
+    if ($Path -match '^[A-Za-z]:\\') {
+        $drive = $Path.Substring(0,1).ToLowerInvariant()
+        $tail = $Path.Substring(2) -replace '\\','/'
+        return "/mnt/$drive$tail"
+    }
+
+    return $Path
+}
+
+function Enable-DockerWslProxy {
+    function global:docker {
+        $mappedArgs = @()
+        foreach ($arg in $args) {
+            $mappedArgs += Convert-ToWslPath -Path $arg
+        }
+
+        wsl -d Ubuntu -u root -e docker @mappedArgs
+    }
 }
 
 function Get-ConfigValue {
@@ -164,7 +214,6 @@ function Set-ConfigValue {
     Set-Content -Path $FilePath -Value $lines
 }
 
-<<<<<<< HEAD
 function Test-IsPrivateLanIpv4 {
     param([string]$IpAddress)
 
@@ -195,14 +244,10 @@ function Test-IsVirtualAdapter {
 
     return $false
 }
-
-=======
->>>>>>> feature/cambios-generales
 function Get-LocalIpv4Addresses {
     $addresses = @()
 
     try {
-<<<<<<< HEAD
         $addresses = Get-NetIPConfiguration -ErrorAction Stop |
             Where-Object {
                 $_.IPv4Address -and
@@ -217,16 +262,6 @@ function Get-LocalIpv4Addresses {
                 (Test-IsPrivateLanIpv4 -IpAddress $_)
             } |
             Select-Object -Unique
-=======
-        $addresses = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
-            Where-Object {
-                $_.IPAddress -and
-                $_.IPAddress -ne '127.0.0.1' -and
-                $_.IPAddress -ne '0.0.0.0' -and
-                -not $_.IPAddress.StartsWith('169.254.')
-            } |
-            Select-Object -ExpandProperty IPAddress -Unique
->>>>>>> feature/cambios-generales
     } catch {
         $addresses = Get-CimInstance Win32_NetworkAdapterConfiguration -ErrorAction SilentlyContinue |
             Where-Object { $_.IPEnabled -and $_.IPAddress } |
@@ -235,12 +270,8 @@ function Get-LocalIpv4Addresses {
                 $_ -match '^(\d{1,3}\.){3}\d{1,3}$' -and
                 $_ -ne '127.0.0.1' -and
                 $_ -ne '0.0.0.0' -and
-<<<<<<< HEAD
                 -not $_.StartsWith('169.254.') -and
                 (Test-IsPrivateLanIpv4 -IpAddress $_)
-=======
-                -not $_.StartsWith('169.254.')
->>>>>>> feature/cambios-generales
             } |
             Select-Object -Unique
     }
@@ -257,13 +288,9 @@ function Get-PrimaryLanIpv4 {
                 $_.IPv4Address.IPAddress -and
                 $_.IPv4Address.IPAddress -ne '127.0.0.1' -and
                 $_.IPv4Address.IPAddress -ne '0.0.0.0' -and
-<<<<<<< HEAD
                 -not $_.IPv4Address.IPAddress.StartsWith('169.254.') -and
                 (Test-IsPrivateLanIpv4 -IpAddress $_.IPv4Address.IPAddress) -and
                 -not (Test-IsVirtualAdapter -Alias $_.InterfaceAlias -Description $_.InterfaceDescription)
-=======
-                -not $_.IPv4Address.IPAddress.StartsWith('169.254.')
->>>>>>> feature/cambios-generales
             } |
             Select-Object -First 1
 

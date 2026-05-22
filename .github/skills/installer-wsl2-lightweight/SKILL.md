@@ -23,6 +23,16 @@ Provide a repeatable workflow to keep the Windows installer as light as possible
 - ACTUALIZAR-FACTURACION.bat
 - DESINSTALAR-FACTURACION.bat
 - LIMPIAR-TRANSACCIONALES.bat
+5. Source precedence for runtime files must be:
+- First: files from frontend/backend cloned from git in local install path.
+- Last resort: payload files bundled in portable package.
+
+## Runtime source precedence (mandatory)
+When resolving compose/scripts/SQL during install/update/start/cleanup:
+1. Prefer live repository paths under the local cloned `facturacion_frontend` and `facturacion_backend`.
+2. If a configured relative path fails, retry common repo sibling locations.
+3. Use `payload/` only as fallback when repo files are missing.
+4. Keep warning messages explicit about attempted repo paths before mentioning payload fallback.
 
 ## Minimal payload contract
 Only include files required by installer overrides and cleanup fallback:
@@ -66,6 +76,7 @@ Do not include logs, SQL dumps, backups, dist artifacts, or full repository mirr
 3. Uninstall flow still removes local stack correctly.
 4. Cleanup flow still finds and executes clean_transactional_operational.sql.
 5. LAN access option behavior remains unchanged.
+6. No hard dependency on payload when repo files exist and are valid.
 
 ## Safe changes
 1. Remove transient files (logs, backups, temp scripts) from portable output.

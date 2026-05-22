@@ -103,6 +103,82 @@ function Get-ConfigValue {
     return ($match -split '=', 2)[1].Trim()
 }
 
+function Test-DockerViaWSL2 {
+    $wslCommand = Get-Command wsl -ErrorAction SilentlyContinue
+    if (-not $wslCommand) {
+        return $false
+    }
+
+    wsl -d Ubuntu -u root -e service docker start >$null 2>&1
+    wsl -d Ubuntu -u root -e docker info >$null 2>&1
+    return $LASTEXITCODE -eq 0
+}
+
+function Convert-ToWslPath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+
+    if ($Path -match '^[A-Za-z]:\\') {
+        $drive = $Path.Substring(0,1).ToLowerInvariant()
+        $tail = $Path.Substring(2) -replace '\\','/'
+        return "/mnt/$drive$tail"
+    }
+
+    return $Path
+}
+
+function Enable-DockerWslProxy {
+    function global:docker {
+        $mappedArgs = @()
+        foreach ($arg in $args) {
+            $mappedArgs += Convert-ToWslPath -Path $arg
+        }
+
+        wsl -d Ubuntu -u root -e docker @mappedArgs
+    }
+}
+
+function Initialize-DockerRuntime {
+    $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+    if ($dockerCommand) {
+        docker info | Out-Null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            return $true
+        }
+    }
+
+    if (Test-DockerViaWSL2) {
+        Enable-DockerWslProxy
+        Write-Host "Docker operativo via WSL2 (sin Docker Desktop)." -ForegroundColor Green
+        return $true
+    }
+
+    return $false
+}
+
+function Remove-FacturacionShortcuts {
+    $desktopPath = [Environment]::GetFolderPath('Desktop')
+    $shortcutNames = @(
+        'Facturacion - Levantar.lnk',
+        'Facturacion - Apagar.lnk',
+        'Facturacion - Config Red.lnk',
+        'Facturacion - Limpiar Transacciones.lnk',
+        'Facturacion - pgAdmin.lnk',
+        'Facturacion - Actualizar.lnk',
+        'Facturacion - Desinstalar.lnk'
+    )
+
+    foreach ($shortcutName in $shortcutNames) {
+        $shortcutPath = Join-Path $desktopPath $shortcutName
+        if (Test-Path $shortcutPath) {
+            Remove-Item $shortcutPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 $layout = Resolve-LocalLayout -ComposeFilePath $ComposeFile
 $ComposeFile = $layout.ComposeFile
 $frontendRoot = $layout.FrontendRoot
@@ -121,7 +197,7 @@ Write-Host ""
 Write-Host "NO se eliminaran:" -ForegroundColor Cyan
 Write-Host "  - Archivos de codigo fuente (backend/frontend)" -ForegroundColor Cyan
 Write-Host "  - .client-config.env (configuracion)" -ForegroundColor Cyan
-Write-Host "  - Accesos directos del escritorio" -ForegroundColor Cyan
+Write-Host "  - Archivos de backup fuera de Docker" -ForegroundColor Cyan
 Write-Host ""
 
 $confirm = Read-Host "Escribe 'DESINSTALAR' para confirmar (sin comillas)"
@@ -140,21 +216,29 @@ if (-not (Test-Path $clientConfig)) {
     $composeProject = Get-ConfigValue -FilePath $clientConfig -Key "COMPOSE_PROJECT_NAME" -DefaultValue "facturacion_local"
 }
 $composeArgs = @("-p", $composeProject, "-f", $ComposeFile)
+$dockerReady = Initialize-DockerRuntime
 
 Write-Host ""
-Write-Host "Deteniendo servicios..." -ForegroundColor Cyan
-docker compose @composeArgs stop 2>$null | Out-Null
+if ($dockerReady) {
+    Write-Host "Deteniendo servicios..." -ForegroundColor Cyan
+    docker compose @composeArgs stop 2>$null | Out-Null
 
-Write-Host "Eliminando contenedores..." -ForegroundColor Cyan
-docker compose @composeArgs down --remove-orphans 2>$null | Out-Null
+    Write-Host "Eliminando contenedores..." -ForegroundColor Cyan
+    docker compose @composeArgs down --remove-orphans 2>$null | Out-Null
 
-Write-Host "Eliminando volumenes..." -ForegroundColor Cyan
-docker compose @composeArgs down -v --remove-orphans 2>$null | Out-Null
+    Write-Host "Eliminando volumenes..." -ForegroundColor Cyan
+    docker compose @composeArgs down -v --remove-orphans 2>$null | Out-Null
 
-Write-Host "Eliminando imagenes compiladas..." -ForegroundColor Cyan
-docker image rm "${composeProject}-backend" 2>$null | Out-Null
-docker image rm "${composeProject}-frontend" 2>$null | Out-Null
-docker image rm "${composeProject}-admin" 2>$null | Out-Null
+    Write-Host "Eliminando imagenes compiladas..." -ForegroundColor Cyan
+    docker image rm "${composeProject}-backend" 2>$null | Out-Null
+    docker image rm "${composeProject}-frontend" 2>$null | Out-Null
+    docker image rm "${composeProject}-admin" 2>$null | Out-Null
+} else {
+    Write-Host "ADVERTENCIA: Docker no esta disponible en Windows ni WSL2. Se omite limpieza de contenedores/volumenes." -ForegroundColor Yellow
+}
+
+Write-Host "Eliminando accesos directos del escritorio..." -ForegroundColor Cyan
+Remove-FacturacionShortcuts
 
 Write-Host ""
 Write-Host "============================================================" -ForegroundColor Green

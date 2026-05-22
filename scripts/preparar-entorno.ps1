@@ -340,6 +340,11 @@ function Resolve-InstallScriptPath {
         [string]$ClonedFrontendPath
     )
 
+    $frontendCandidate = Join-Path $ClonedFrontendPath "scripts\setup-local.ps1"
+    if (Test-Path $frontendCandidate) {
+        return $frontendCandidate
+    }
+
     $safeCandidate = Join-Path $InstallerScriptsPath "setup-local.ps1"
     if (Test-Path $safeCandidate) {
         return $safeCandidate
@@ -350,11 +355,6 @@ function Resolve-InstallScriptPath {
         Select-Object -First 1
     if ($patternCandidate) {
         return $patternCandidate.FullName
-    }
-
-    $frontendCandidate = Join-Path $ClonedFrontendPath "scripts\setup-local.ps1"
-    if (Test-Path $frontendCandidate) {
-        return $frontendCandidate
     }
 
     return $null
@@ -469,7 +469,16 @@ $installScript = Resolve-InstallScriptPath -InstallerScriptsPath ($(if ($install
 $composeFile = Join-Path $targetFrontendRoot "docker-compose.local.yml"
 
 if ($installerScriptsRoot) {
-    Apply-InstallerDockerOverrides -InstallerScriptsPath $installerScriptsRoot.Path -TargetFrontendPath $targetFrontendRoot -TargetBackendPath $targetBackendRoot
+    $needsPayloadFallback =
+        -not (Test-Path (Join-Path $targetFrontendRoot 'docker-compose.local.yml')) -or
+        -not (Test-Path (Join-Path $targetFrontendRoot 'scripts\setup-local.ps1')) -or
+        -not (Test-Path (Join-Path $targetBackendRoot 'Dockerfile.local')) -or
+        -not (Test-Path (Join-Path $targetBackendRoot 'docker\entrypoint.local.sh'))
+
+    if ($needsPayloadFallback) {
+        Write-Host "Faltan archivos docker/runtime en el repo clonado. Aplicando fallback minimo desde payload..." -ForegroundColor Yellow
+        Apply-InstallerDockerOverrides -InstallerScriptsPath $installerScriptsRoot.Path -TargetFrontendPath $targetFrontendRoot -TargetBackendPath $targetBackendRoot
+    }
 }
 
 if (-not $installScript) {

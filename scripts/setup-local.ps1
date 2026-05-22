@@ -351,6 +351,48 @@ function Invoke-ComposePostgresSqlFile {
     docker compose @ComposeArgs exec -T postgres rm -f /tmp/runtime-script.sql | Out-Null
 }
 
+function Resolve-TransactionalCleanupSqlPath {
+    param(
+        [string]$FrontendRoot,
+        [string]$BackendRoot,
+        [string]$ConfiguredPath,
+        [string]$ScriptRoot
+    )
+
+    $candidates = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredPath)) {
+        if ([System.IO.Path]::IsPathRooted($ConfiguredPath)) {
+            $candidates += $ConfiguredPath
+        } else {
+            $candidates += (Join-Path $FrontendRoot $ConfiguredPath)
+        }
+    }
+
+    # Prioridad: repo frontend/backend reales descargados desde git.
+    $candidates += @(
+        (Join-Path $FrontendRoot 'database\sql\clean_transactional_operational.sql'),
+        (Join-Path $BackendRoot 'database\sql\clean_transactional_operational.sql'),
+        (Join-Path $FrontendRoot '..\facturacion_backend\database\sql\clean_transactional_operational.sql')
+    )
+
+    # Ultimo recurso: copia de payload incluida en instalador portable.
+    $candidates += @(
+        (Join-Path $ScriptRoot '..\database\sql\clean_transactional_operational.sql'),
+        (Join-Path $ScriptRoot '..\payload\facturacion_backend\database\sql\clean_transactional_operational.sql'),
+        (Join-Path $FrontendRoot 'payload\facturacion_backend\database\sql\clean_transactional_operational.sql')
+    )
+
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        $resolved = Resolve-Path $candidate -ErrorAction SilentlyContinue
+        if ($resolved) {
+            return $resolved.Path
+        }
+    }
+
+    return $null
+}
+
 function New-DesktopShortcut {
     param([string]$Name,[string]$TargetPath,[string]$Arguments="",[string]$WorkingDirectory="")
     $desktopPath = [Environment]::GetFolderPath('Desktop')
@@ -852,7 +894,8 @@ $env:FRONTEND_URL = $frontendUrl
 $env:FRONTEND_APP_URL = $frontendAppUrl
 
 $composeFileForDocker = if ($global:DOCKER_WSL2_MODE) { Convert-ToWslPath -Path $ComposeFile } else { $ComposeFile }
-$composeArgs = @('-p',$composeProject,'-f',$composeFileForDocker)
+$clientConfigForDocker = if ($global:DOCKER_WSL2_MODE) { Convert-ToWslPath -Path $clientConfig } else { $clientConfig }
+$composeArgs = @('-p',$composeProject,'-f',$composeFileForDocker,'--env-file',$clientConfigForDocker)
 
 $installLog = Join-Path $frontendRoot 'install-local.log'
 
@@ -975,17 +1018,43 @@ if ($dockerBindHost -eq '0.0.0.0') {
 
 $runMigrations = Get-ConfigValue -FilePath $clientConfig -Key 'RUN_MIGRATIONS' -DefaultValue 'true'
 if ($runMigrations -eq 'true') {
+    $backendPs = docker compose @composeArgs ps --format json backend 2>$null
+    $backendState = $null
+    if ($backendPs) {
+        $backendState = $backendPs | ConvertFrom-Json -ErrorAction SilentlyContinue
+    }
+
+    if (-not $backendState -or $backendState.State -ne 'running') {
+        Write-Host 'Backend no esta en running. Intentando recuperacion automatica...' -ForegroundColor Yellow
+        docker compose @composeArgs up -d --build backend 2>&1 | ForEach-Object {
+            Write-Host $_ -ForegroundColor DarkGray
+            Append-InstallLog $_
+        }
+
+        $backendPs = docker compose @composeArgs ps --format json backend 2>$null
+        $backendState = $null
+        if ($backendPs) {
+            $backendState = $backendPs | ConvertFrom-Json -ErrorAction SilentlyContinue
+        }
+
+        if (-not $backendState -or $backendState.State -ne 'running') {
+            Write-Host 'Backend sigue sin running. Ultimos logs del backend:' -ForegroundColor Red
+            docker compose @composeArgs logs --tail=120 backend 2>&1 | ForEach-Object {
+                Write-Host $_ -ForegroundColor DarkYellow
+                Append-InstallLog $_
+            }
+            throw 'No se pudo dejar backend en running antes de aplicar migraciones.'
+        }
+    }
+
     $bootstrapRestored = Initialize-DatabaseFromBootstrap -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -BootstrapSqlPath (Join-Path $frontendRoot $bootstrapSqlPath)
 
     if ($bootstrapRestored -and $cleanTransactionalOnRestore -eq 'true') {
         Write-Host 'Limpiando tablas operacionales/transaccionales del dump base...' -ForegroundColor Cyan
         try {
-            $cleanupSqlFullPath = Join-Path $frontendRoot $transactionalCleanupSqlPath
-            if (-not (Test-Path $cleanupSqlFullPath)) {
-                $cleanupSqlFallback = Join-Path (Join-Path $PSScriptRoot '..\database\sql') 'clean_transactional_operational.sql'
-                if (Test-Path $cleanupSqlFallback) {
-                    $cleanupSqlFullPath = $cleanupSqlFallback
-                }
+            $cleanupSqlFullPath = Resolve-TransactionalCleanupSqlPath -FrontendRoot $frontendRoot -BackendRoot $backendRoot -ConfiguredPath $transactionalCleanupSqlPath -ScriptRoot $PSScriptRoot
+            if (-not $cleanupSqlFullPath) {
+                throw "No se encontro script SQL de limpieza transaccional en frontend/backend del repo ni en payload de respaldo."
             }
 
             Invoke-ComposePostgresSqlFile -ComposeArgs $composeArgs -PostgresPassword $postgresPassword -PostgresUser $postgresUser -PostgresDb $postgresDb -SqlFilePath $cleanupSqlFullPath
@@ -1024,12 +1093,8 @@ New-DesktopShortcut -Name 'Facturacion - Apagar' -TargetPath (Join-Path $scripts
 New-DesktopShortcut -Name 'Facturacion - Config Red' -TargetPath (Join-Path $scriptsRoot 'config-red-local.bat') -WorkingDirectory $scriptsRoot
 New-DesktopShortcut -Name 'Facturacion - Limpiar Transacciones' -TargetPath (Join-Path $scriptsRoot 'limpiar-transaccionales-local.bat') -WorkingDirectory $scriptsRoot
 New-DesktopShortcut -Name 'Facturacion - pgAdmin' -TargetPath "$env:WINDIR\explorer.exe" -Arguments ("http://127.0.0.1:{0}" -f $pgadminPort)
-
-$desktopPath = [Environment]::GetFolderPath('Desktop')
-$updateShortcutPath = Join-Path $desktopPath 'Facturacion - Actualizar.lnk'
-$uninstallShortcutPath = Join-Path $desktopPath 'Facturacion - Desinstalar.lnk'
-if (Test-Path $updateShortcutPath) { Remove-Item $updateShortcutPath -Force }
-if (Test-Path $uninstallShortcutPath) { Remove-Item $uninstallShortcutPath -Force }
+New-DesktopShortcut -Name 'Facturacion - Actualizar' -TargetPath (Join-Path $scriptsRoot 'actualizar-local.bat') -WorkingDirectory $scriptsRoot
+New-DesktopShortcut -Name 'Facturacion - Desinstalar' -TargetPath (Join-Path $scriptsRoot 'desinstalar-local.bat') -WorkingDirectory $scriptsRoot
 
 Write-Host 'Instalacion completada.' -ForegroundColor Green
 Show-AccessUrls -BindHost $dockerBindHost -BackendPort $backendPort -FrontendPort $frontendPort -AdminPort $adminPort -PgAdminPort $pgadminPort -PgAdminEmail $pgadminEmail -PgAdminPassword $pgadminPassword
