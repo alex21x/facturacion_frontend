@@ -6552,7 +6552,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                               </td>
                             )}
                             <td>{lineAmounts.subtotal.toFixed(2)}</td>
-                            <td>{lineAmounts.taxAmount.toFixed(2)}</td>
+                            <td>{lineAmounts.tax.toFixed(2)}</td>
                             <td>{lineAmounts.finalTotal.toFixed(2)}</td>
                             <td>
                               <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
