@@ -52,17 +52,6 @@ button {
   max-width: 100%;
 }
 
-/* Prevent browser spinner arrows from forcing decimal step changes on numeric inputs. */
-input[type="number"] {
-  -moz-appearance: textfield;
-}
-
-input[type="number"]::-webkit-outer-spin-button,
-input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
 .app-shell {
   width: min(1920px, calc(100vw - 20px));
   max-width: 1920px;
