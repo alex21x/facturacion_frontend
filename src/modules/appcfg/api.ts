@@ -19,6 +19,7 @@ import type {
   UpdateCommerceSettingsPayload,
   UpdateOperationalLimitsPayload,
   CompanyCommerceAdminMatrixResponse,
+  CompanySunatReconcileAdminMatrixResponse,
   CompanyInventorySettingsAdminMatrixResponse,
   InventorySettingsRecord,
 } from './types';
@@ -384,6 +385,38 @@ export async function updateCompanyCommerceAdminMatrix(
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify({ company_id: companyId, features }),
+  });
+}
+
+export async function fetchCompanySunatReconcileAdminMatrix(
+  accessToken: string
+): Promise<CompanySunatReconcileAdminMatrixResponse> {
+  return apiClient.request<CompanySunatReconcileAdminMatrixResponse>('/api/appcfg/company-sunat-reconcile-admin-matrix', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function updateCompanySunatReconcileAdminMatrix(
+  accessToken: string,
+  payload: {
+    company_id: number;
+    tax_bridge_enabled: boolean;
+    auto_reconcile_enabled: boolean;
+    reconcile_batch_size: number;
+    reconcile_retry_base_minutes: number;
+    reconcile_retry_max_minutes: number;
+    reconcile_warn_attempts: number;
+    sunat_exception_notify_enabled: boolean;
+    sunat_exception_notify_hours: number;
+    sunat_alert_repeat_minutes: number;
+    sunat_exception_notify_limit: number;
+  }
+): Promise<CompanySunatReconcileAdminMatrixResponse> {
+  return apiClient.request<CompanySunatReconcileAdminMatrixResponse>('/api/appcfg/company-sunat-reconcile-admin-matrix', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
   });
 }
 
