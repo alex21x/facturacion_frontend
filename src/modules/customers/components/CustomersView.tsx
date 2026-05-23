@@ -297,7 +297,7 @@ async function fetchCustomers(
   params?: { q?: string; status?: number | null; limit?: number }
 ): Promise<CustomerRow[]> {
   const query = new URLSearchParams();
-  query.set('limit', String(params?.limit ?? 120));
+  query.set('limit', String(params?.limit ?? 10000));
 
   if (params?.q) {
     query.set('q', params.q);
@@ -505,10 +505,12 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       if (doc) {
         suggestions.add(doc);
       }
-      if (name) {
+      if (doc && name) {
+        suggestions.add(`${doc} - ${name}`);
+      } else if (name) {
         suggestions.add(name);
       }
-      if (trade) {
+      if (trade && normalizeImportText(trade) !== normalizeImportText(name)) {
         suggestions.add(trade);
       }
       if (plate) {
@@ -516,9 +518,6 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       }
       if (phone) {
         suggestions.add(phone);
-      }
-      if (doc && name) {
-        suggestions.add(`${doc} - ${name}`);
       }
     });
 
@@ -539,14 +538,16 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     setPage((prev) => Math.min(prev, totalPages));
   }, [totalPages]);
 
-  async function loadCustomers() {
+  async function loadCustomers(forcedSearch?: string) {
     setLoading(true);
     setMessage('');
 
     try {
+      const searchText = (forcedSearch ?? search).trim();
       const data = await fetchCustomers(accessToken, {
-        q: search.trim() || undefined,
+        q: searchText || undefined,
         status: status === 'all' ? null : Number(status),
+        limit: 10000,
       });
       setRows(data);
       setPage(1);
@@ -1064,7 +1065,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
-                void loadCustomers();
+                void loadCustomers((event.currentTarget as HTMLInputElement).value);
               }
             }}
           />
@@ -1082,7 +1083,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                   onClick={() => {
                     setSearch(item);
                     setSearchFocused(false);
-                    window.setTimeout(() => void loadCustomers(), 0);
+                    window.setTimeout(() => void loadCustomers(item), 0);
                   }}
                 >
                   <strong>{item}</strong>
@@ -1100,7 +1101,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
           </select>
         </label>
         <div className="entity-filter-action">
-          <button type="button" onClick={() => void loadCustomers()} disabled={loading}>
+          <button type="button" onClick={() => void loadCustomers(search)} disabled={loading}>
             Buscar
           </button>
         </div>
