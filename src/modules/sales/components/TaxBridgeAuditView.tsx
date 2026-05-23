@@ -272,8 +272,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
         <button className="btn-secondary" onClick={handleResetFilters}>
           Limpiar
         </button>
-        <button className="btn-primary" onClick={fetchLogs} disabled={loading}>
-            <button className="btn-primary" onClick={() => fetchLogs(debouncedFilters)} disabled={loading}>
+        <button className="btn-primary" onClick={() => fetchLogs(debouncedFilters)} disabled={loading}>
           {loading ? 'Cargando...' : 'Filtrar'}
         </button>
       </div>
