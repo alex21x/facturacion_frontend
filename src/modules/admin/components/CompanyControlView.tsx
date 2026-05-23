@@ -9,6 +9,7 @@ import {
   fetchCompanyInventorySettingsAdminMatrix,
   fetchCompanyOperationalLimitMatrix,
   fetchCompanyRateLimitMatrix,
+  fetchCompanySunatReconcileAdminMatrix,
   fetchCompanyVerticalAdminMatrix,
   resetAdminCompanyPassword,
   revealAdminCompanyPassword,
@@ -18,6 +19,7 @@ import {
   updateCompanyOperationalLimitMatrixBulk,
   updateCompanyRateLimitMatrix,
   updateCompanyRateLimitMatrixBulk,
+  updateCompanySunatReconcileAdminMatrix,
   updateCompanyVerticalAdminMatrix,
   updateCompanyVerticalAdminMatrixBulk,
 } from '../../appcfg/api';
@@ -27,6 +29,8 @@ import type {
   InventorySettingsRecord,
   CompanyOperationalLimitMatrixResponse,
   CompanyRateLimitMatrixResponse,
+  CompanySunatReconcileAdminMatrixResponse,
+  CompanySunatReconcileAdminRecord,
   CompanyVerticalAdminMatrixResponse,
 } from '../../appcfg/types';
 
@@ -83,7 +87,7 @@ function buildSuggestedAdminUsername(taxId: string, legalName: string): string {
 
 type Props = { accessToken: string; onUnauthorized?: () => void };
 
-type AdminPanelKey = 'companies' | 'operational' | 'rate' | 'commerce' | 'inventory';
+type AdminPanelKey = 'companies' | 'operational' | 'rate' | 'commerce' | 'sunat' | 'inventory';
 
 type ResetPreview = {
   companyName: string;
@@ -118,6 +122,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [matrix, setMatrix]   = useState<CompanyVerticalAdminMatrixResponse | null>(null);
   const [rateMatrix, setRateMatrix] = useState<CompanyRateLimitMatrixResponse | null>(null);
   const [operationalMatrix, setOperationalMatrix] = useState<CompanyOperationalLimitMatrixResponse | null>(null);
+  const [sunatMatrix, setSunatMatrix] = useState<CompanySunatReconcileAdminMatrixResponse | null>(null);
   const [selectedVerticalByCompany, setSelectedVerticalByCompany] = useState<Record<number, string>>({});
   const [rateDraftByCompany, setRateDraftByCompany] = useState<Record<number, {
     is_enabled: boolean;
@@ -146,6 +151,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [commerceMatrix, setCommerceMatrix] = useState<CompanyCommerceAdminMatrixResponse | null>(null);
   const [inventoryMatrix, setInventoryMatrix] = useState<CompanyInventorySettingsAdminMatrixResponse | null>(null);
   const [commerceDraftByCompany, setCommerceDraftByCompany] = useState<Record<number, Record<string, boolean>>>({});
+  const [sunatDraftByCompany, setSunatDraftByCompany] = useState<Record<number, { tax_bridge_enabled: boolean; settings: CompanySunatReconcileAdminRecord }>>({});
   const [inventoryDraftByCompany, setInventoryDraftByCompany] = useState<Record<number, InventorySettingsRecord>>({});
   const [selectedCommerceCompanyId, setSelectedCommerceCompanyId] = useState<number | null>(null);
   const [commerceCompanyQuery, setCommerceCompanyQuery] = useState('');
@@ -272,16 +278,18 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   }
 
   async function loadExtendedMatrices() {
-    const [rateResult, operationalResult, commerceResult, inventoryResult] = await Promise.all([
+    const [rateResult, operationalResult, commerceResult, sunatResult, inventoryResult] = await Promise.all([
       fetchCompanyRateLimitMatrix(accessToken),
       fetchCompanyOperationalLimitMatrix(accessToken),
       fetchCompanyCommerceAdminMatrix(accessToken),
+      fetchCompanySunatReconcileAdminMatrix(accessToken),
       fetchCompanyInventorySettingsAdminMatrix(accessToken),
     ]);
 
     setRateMatrix(rateResult);
     setOperationalMatrix(operationalResult);
     setCommerceMatrix(commerceResult);
+    setSunatMatrix(sunatResult);
     setInventoryMatrix(inventoryResult);
 
     const allCommerceCodes = buildCommerceFeatureCodes(commerceResult);
@@ -290,6 +298,15 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       nextCommerceDraft[company.company_id] = normalizeCompanyFeatures(allCommerceCodes, company.features);
     }
     setCommerceDraftByCompany(nextCommerceDraft);
+
+    const nextSunatDraft: Record<number, { tax_bridge_enabled: boolean; settings: CompanySunatReconcileAdminRecord }> = {};
+    for (const company of sunatResult.companies) {
+      nextSunatDraft[company.company_id] = {
+        tax_bridge_enabled: company.tax_bridge_enabled,
+        settings: { ...company.sunat_reconcile },
+      };
+    }
+    setSunatDraftByCompany(nextSunatDraft);
 
     setSelectedCommerceCompanyId(prev => {
       if (prev !== null) return prev;
@@ -351,7 +368,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   }
 
   async function ensureExtendedMatricesLoaded(force = false): Promise<void> {
-    const alreadyLoaded = Boolean(rateMatrix && operationalMatrix && commerceMatrix && inventoryMatrix);
+    const alreadyLoaded = Boolean(rateMatrix && operationalMatrix && commerceMatrix && sunatMatrix && inventoryMatrix);
     if (!force && alreadyLoaded) {
       return;
     }
@@ -422,6 +439,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       (activePanel === 'rate' && !rateMatrix)
       || (activePanel === 'operational' && !operationalMatrix)
       || (activePanel === 'commerce' && !commerceMatrix)
+      || (activePanel === 'sunat' && !sunatMatrix)
       || (activePanel === 'inventory' && !inventoryMatrix);
 
     if (!needsExtendedData) {
@@ -443,7 +461,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     };
 
     void run();
-  }, [activePanel, accessToken, rateMatrix, operationalMatrix, commerceMatrix, inventoryMatrix]);
+  }, [activePanel, accessToken, rateMatrix, operationalMatrix, commerceMatrix, sunatMatrix, inventoryMatrix]);
 
   async function refreshAllPanels() {
     setLoading(true);
@@ -522,6 +540,46 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setMessage('Reglas de ventas/compras actualizadas');
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'Error al guardar');
+      setIsError(true);
+    } finally { setLoading(false); }
+  }
+
+  async function saveSunatOne(companyId: number) {
+    const draft = sunatDraftByCompany[companyId];
+    if (!draft) {
+      setMessage('No se encontro configuracion SUNAT para guardar.');
+      setIsError(true);
+      return;
+    }
+
+    setLoading(true); setMessage(''); setIsError(false);
+    try {
+      const result = await updateCompanySunatReconcileAdminMatrix(accessToken, {
+        company_id: companyId,
+        tax_bridge_enabled: draft.tax_bridge_enabled,
+        auto_reconcile_enabled: draft.settings.auto_reconcile_enabled,
+        reconcile_batch_size: draft.settings.reconcile_batch_size,
+        reconcile_retry_base_minutes: draft.settings.reconcile_retry_base_minutes,
+        reconcile_retry_max_minutes: draft.settings.reconcile_retry_max_minutes,
+        reconcile_warn_attempts: draft.settings.reconcile_warn_attempts,
+        sunat_exception_notify_enabled: draft.settings.sunat_exception_notify_enabled,
+        sunat_exception_notify_hours: draft.settings.sunat_exception_notify_hours,
+        sunat_alert_repeat_minutes: draft.settings.sunat_alert_repeat_minutes,
+        sunat_exception_notify_limit: draft.settings.sunat_exception_notify_limit,
+      });
+
+      setSunatMatrix(result);
+      const nextSunatDraft: Record<number, { tax_bridge_enabled: boolean; settings: CompanySunatReconcileAdminRecord }> = {};
+      for (const company of result.companies) {
+        nextSunatDraft[company.company_id] = {
+          tax_bridge_enabled: company.tax_bridge_enabled,
+          settings: { ...company.sunat_reconcile },
+        };
+      }
+      setSunatDraftByCompany(nextSunatDraft);
+      setMessage('Configuracion SUNAT por empresa actualizada.');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo guardar configuracion SUNAT');
       setIsError(true);
     } finally { setLoading(false); }
   }
@@ -832,6 +890,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setRateMatrix(null);
       setOperationalMatrix(null);
       setCommerceMatrix(null);
+      setSunatMatrix(null);
       setInventoryMatrix(null);
       setCreateDraft(prev => ({
         ...prev,
@@ -1035,6 +1094,10 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       title: 'Funcionalidades comerciales',
       subtitle: 'Activa o pausa módulos de ventas y compras por compañía.',
     },
+    sunat: {
+      title: 'SUNAT y reconciliacion',
+      subtitle: 'Configura por empresa la cadencia de reintentos, lotes y alertas de excepciones.',
+    },
     inventory: {
       title: 'Inventario avanzado',
       subtitle: 'Ajusta complejidad, lotes, vencimientos y reglas de stock por empresa.',
@@ -1091,6 +1154,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         <button type="button" role="tab" aria-selected={activePanel === 'operational'} className={`adm-panel-tab${activePanel === 'operational' ? ' is-active' : ''}`} onClick={() => setActivePanel('operational')}>Límites operativos</button>
         <button type="button" role="tab" aria-selected={activePanel === 'rate'} className={`adm-panel-tab${activePanel === 'rate' ? ' is-active' : ''}`} onClick={() => setActivePanel('rate')}>Rate limits</button>
         <button type="button" role="tab" aria-selected={activePanel === 'commerce'} className={`adm-panel-tab${activePanel === 'commerce' ? ' is-active' : ''}`} onClick={() => setActivePanel('commerce')}>Funcionalidades</button>
+        <button type="button" role="tab" aria-selected={activePanel === 'sunat'} className={`adm-panel-tab${activePanel === 'sunat' ? ' is-active' : ''}`} onClick={() => setActivePanel('sunat')}>SUNAT</button>
         <button type="button" role="tab" aria-selected={activePanel === 'inventory'} className={`adm-panel-tab${activePanel === 'inventory' ? ' is-active' : ''}`} onClick={() => setActivePanel('inventory')}>Inventario</button>
       </div>
 
@@ -2091,6 +2155,123 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           })()}
         </div>
       </div>
+      )}
+
+      {activePanel === 'sunat' && (
+      <div className="adm-card">
+        <div className="adm-card-header">
+          <h3>Configuracion SUNAT por empresa</h3>
+          <div className="adm-card-header-actions">
+            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>
+              Ajusta reconciliacion automatica y notificaciones de excepciones sin usar variables de entorno.
+            </span>
+          </div>
+        </div>
+        <div className="adm-card-body">
+          <div className="adm-table-wrap">
+            <table className="adm-table">
+              <thead>
+                <tr>
+                  <th>Empresa</th>
+                  <th>Tax bridge</th>
+                  <th>Auto reconcile</th>
+                  <th>Lote</th>
+                  <th>Cadencia base (min)</th>
+                  <th>Cadencia maxima (min)</th>
+                  <th>Umbral manual (intentos)</th>
+                  <th>Alertas excepciones</th>
+                  <th>Horas umbral</th>
+                  <th>Repetir alerta (min)</th>
+                  <th>Tope alertas corrida</th>
+                  <th>Guardar</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(sunatMatrix?.companies ?? []).map(company => {
+                  const draft = sunatDraftByCompany[company.company_id] ?? {
+                    tax_bridge_enabled: company.tax_bridge_enabled,
+                    settings: { ...company.sunat_reconcile },
+                  };
+
+                  const updateSettings = (patch: Partial<CompanySunatReconcileAdminRecord>) => {
+                    setSunatDraftByCompany(prev => ({
+                      ...prev,
+                      [company.company_id]: {
+                        ...(prev[company.company_id] ?? draft),
+                        settings: {
+                          ...(prev[company.company_id]?.settings ?? draft.settings),
+                          ...patch,
+                        },
+                      },
+                    }));
+                  };
+
+                  return (
+                    <tr key={`sunat-${company.company_id}`}>
+                      <td>
+                        <span className="adm-td-label">{company.legal_name}</span>
+                        {company.trade_name && <span className="adm-td-sub">{company.trade_name}</span>}
+                      </td>
+                      <td>
+                        <select
+                          className="adm-select"
+                          value={draft.tax_bridge_enabled ? '1' : '0'}
+                          onChange={e => setSunatDraftByCompany(prev => ({
+                            ...prev,
+                            [company.company_id]: {
+                              ...(prev[company.company_id] ?? draft),
+                              tax_bridge_enabled: e.target.value === '1',
+                            },
+                          }))}
+                          disabled={loading}
+                        >
+                          <option value="1">Activo</option>
+                          <option value="0">Pausado</option>
+                        </select>
+                      </td>
+                      <td>
+                        <select
+                          className="adm-select"
+                          value={draft.settings.auto_reconcile_enabled ? '1' : '0'}
+                          onChange={e => updateSettings({ auto_reconcile_enabled: e.target.value === '1' })}
+                          disabled={loading}
+                        >
+                          <option value="1">Si</option>
+                          <option value="0">No</option>
+                        </select>
+                      </td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={5} max={200} value={draft.settings.reconcile_batch_size} onChange={e => updateSettings({ reconcile_batch_size: Number(e.target.value || 5) })} disabled={loading} /></td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={1} max={180} value={draft.settings.reconcile_retry_base_minutes} onChange={e => updateSettings({ reconcile_retry_base_minutes: Number(e.target.value || 1) })} disabled={loading} /></td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={5} max={1440} value={draft.settings.reconcile_retry_max_minutes} onChange={e => updateSettings({ reconcile_retry_max_minutes: Number(e.target.value || 5) })} disabled={loading} /></td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={1} max={50} value={draft.settings.reconcile_warn_attempts} onChange={e => updateSettings({ reconcile_warn_attempts: Number(e.target.value || 1) })} disabled={loading} /></td>
+                      <td>
+                        <select
+                          className="adm-select"
+                          value={draft.settings.sunat_exception_notify_enabled ? '1' : '0'}
+                          onChange={e => updateSettings({ sunat_exception_notify_enabled: e.target.value === '1' })}
+                          disabled={loading}
+                        >
+                          <option value="1">Activas</option>
+                          <option value="0">Pausadas</option>
+                        </select>
+                      </td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={1} max={168} value={draft.settings.sunat_exception_notify_hours} onChange={e => updateSettings({ sunat_exception_notify_hours: Number(e.target.value || 1) })} disabled={loading} /></td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={10} max={1440} value={draft.settings.sunat_alert_repeat_minutes} onChange={e => updateSettings({ sunat_alert_repeat_minutes: Number(e.target.value || 10) })} disabled={loading} /></td>
+                      <td><input className="adm-input adm-input-mini" type="number" min={1} max={500} value={draft.settings.sunat_exception_notify_limit} onChange={e => updateSettings({ sunat_exception_notify_limit: Number(e.target.value || 1) })} disabled={loading} /></td>
+                      <td>
+                        <button className="adm-btn adm-btn-primary" type="button" disabled={loading} onClick={() => void saveSunatOne(company.company_id)}>
+                          Guardar
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       )}
 
       {/* Inventory settings matrix */}
