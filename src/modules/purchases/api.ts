@@ -276,6 +276,57 @@ export type SupplierAutocompleteItem = {
   source: string;
 };
 
+export type SupplierBulkImportRow = {
+  doc_type?: string;
+  doc_number: string;
+  legal_name: string;
+  address?: string | null;
+  source?: string | null;
+};
+
+export type SupplierBulkImportResponse = {
+  message: string;
+  summary: {
+    total: number;
+    created: number;
+    skipped: number;
+    errors: number;
+  };
+  errors: Array<{ row: number; message: string }>;
+};
+
+export async function fetchSuppliersCatalog(
+  accessToken: string,
+  params?: { q?: string; limit?: number }
+): Promise<SupplierAutocompleteItem[]> {
+  const query = new URLSearchParams();
+  query.set('limit', String(params?.limit ?? 5000));
+  if (params?.q && params.q.trim() !== '') {
+    query.set('q', params.q.trim());
+  }
+
+  const response = await apiClient.request<{ data: SupplierAutocompleteItem[] }>(
+    `/api/purchases/suppliers?${query.toString()}`,
+    {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+
+  return response.data ?? [];
+}
+
+export async function importSuppliersBulk(
+  accessToken: string,
+  rows: SupplierBulkImportRow[]
+): Promise<SupplierBulkImportResponse> {
+  return apiClient.request<SupplierBulkImportResponse>('/api/purchases/suppliers/bulk-import', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ rows }),
+  });
+}
+
 export async function fetchSupplierAutocomplete(
   accessToken: string,
   queryText: string

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import '../../../styles/modules/purchases.css';
 import { fetchInventoryLots, fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
 import type { InventoryLotRow, InventoryProduct, InventoryStockRow } from '../../inventory/types';
-import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry } from '../api';
+import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, fetchSuppliersCatalog, importSuppliersBulk, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry, type SupplierBulkImportRow } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import { fetchCompanyProfile } from '../../company/api';
 import type { CompanyProfile } from '../../company/types';
@@ -80,6 +80,45 @@ const initialPagination: PurchasesPagination = {
   total_pages: 1,
 };
 
+const SUPPLIER_BULK_TEMPLATE_HEADERS = [
+  'TIPO_DOCUMENTO',
+  'NUMERO_DOCUMENTO',
+  'RAZON_SOCIAL',
+  'DIRECCION',
+  'ORIGEN',
+];
+
+function normalizeSupplierExcelHeader(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeSupplierImportRows(rawRows: Array<Record<string, unknown>>): SupplierBulkImportRow[] {
+  return rawRows
+    .map((raw) => {
+      const row = Object.entries(raw).reduce<Record<string, unknown>>((acc, [key, value]) => {
+        acc[normalizeSupplierExcelHeader(key)] = value;
+        return acc;
+      }, {});
+
+      const payload: SupplierBulkImportRow = {
+        doc_type: String(row.TIPO_DOCUMENTO ?? row.DOC_TYPE ?? '').trim() || undefined,
+        doc_number: String(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '').trim(),
+        legal_name: String(row.RAZON_SOCIAL ?? row.LEGAL_NAME ?? row.NOMBRE ?? '').trim(),
+        address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim() || undefined,
+        source: String(row.ORIGEN ?? row.SOURCE ?? '').trim() || undefined,
+      };
+
+      return (payload.doc_number || payload.legal_name) ? payload : null;
+    })
+    .filter((row): row is SupplierBulkImportRow => row !== null);
+}
+
 function buildEmptyRow(seed: number, priceTaxMode: PriceTaxMode = 'INCLUSIVE'): EntryRowDraft {
   return {
     key: `row-${seed}-${Date.now()}`,
@@ -112,6 +151,7 @@ export function PurchasesView({
 }: PurchasesViewProps) {
   const productInputRef = useRef<HTMLInputElement | null>(null);
   const supplierInputRef = useRef<HTMLInputElement | null>(null);
+  const supplierImportFileInputRef = useRef<HTMLInputElement | null>(null);
   const draftDatesPopoverRef = useRef<HTMLDivElement | null>(null);
   const focusedReportRowRef = useRef<HTMLTableRowElement | null>(null);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
@@ -168,6 +208,8 @@ export function PurchasesView({
   const [percepcionTypeCode, setPercepcionTypeCode] = useState('');
   const [sunatOperationTypeCode, setSunatOperationTypeCode] = useState('');
   const [resolvingSupplierDoc, setResolvingSupplierDoc] = useState(false);
+  const [supplierImporting, setSupplierImporting] = useState(false);
+  const [supplierExporting, setSupplierExporting] = useState(false);
 
   const isRestaurant = (uiProfile ?? ((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT' ? 'RESTAURANT' : 'DEFAULT')) === 'RESTAURANT';
 
@@ -321,6 +363,111 @@ export function PurchasesView({
       window.clearTimeout(timer);
     };
   }, [accessToken, supplierInputFocused, supplierReference]);
+
+  async function downloadSupplierTemplate() {
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+
+      const dataSheet = XLSX.utils.aoa_to_sheet([
+        SUPPLIER_BULK_TEMPLATE_HEADERS,
+        ['RUC', '20123456789', 'Proveedor ejemplo SAC', 'Av. Principal 123 - Lima', 'import'],
+      ]);
+      dataSheet['!cols'] = [
+        { wch: 18 },
+        { wch: 22 },
+        { wch: 42 },
+        { wch: 42 },
+        { wch: 14 },
+      ];
+
+      const instructionsSheet = XLSX.utils.aoa_to_sheet([
+        ['CAMPO', 'REGLA'],
+        ['TIPO_DOCUMENTO', 'Opcional: RUC, DNI, CE, PAS. Si va vacío se infiere por longitud del documento.'],
+        ['NUMERO_DOCUMENTO', 'Obligatorio. No se importan duplicados por documento.'],
+        ['RAZON_SOCIAL', 'Obligatorio.'],
+        ['DIRECCION', 'Opcional.'],
+        ['ORIGEN', 'Opcional. Por defecto: import.'],
+      ]);
+      instructionsSheet['!cols'] = [{ wch: 24 }, { wch: 90 }];
+
+      XLSX.utils.book_append_sheet(workbook, dataSheet, 'PROVEEDORES');
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'INSTRUCCIONES');
+      XLSX.writeFile(workbook, 'formato_importacion_proveedores.xlsx');
+      setMessage('Formato de proveedores descargado.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo descargar formato de proveedores.');
+    }
+  }
+
+  async function handleSupplierImportFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    setSupplierImporting(true);
+    setMessage('');
+
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const firstSheet = workbook.Sheets[firstSheetName];
+
+      if (!firstSheet) {
+        throw new Error('El archivo no contiene una hoja válida.');
+      }
+
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+      const rows = normalizeSupplierImportRows(rawRows);
+
+      if (rows.length === 0) {
+        throw new Error('No se encontraron filas válidas para importar.');
+      }
+
+      const response = await importSuppliersBulk(accessToken, rows);
+      const firstError = response.errors[0]?.message;
+      setMessage(
+        `Importación proveedores: ${response.summary.created} creados, ${response.summary.skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo importar proveedores.');
+    } finally {
+      setSupplierImporting(false);
+    }
+  }
+
+  async function exportSuppliersXlsx() {
+    setSupplierExporting(true);
+    setMessage('');
+
+    try {
+      const rows = await fetchSuppliersCatalog(accessToken, { limit: 10000 });
+      const XLSX = await import('xlsx');
+
+      const sheetRows = rows.map((row) => ({
+        TIPO_DOCUMENTO: row.doc_type ?? '',
+        NUMERO_DOCUMENTO: row.doc_number ?? '',
+        RAZON_SOCIAL: row.name ?? '',
+        DIRECCION: row.address ?? '',
+        ORIGEN: row.source ?? '',
+      }));
+
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Proveedores');
+      XLSX.writeFile(workbook, `proveedores_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+      setMessage(`Exportación completada: ${rows.length} proveedores.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo exportar proveedores.');
+    } finally {
+      setSupplierExporting(false);
+    }
+  }
 
   useEffect(() => {
     if (!lotTrackingEnabled || !warehouseId || !draftItem.product_id) {
@@ -1706,15 +1853,47 @@ export function PurchasesView({
           <label className="with-suggest purchases-field-supplier" onBlur={handleSupplierSuggestBlur}>
             <div className="purchases-supplier-head">
               <span>Proveedor / RUC</span>
-              <button
-                type="button"
-                className="btn-mini"
-                onClick={() => void resolveSupplierFromPadron()}
-                disabled={resolvingSupplierDoc}
-              >
-                {resolvingSupplierDoc ? 'Consultando...' : 'Consultar DNI/RUC'}
-              </button>
+              <div className="purchases-supplier-tools">
+                <button
+                  type="button"
+                  className="btn-mini"
+                  onClick={() => void downloadSupplierTemplate()}
+                >
+                  Formato
+                </button>
+                <button
+                  type="button"
+                  className="btn-mini"
+                  onClick={() => supplierImportFileInputRef.current?.click()}
+                  disabled={supplierImporting}
+                >
+                  {supplierImporting ? 'Importando...' : 'Importar'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-mini"
+                  onClick={() => void exportSuppliersXlsx()}
+                  disabled={supplierExporting}
+                >
+                  {supplierExporting ? 'Exportando...' : 'Exportar'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-mini"
+                  onClick={() => void resolveSupplierFromPadron()}
+                  disabled={resolvingSupplierDoc}
+                >
+                  {resolvingSupplierDoc ? 'Consultando...' : 'Consultar DNI/RUC'}
+                </button>
+              </div>
             </div>
+            <input
+              ref={supplierImportFileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={(event) => void handleSupplierImportFileChange(event)}
+            />
             <input
               ref={supplierInputRef}
               value={supplierReference}

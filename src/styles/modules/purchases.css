@@ -65,6 +65,20 @@
   display: block;
 }
 
+.purchases-supplier-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.purchases-supplier-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
 .purchases-entry-hint {
   margin: 0.2rem 0 0;
   font-size: 0.74rem;
@@ -93,6 +107,21 @@
 }
 
 @media (max-width: 900px) {
+  .purchases-supplier-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+  }
+
+  .purchases-supplier-tools {
+    width: 100%;
+  }
+
+  .purchases-supplier-tools .btn-mini {
+    flex: 1;
+    min-width: 0;
+  }
+
   .purchases-entry-row {
     grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
     gap: 6px;
