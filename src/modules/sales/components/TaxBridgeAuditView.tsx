@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiClient } from '../../../shared/api/client';
 import { fmtDateTimeFullLima } from '../../../shared/utils/lima';
 import './TaxBridgeAuditView.css';
@@ -111,20 +112,38 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
     only_errors: false,
   });
 
+  // Debounced version of filters — text inputs wait 300ms before triggering fetch
+  const [debouncedFilters, setDebouncedFilters] = useState(filters);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleFilterChange = useCallback((patch: Partial<typeof filters>) => {
+    const isTextChange = 'document_series' in patch || 'document_number' in patch;
+    setFilters(prev => {
+      const next = { ...prev, ...patch };
+      if (!isTextChange) {
+        setDebouncedFilters(next);
+      } else {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => setDebouncedFilters(next), 300);
+      }
+      return next;
+    });
+  }, []);
+
   // Fetch logs
-  const fetchLogs = useCallback(async () => {
+  const fetchLogs = useCallback(async (activeFilters: typeof filters) => {
     setLoading(true);
     try {
       const query = new URLSearchParams({
         ...(typeof companyId === 'number' ? { company_id: companyId.toString() } : {}),
         ...(branchId && { branch_id: branchId.toString() }),
-        ...(filters.tributary_type && { tributary_type: filters.tributary_type }),
-        ...(filters.sunat_status && { sunat_status: filters.sunat_status }),
-        ...(filters.start_date && { start_date: filters.start_date }),
-        ...(filters.end_date && { end_date: filters.end_date }),
-        ...(filters.document_series && { document_series: filters.document_series }),
-        ...(filters.document_number && { document_number: filters.document_number }),
-        ...(filters.only_errors && { only_errors: 'true' }),
+        ...(activeFilters.tributary_type && { tributary_type: activeFilters.tributary_type }),
+        ...(activeFilters.sunat_status && { sunat_status: activeFilters.sunat_status }),
+        ...(activeFilters.start_date && { start_date: activeFilters.start_date }),
+        ...(activeFilters.end_date && { end_date: activeFilters.end_date }),
+        ...(activeFilters.document_series && { document_series: activeFilters.document_series }),
+        ...(activeFilters.document_number && { document_number: activeFilters.document_number }),
+        ...(activeFilters.only_errors && { only_errors: 'true' }),
         limit: '200',
       });
 
@@ -142,7 +161,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
     } finally {
       setLoading(false);
     }
-  }, [accessToken, companyId, branchId, filters]);
+  }, [accessToken, companyId, branchId]);
 
   // Fetch log details
   const openLogDetails = useCallback(async (logId: number) => {
@@ -164,12 +183,12 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
 
   // Load logs on mount and filter change
   useEffect(() => {
-    fetchLogs();
-  }, [fetchLogs]);
+    fetchLogs(debouncedFilters);
+  }, [fetchLogs, debouncedFilters]);
 
   // Reset filters
   const handleResetFilters = () => {
-    setFilters({
+    const reset = {
       tributary_type: '',
       sunat_status: '',
       start_date: '',
@@ -177,7 +196,10 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
       document_series: '',
       document_number: '',
       only_errors: false,
-    });
+    };
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setFilters(reset);
+    setDebouncedFilters(reset);
   };
 
   return (
@@ -193,7 +215,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
           <label>Tipo Tributario</label>
           <select
             value={filters.tributary_type}
-            onChange={(e) => setFilters({ ...filters, tributary_type: e.target.value })}
+            onChange={(e) => handleFilterChange({ tributary_type: e.target.value })}
           >
             {TRIBUTARY_TYPES.map((t) => (
               <option key={t.value} value={t.value}>
@@ -207,7 +229,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
           <label>Estado</label>
           <select
             value={filters.sunat_status}
-            onChange={(e) => setFilters({ ...filters, sunat_status: e.target.value })}
+            onChange={(e) => handleFilterChange({ sunat_status: e.target.value })}
           >
             <option value="">Todos</option>
             <option value="ACCEPTED">Aceptado</option>
@@ -222,7 +244,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
             type="text"
             placeholder="B001"
             value={filters.document_series}
-            onChange={(e) => setFilters({ ...filters, document_series: e.target.value })}
+            onChange={(e) => handleFilterChange({ document_series: e.target.value })}
           />
         </div>
 
@@ -232,7 +254,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
             type="text"
             placeholder="00001"
             value={filters.document_number}
-            onChange={(e) => setFilters({ ...filters, document_number: e.target.value })}
+            onChange={(e) => handleFilterChange({ document_number: e.target.value })}
           />
         </div>
 
@@ -241,7 +263,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
             <input
               type="checkbox"
               checked={filters.only_errors}
-              onChange={(e) => setFilters({ ...filters, only_errors: e.target.checked })}
+              onChange={(e) => handleFilterChange({ only_errors: e.target.checked })}
             />
             Solo errores
           </label>
@@ -251,6 +273,7 @@ export function TaxBridgeAuditView({ accessToken, companyId, branchId }: TaxBrid
           Limpiar
         </button>
         <button className="btn-primary" onClick={fetchLogs} disabled={loading}>
+            <button className="btn-primary" onClick={() => fetchLogs(debouncedFilters)} disabled={loading}>
           {loading ? 'Cargando...' : 'Filtrar'}
         </button>
       </div>
