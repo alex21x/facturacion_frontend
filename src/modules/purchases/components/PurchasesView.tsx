@@ -1965,16 +1965,16 @@ export function PurchasesView({
                   <button
                     key={`${row.id}-${row.doc_number}-${row.name}-${index}`}
                     type="button"
-                    className={index === activeSupplierIndex ? 'active' : ''}
+                    className={`suggest-item ${index === activeSupplierIndex ? 'active' : ''}`}
                     onMouseDown={(event) => {
                       event.preventDefault();
                       chooseSupplier(row);
                     }}
                   >
                     <strong>{row.name}</strong>
-                    <small>
+                    <span>
                       {[row.doc_number, row.phone, row.address].filter(Boolean).join(' · ') || 'Sin datos'}
-                    </small>
+                    </span>
                   </button>
                 ))}
               </div>
