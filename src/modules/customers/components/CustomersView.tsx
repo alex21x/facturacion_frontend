@@ -13,6 +13,7 @@ type CustomerRow = {
   trade_name: string | null;
   plate: string | null;
   address: string | null;
+  phone?: string | null;
   status: number;
   default_tier_id: number | null;
   default_tier_code: string | null;
@@ -46,6 +47,7 @@ type CustomerFormState = {
   last_name: string;
   plate: string;
   address: string;
+  phone: string;
   status: number;
   default_tier_id: number | null;
   discount_percent: number;
@@ -93,6 +95,7 @@ const CUSTOMER_BULK_TEMPLATE_HEADERS = [
   'RAZON_SOCIAL_NOMBRE',
   'NOMBRE_COMERCIAL',
   'DIRECCION',
+  'TELEFONO',
   'ESTADO',
 ];
 
@@ -112,6 +115,62 @@ function normalizeImportText(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toUpperCase();
+}
+
+function normalizeDocumentIdentity(value: string): string {
+  return String(value)
+    .trim()
+    .toUpperCase()
+    .replace(/[\s\-_.]/g, '');
+}
+
+function resolveSunatCodeAlias(raw: string): string {
+  const normalized = normalizeImportText(raw);
+  if (normalized === '') {
+    return '';
+  }
+
+  const aliasMap: Record<string, string> = {
+    '1': '1',
+    DNI: '1',
+    NATURAL: '1',
+    'PERSONA NATURAL': '1',
+    '6': '6',
+    RUC: '6',
+    JURIDICA: '6',
+    JURIDICO: '6',
+    'PERSONA JURIDICA': '6',
+    '4': '4',
+    CE: '4',
+    CARNET: '4',
+    'CARNET DE EXTRANJERIA': '4',
+    EXTRANJERIA: '4',
+    '7': '7',
+    PAS: '7',
+    PASAPORTE: '7',
+  };
+
+  return aliasMap[normalized] ?? '';
+}
+
+function normalizeDocNumberCell(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value).toString();
+  }
+
+  const raw = String(value ?? '').trim();
+  if (/^\d+(\.0+)?$/u.test(raw)) {
+    return String(Math.trunc(Number(raw)));
+  }
+
+  if (/^\d+(\.\d+)?e\+\d+$/iu.test(raw)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+      return Math.trunc(numeric).toString();
+    }
+  }
+
+  return raw;
 }
 
 function PlusColorIcon() {
@@ -193,6 +252,7 @@ const EMPTY_FORM: CustomerFormState = {
   last_name: '',
   plate: '',
   address: '',
+  phone: '',
   status: 1,
   default_tier_id: null,
   discount_percent: 0,
@@ -343,6 +403,7 @@ function inferFormFromRow(row: CustomerRow, customerTypes: CustomerTypeOption[])
     last_name: nameParts.slice(1).join(' '),
     plate: row.plate ?? '',
     address: row.address ?? '',
+    phone: row.phone ?? '',
     status: Number(row.status) === 1 ? 1 : 0,
     default_tier_id: row.default_tier_id ?? null,
     discount_percent: Number(row.discount_percent ?? 0),
@@ -387,6 +448,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       const name = (row.name ?? '').trim();
       const trade = (row.trade_name ?? '').trim();
       const plate = (row.plate ?? '').trim();
+      const phone = (row.phone ?? '').trim();
 
       if (doc) {
         suggestions.add(doc);
@@ -399,6 +461,9 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       }
       if (plate) {
         suggestions.add(plate);
+      }
+      if (phone) {
+        suggestions.add(phone);
       }
       if (doc && name) {
         suggestions.add(`${doc} - ${name}`);
@@ -433,23 +498,41 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   function resolveCustomerTypeFromImportRow(
     row: Record<string, unknown>,
     typeByName: Map<string, CustomerTypeOption>,
-    typeBySunatCode: Map<string, CustomerTypeOption>
+    typeBySunatCode: Map<string, CustomerTypeOption>,
+    docNumberRaw: string
   ): CustomerTypeOption | null {
     const nameRaw = String(row.TIPO_CLIENTE ?? row.CUSTOMER_TYPE ?? '').trim();
     const sunatRaw = String(row.CODIGO_SUNAT ?? row.SUNAT_CODE ?? row.TIPO_DOCUMENTO ?? row.DOC_TYPE ?? '').trim();
 
-    if (sunatRaw !== '') {
-      const typeByCode = typeBySunatCode.get(sunatRaw);
+    const normalizedSunatCode = resolveSunatCodeAlias(sunatRaw);
+    if (normalizedSunatCode !== '') {
+      const typeByCode = typeBySunatCode.get(normalizedSunatCode);
       if (typeByCode) {
         return typeByCode;
       }
     }
 
     if (nameRaw !== '') {
+      const aliasCodeFromName = resolveSunatCodeAlias(nameRaw);
+      if (aliasCodeFromName !== '') {
+        const typeByAliasCode = typeBySunatCode.get(aliasCodeFromName);
+        if (typeByAliasCode) {
+          return typeByAliasCode;
+        }
+      }
+
       const typeByNameMatch = typeByName.get(normalizeImportText(nameRaw));
       if (typeByNameMatch) {
         return typeByNameMatch;
       }
+    }
+
+    const docIdentity = normalizeDocumentIdentity(docNumberRaw);
+    if (/^\d{11}$/u.test(docIdentity)) {
+      return typeBySunatCode.get('6') ?? null;
+    }
+    if (/^\d{8}$/u.test(docIdentity)) {
+      return typeBySunatCode.get('1') ?? null;
     }
 
     return null;
@@ -470,6 +553,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
           'Cliente ejemplo SAC',
           'Cliente ejemplo',
           'Av. Principal 123 - Lima',
+          '999888777',
           'ACTIVO',
         ],
       ]);
@@ -480,6 +564,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         { wch: 42 },
         { wch: 28 },
         { wch: 42 },
+        { wch: 18 },
         { wch: 12 },
       ];
 
@@ -498,6 +583,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         ['RAZON_SOCIAL_NOMBRE', 'Obligatorio.'],
         ['NOMBRE_COMERCIAL', 'Opcional.'],
         ['DIRECCION', 'Opcional.'],
+        ['TELEFONO', 'Opcional.'],
         ['ESTADO', 'Opcional. ACTIVO o INACTIVO (por defecto ACTIVO).'],
       ]);
       instructionsSheet['!cols'] = [{ wch: 24 }, { wch: 94 }];
@@ -526,6 +612,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         RAZON_SOCIAL_NOMBRE: row.name ?? '',
         NOMBRE_COMERCIAL: row.trade_name ?? '',
         DIRECCION: row.address ?? '',
+        TELEFONO: row.phone ?? '',
         ESTADO: Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO',
       }));
 
@@ -574,7 +661,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       const existingKeys = new Set<string>();
       currentRows.forEach((row) => {
         const typeKey = String(row.customer_type_id ?? 0);
-        const doc = String(row.doc_number ?? '').replace(/\D+/g, '').trim();
+        const doc = normalizeDocumentIdentity(row.doc_number ?? '');
         const nameKey = normalizeImportText(row.name ?? '');
         const identity = doc !== '' ? doc : nameKey;
         if (identity !== '') {
@@ -593,7 +680,8 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
           return acc;
         }, {});
 
-        const selectedType = resolveCustomerTypeFromImportRow(row, typeByName, typeBySunatCode);
+        const docNumber = normalizeDocNumberCell(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '');
+        const selectedType = resolveCustomerTypeFromImportRow(row, typeByName, typeBySunatCode, docNumber);
         if (!selectedType) {
           skipped++;
           if (!firstError) {
@@ -602,8 +690,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
           continue;
         }
 
-        const docNumber = String(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '').trim();
-        const docNormalized = docNumber.replace(/\D+/g, '').trim();
+        const docNormalized = normalizeDocumentIdentity(docNumber);
         const legalName = String(row.RAZON_SOCIAL_NOMBRE ?? row.RAZON_SOCIAL ?? row.NOMBRE ?? '').trim();
 
         if (legalName === '') {
@@ -633,6 +720,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
           last_name: '',
           plate: '',
           address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim(),
+          phone: String(row.TELEFONO ?? row.PHONE ?? '').trim(),
           status: statusRaw === 'INACTIVO' ? 0 : 1,
           default_tier_id: null,
           discount_percent: 0,
@@ -1100,6 +1188,10 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                 <label>
                   Direccion
                   <input value={form.address} onChange={(event) => setForm((prev) => ({ ...prev, address: event.target.value }))} />
+                </label>
+                <label>
+                  Telefono
+                  <input value={form.phone} onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))} />
                 </label>
                 <label>
                   Estado
