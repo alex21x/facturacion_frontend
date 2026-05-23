@@ -397,6 +397,35 @@ export type CompanyCommerceAdminMatrixResponse = {
   companies: CompanyCommerceAdminMatrixCompany[];
 };
 
+// ---- Admin SUNAT reconcile matrix ----
+
+export type CompanySunatReconcileAdminRecord = {
+  auto_reconcile_enabled: boolean;
+  reconcile_batch_size: number;
+  reconcile_retry_base_minutes: number;
+  reconcile_retry_max_minutes: number;
+  reconcile_warn_attempts: number;
+  sunat_exception_notify_enabled: boolean;
+  sunat_exception_notify_hours: number;
+  sunat_alert_repeat_minutes: number;
+  sunat_exception_notify_limit: number;
+};
+
+export type CompanySunatReconcileAdminMatrixCompany = {
+  company_id: number;
+  tax_id: string | null;
+  legal_name: string;
+  trade_name: string | null;
+  company_status: number;
+  tax_bridge_enabled: boolean;
+  sunat_reconcile: CompanySunatReconcileAdminRecord;
+};
+
+export type CompanySunatReconcileAdminMatrixResponse = {
+  defaults: CompanySunatReconcileAdminRecord;
+  companies: CompanySunatReconcileAdminMatrixCompany[];
+};
+
 // ---- Admin inventory settings matrix ----
 
 export type InventorySettingsRecord = {
