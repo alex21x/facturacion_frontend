@@ -6292,10 +6292,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             >
                               {(() => {
                                 const stock = stockByProductId.get(row.id) ?? 0;
+                                const price = Number(row.sale_price ?? 0);
                                 return (
                                   <>
                                     <strong>{row.name}</strong>
                                     <span className="suggest-sku">{row.sku ?? 'SIN-SKU'}</span>
+                                    <span className="suggest-price">PV: {selectedCurrency?.symbol ?? 'S/'}{price.toFixed(2)}</span>
                                     <span className="suggest-stock">
                                       Stock: <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>
                                     </span>
@@ -6476,89 +6478,90 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           <th>{salesItemDiscountEnabled ? 'Descuento' : 'Gratis'}</th>
                         )}
                         <th>Subtotal</th>
-                        {(salesItemDiscountEnabled || salesFreeItemsEnabled) && <th>Total</th>}
+                        <th>IGV</th>
+                        <th>Total</th>
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {cart.map((item, index) => (
-                        <tr key={`${item.productId}-${item.lotId}-${index}`}>
-                          <td>{index + 1}</td>
-                          <td>{item.description}</td>
-                          <td>
-                            {item.isManual || !item.productId
-                              ? '-'
-                              : (() => {
-                                  const stock = stockByProductId.get(item.productId) ?? 0;
-                                  return <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>;
-                                })()}
-                          </td>
-                          <td>{item.taxLabel}</td>
-                          <td>
-                            <input
-                              className="cell-input"
-                              type="number"
-                              step="0.001"
-                              min="0.001"
-                              value={item.qty}
-                              onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
-                            />
-                          </td>
-                          <td>
-                            <input
-                              className="cell-input"
-                              type="number"
-                              step="0.01"
-                              min="0.01"
-                              value={item.unitPrice}
-                              onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
-                            />
-                          </td>
-                          {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
+                      {cart.map((item, index) => {
+                        const lineAmounts = computeSalesDraftAmounts(item);
+                        return (
+                          <tr key={`${item.productId}-${item.lotId}-${index}`}>
+                            <td>{index + 1}</td>
+                            <td>{item.description}</td>
                             <td>
-                              <div className="sales-table-line-meta">
-                                {salesItemDiscountEnabled && (
-                                  <input
-                                    className="cell-input"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    value={Number(item.discountTotal ?? 0)}
-                                    onChange={(e) => updateDraftItem(index, 'discountTotal', Number(e.target.value))}
-                                    disabled={Boolean(item.isFreeOperation)}
-                                  />
-                                )}
-                                {salesFreeItemsEnabled && (
-                                  <label className="sales-inline-check">
-                                    <input
-                                      type="checkbox"
-                                      checked={Boolean(item.isFreeOperation)}
-                                      onChange={(e) => {
-                                        updateDraftItem(index, 'isFreeOperation', e.target.checked);
-                                        if (e.target.checked) {
-                                          updateDraftItem(index, 'discountTotal', 0);
-                                        }
-                                      }}
-                                    />
-                                    Gratis
-                                  </label>
-                                )}
-                              </div>
+                              {item.isManual || !item.productId
+                                ? '-'
+                                : (() => {
+                                    const stock = stockByProductId.get(item.productId) ?? 0;
+                                    return <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>;
+                                  })()}
                             </td>
-                          )}
-                          <td>
-                            {computeSalesDraftAmounts(item).subtotal.toFixed(2)}
-                          </td>
-                          {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
-                            <td>{computeSalesDraftAmounts(item).finalTotal.toFixed(2)}</td>
-                          )}
-                          <td>
-                            <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
-                              Quitar
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                            <td>{item.taxLabel}</td>
+                            <td>
+                              <input
+                                className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
+                                type="number"
+                                step="0.001"
+                                min="0.001"
+                                value={item.qty}
+                                onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
+                              />
+                            </td>
+                            <td>
+                              <input
+                                className="cell-input sales-cart-cell-input sales-cart-cell-input--price"
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                value={item.unitPrice}
+                                onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
+                              />
+                            </td>
+                            {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
+                              <td>
+                                <div className="sales-table-line-meta">
+                                  {salesItemDiscountEnabled && (
+                                    <input
+                                      className="cell-input"
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      value={Number(item.discountTotal ?? 0)}
+                                      onChange={(e) => updateDraftItem(index, 'discountTotal', Number(e.target.value))}
+                                      disabled={Boolean(item.isFreeOperation)}
+                                    />
+                                  )}
+                                  {salesFreeItemsEnabled && (
+                                    <label className="sales-inline-check">
+                                      <input
+                                        type="checkbox"
+                                        checked={Boolean(item.isFreeOperation)}
+                                        onChange={(e) => {
+                                          updateDraftItem(index, 'isFreeOperation', e.target.checked);
+                                          if (e.target.checked) {
+                                            updateDraftItem(index, 'discountTotal', 0);
+                                          }
+                                        }}
+                                      />
+                                      Gratis
+                                    </label>
+                                  )}
+                                </div>
+                              </td>
+                            )}
+                            <td>{lineAmounts.subtotal.toFixed(2)}</td>
+                            <td>{lineAmounts.taxAmount.toFixed(2)}</td>
+                            <td>{lineAmounts.finalTotal.toFixed(2)}</td>
+                            <td>
+                              <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
+                                Quitar
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

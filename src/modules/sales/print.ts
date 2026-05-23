@@ -651,6 +651,9 @@ export function buildCommercialDocument80mmHtml(
             width: 80mm;
             margin: 0 auto;
           }
+          body, body * {
+            font-weight: 700;
+          }
           .sheet { 
             width: 80mm;
             margin: 0;
@@ -1298,6 +1301,7 @@ export function buildCashReportHtml80mm(
           @media print { @page { size: 80mm auto; margin: 0; } .no-print { display: none !important; } }
           * { box-sizing: border-box; }
           body { margin: 0; font-family: Courier, monospace; color: #000; font-size: 10px; line-height: 1.3; background: #fff; }
+          body, body * { font-weight: 700; }
           .sheet { width: 80mm; min-width: 300px; margin: 0 auto; padding: 6mm; }
           .print-bar { background: linear-gradient(120deg, #0f172a 0%, #1e3a8a 100%); color: #fff; padding: 8px 12px; text-align: center; font-family: sans-serif; font-size: 13px; }
           .print-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-radius: 8px; white-space: nowrap; }

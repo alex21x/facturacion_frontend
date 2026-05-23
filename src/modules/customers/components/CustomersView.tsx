@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
 import '../customers.css';
 
@@ -85,6 +85,34 @@ type CustomersViewProps = {
 };
 
 const PAGE_SIZE = 10;
+
+const CUSTOMER_BULK_TEMPLATE_HEADERS = [
+  'TIPO_CLIENTE',
+  'CODIGO_SUNAT',
+  'NUMERO_DOCUMENTO',
+  'RAZON_SOCIAL_NOMBRE',
+  'NOMBRE_COMERCIAL',
+  'DIRECCION',
+  'ESTADO',
+];
+
+function normalizeImportHeader(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function normalizeImportText(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+}
 
 function PlusColorIcon() {
   return (
@@ -340,6 +368,9 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   const [isVehicleModalOpen, setIsVehicleModalOpen] = useState(false);
   const [vehiclesCustomer, setVehiclesCustomer] = useState<CustomerRow | null>(null);
   const [page, setPage] = useState(1);
+  const [importingCustomers, setImportingCustomers] = useState(false);
+  const [exportingCustomers, setExportingCustomers] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeCount = useMemo(() => rows.filter((row) => Number(row.status) === 1).length, [rows]);
   const inactiveCount = rows.length - activeCount;
@@ -396,6 +427,236 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       setMessage(error instanceof Error ? error.message : 'No se pudo cargar clientes');
     } finally {
       setLoading(false);
+    }
+  }
+
+  function resolveCustomerTypeFromImportRow(
+    row: Record<string, unknown>,
+    typeByName: Map<string, CustomerTypeOption>,
+    typeBySunatCode: Map<string, CustomerTypeOption>
+  ): CustomerTypeOption | null {
+    const nameRaw = String(row.TIPO_CLIENTE ?? row.CUSTOMER_TYPE ?? '').trim();
+    const sunatRaw = String(row.CODIGO_SUNAT ?? row.SUNAT_CODE ?? row.TIPO_DOCUMENTO ?? row.DOC_TYPE ?? '').trim();
+
+    if (sunatRaw !== '') {
+      const typeByCode = typeBySunatCode.get(sunatRaw);
+      if (typeByCode) {
+        return typeByCode;
+      }
+    }
+
+    if (nameRaw !== '') {
+      const typeByNameMatch = typeByName.get(normalizeImportText(nameRaw));
+      if (typeByNameMatch) {
+        return typeByNameMatch;
+      }
+    }
+
+    return null;
+  }
+
+  async function downloadCustomerTemplate() {
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+
+      const sampleType = customerTypes[0] ?? null;
+      const dataSheet = XLSX.utils.aoa_to_sheet([
+        CUSTOMER_BULK_TEMPLATE_HEADERS,
+        [
+          sampleType?.name ?? 'Cliente general',
+          sampleType ? String(sampleType.sunat_code) : '6',
+          '20123456789',
+          'Cliente ejemplo SAC',
+          'Cliente ejemplo',
+          'Av. Principal 123 - Lima',
+          'ACTIVO',
+        ],
+      ]);
+      dataSheet['!cols'] = [
+        { wch: 24 },
+        { wch: 16 },
+        { wch: 22 },
+        { wch: 42 },
+        { wch: 28 },
+        { wch: 42 },
+        { wch: 12 },
+      ];
+
+      const typesSheetData = [
+        ['ID', 'NOMBRE', 'CODIGO_SUNAT'],
+        ...customerTypes.map((type) => [String(type.id), type.name, String(type.sunat_code)]),
+      ];
+      const typesSheet = XLSX.utils.aoa_to_sheet(typesSheetData);
+      typesSheet['!cols'] = [{ wch: 10 }, { wch: 30 }, { wch: 14 }];
+
+      const instructionsSheet = XLSX.utils.aoa_to_sheet([
+        ['CAMPO', 'REGLA'],
+        ['TIPO_CLIENTE', 'Obligatorio. Debe coincidir con la hoja TIPOS_CLIENTE o usar CODIGO_SUNAT válido.'],
+        ['CODIGO_SUNAT', 'Obligatorio si no se usa TIPO_CLIENTE.'],
+        ['NUMERO_DOCUMENTO', 'Obligatorio. Se omiten duplicados por tipo de cliente + documento.'],
+        ['RAZON_SOCIAL_NOMBRE', 'Obligatorio.'],
+        ['NOMBRE_COMERCIAL', 'Opcional.'],
+        ['DIRECCION', 'Opcional.'],
+        ['ESTADO', 'Opcional. ACTIVO o INACTIVO (por defecto ACTIVO).'],
+      ]);
+      instructionsSheet['!cols'] = [{ wch: 24 }, { wch: 94 }];
+
+      XLSX.utils.book_append_sheet(workbook, dataSheet, 'CLIENTES');
+      XLSX.utils.book_append_sheet(workbook, typesSheet, 'TIPOS_CLIENTE');
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'INSTRUCCIONES');
+      XLSX.writeFile(workbook, 'formato_importacion_clientes.xlsx');
+      setMessage('Formato de clientes descargado.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo descargar formato de clientes.');
+    }
+  }
+
+  async function exportCustomersXlsx() {
+    setExportingCustomers(true);
+    setMessage('');
+
+    try {
+      const data = await fetchCustomers(accessToken, { status: null, limit: 10000 });
+      const XLSX = await import('xlsx');
+      const exportRows = data.map((row) => ({
+        TIPO_CLIENTE: row.customer_type_name ?? '',
+        CODIGO_SUNAT: row.doc_type ?? '',
+        NUMERO_DOCUMENTO: row.doc_number ?? '',
+        RAZON_SOCIAL_NOMBRE: row.name ?? '',
+        NOMBRE_COMERCIAL: row.trade_name ?? '',
+        DIRECCION: row.address ?? '',
+        ESTADO: Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO',
+      }));
+
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(exportRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes');
+      XLSX.writeFile(workbook, `clientes_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+      setMessage(`Exportación completada: ${data.length} clientes.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo exportar clientes.');
+    } finally {
+      setExportingCustomers(false);
+    }
+  }
+
+  async function handleImportCustomersFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    setImportingCustomers(true);
+    setMessage('');
+
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+
+      if (!sheet) {
+        throw new Error('El archivo no contiene una hoja válida.');
+      }
+
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+      if (rawRows.length === 0) {
+        throw new Error('El archivo no tiene filas para importar.');
+      }
+
+      const typeByName = new Map(customerTypes.map((type) => [normalizeImportText(type.name), type]));
+      const typeBySunatCode = new Map(customerTypes.map((type) => [String(type.sunat_code), type]));
+      const currentRows = await fetchCustomers(accessToken, { status: null, limit: 10000 });
+      const existingKeys = new Set<string>();
+      currentRows.forEach((row) => {
+        const typeKey = String(row.customer_type_id ?? 0);
+        const doc = String(row.doc_number ?? '').replace(/\D+/g, '').trim();
+        const nameKey = normalizeImportText(row.name ?? '');
+        const identity = doc !== '' ? doc : nameKey;
+        if (identity !== '') {
+          existingKeys.add(`${typeKey}|${identity}`);
+        }
+      });
+
+      const seenInFile = new Set<string>();
+      let created = 0;
+      let skipped = 0;
+      let firstError = '';
+
+      for (const rawRow of rawRows) {
+        const row = Object.entries(rawRow).reduce<Record<string, unknown>>((acc, [key, value]) => {
+          acc[normalizeImportHeader(key)] = value;
+          return acc;
+        }, {});
+
+        const selectedType = resolveCustomerTypeFromImportRow(row, typeByName, typeBySunatCode);
+        if (!selectedType) {
+          skipped++;
+          if (!firstError) {
+            firstError = 'Fila omitida por tipo de cliente no reconocido.';
+          }
+          continue;
+        }
+
+        const docNumber = String(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '').trim();
+        const docNormalized = docNumber.replace(/\D+/g, '').trim();
+        const legalName = String(row.RAZON_SOCIAL_NOMBRE ?? row.RAZON_SOCIAL ?? row.NOMBRE ?? '').trim();
+
+        if (legalName === '') {
+          skipped++;
+          if (!firstError) {
+            firstError = 'Fila omitida por nombre/razón social vacío.';
+          }
+          continue;
+        }
+
+        const identity = docNormalized !== '' ? docNormalized : normalizeImportText(legalName);
+        const dedupKey = `${selectedType.id}|${identity}`;
+        if (identity === '' || seenInFile.has(dedupKey) || existingKeys.has(dedupKey)) {
+          skipped++;
+          continue;
+        }
+        seenInFile.add(dedupKey);
+
+        const statusRaw = normalizeImportText(String(row.ESTADO ?? 'ACTIVO'));
+        const payload: CustomerFormState = {
+          doc_type: String(selectedType.sunat_code),
+          customer_type_id: selectedType.id,
+          doc_number: docNumber,
+          legal_name: legalName,
+          trade_name: String(row.NOMBRE_COMERCIAL ?? row.TRADE_NAME ?? '').trim(),
+          first_name: '',
+          last_name: '',
+          plate: '',
+          address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim(),
+          status: statusRaw === 'INACTIVO' ? 0 : 1,
+          default_tier_id: null,
+          discount_percent: 0,
+          price_profile_status: 1,
+        };
+
+        try {
+          await createCustomer(accessToken, payload);
+          created++;
+          existingKeys.add(dedupKey);
+        } catch (error) {
+          skipped++;
+          if (!firstError) {
+            firstError = error instanceof Error ? error.message : 'Error creando cliente en importación.';
+          }
+        }
+      }
+
+      setMessage(`Importación clientes: ${created} creados, ${skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`);
+      await loadCustomers();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo importar clientes.');
+    } finally {
+      setImportingCustomers(false);
     }
   }
 
@@ -621,6 +882,27 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
             <RefreshColorIcon />
             Refrescar
           </button>
+          <button type="button" className="mode-btn customers-header-btn" onClick={() => void downloadCustomerTemplate()} disabled={loading || customerTypes.length === 0}>
+            Formato
+          </button>
+          <button
+            type="button"
+            className="mode-btn customers-header-btn"
+            onClick={() => importFileInputRef.current?.click()}
+            disabled={loading || importingCustomers}
+          >
+            {importingCustomers ? 'Importando...' : 'Importar'}
+          </button>
+          <button type="button" className="mode-btn customers-header-btn" onClick={() => void exportCustomersXlsx()} disabled={loading || exportingCustomers}>
+            {exportingCustomers ? 'Exportando...' : 'Exportar'}
+          </button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            style={{ display: 'none' }}
+            onChange={(event) => void handleImportCustomersFileChange(event)}
+          />
         </div>
       </div>
 
