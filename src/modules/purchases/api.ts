@@ -263,6 +263,7 @@ export type ResolveSupplierByDocumentResponse = {
   doc_type: 'DNI' | 'RUC' | string | null;
   name: string;
   address: string | null;
+  phone?: string | null;
   source: 'local' | 'reniec' | 'sunat';
   message: string;
 };
@@ -273,6 +274,7 @@ export type SupplierAutocompleteItem = {
   doc_number: string;
   name: string;
   address: string | null;
+  phone?: string | null;
   source: string;
 };
 
@@ -281,6 +283,7 @@ export type SupplierBulkImportRow = {
   doc_number: string;
   legal_name: string;
   address?: string | null;
+  phone?: string | null;
   source?: string | null;
 };
 

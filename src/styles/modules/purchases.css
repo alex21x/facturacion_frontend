@@ -65,6 +65,33 @@
   display: block;
 }
 
+.purchases-supplier-catalog {
+  margin: 10px 0;
+  border: 1px solid #dfd4bf;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fffaf2;
+}
+
+.purchases-supplier-catalog h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #5f5138;
+}
+
+.purchases-supplier-catalog p {
+  margin: 4px 0 0;
+  font-size: 0.78rem;
+  color: #74664c;
+}
+
+.purchases-supplier-catalog-actions {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 .purchases-supplier-head {
   display: flex;
   align-items: center;
@@ -76,7 +103,6 @@
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  flex-wrap: wrap;
 }
 
 .purchases-entry-hint {
@@ -114,12 +140,16 @@
   }
 
   .purchases-supplier-tools {
-    width: 100%;
+    width: auto;
   }
 
   .purchases-supplier-tools .btn-mini {
-    flex: 1;
+    flex: 0 0 auto;
     min-width: 0;
+  }
+
+  .purchases-supplier-catalog-actions .btn-mini {
+    width: 100%;
   }
 
   .purchases-entry-row {

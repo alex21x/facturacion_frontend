@@ -53,6 +53,7 @@ type SupplierSuggestion = {
   doc_number: string;
   name: string;
   address: string | null;
+  phone?: string | null;
   source: string;
 };
 
@@ -85,6 +86,7 @@ const SUPPLIER_BULK_TEMPLATE_HEADERS = [
   'NUMERO_DOCUMENTO',
   'RAZON_SOCIAL',
   'DIRECCION',
+  'TELEFONO',
   'ORIGEN',
 ];
 
@@ -111,6 +113,7 @@ function normalizeSupplierImportRows(rawRows: Array<Record<string, unknown>>): S
         doc_number: String(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '').trim(),
         legal_name: String(row.RAZON_SOCIAL ?? row.LEGAL_NAME ?? row.NOMBRE ?? '').trim(),
         address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim() || undefined,
+        phone: String(row.TELEFONO ?? row.PHONE ?? '').trim() || undefined,
         source: String(row.ORIGEN ?? row.SOURCE ?? '').trim() || undefined,
       };
 
@@ -371,13 +374,14 @@ export function PurchasesView({
 
       const dataSheet = XLSX.utils.aoa_to_sheet([
         SUPPLIER_BULK_TEMPLATE_HEADERS,
-        ['RUC', '20123456789', 'Proveedor ejemplo SAC', 'Av. Principal 123 - Lima', 'import'],
+        ['RUC', '20123456789', 'Proveedor ejemplo SAC', 'Av. Principal 123 - Lima', '987654321', 'import'],
       ]);
       dataSheet['!cols'] = [
         { wch: 18 },
         { wch: 22 },
         { wch: 42 },
         { wch: 42 },
+        { wch: 18 },
         { wch: 14 },
       ];
 
@@ -387,6 +391,7 @@ export function PurchasesView({
         ['NUMERO_DOCUMENTO', 'Obligatorio. No se importan duplicados por documento.'],
         ['RAZON_SOCIAL', 'Obligatorio.'],
         ['DIRECCION', 'Opcional.'],
+        ['TELEFONO', 'Opcional.'],
         ['ORIGEN', 'Opcional. Por defecto: import.'],
       ]);
       instructionsSheet['!cols'] = [{ wch: 24 }, { wch: 90 }];
@@ -454,6 +459,7 @@ export function PurchasesView({
         NUMERO_DOCUMENTO: row.doc_number ?? '',
         RAZON_SOCIAL: row.name ?? '',
         DIRECCION: row.address ?? '',
+        TELEFONO: row.phone ?? '',
         ORIGEN: row.source ?? '',
       }));
 
@@ -1833,6 +1839,36 @@ export function PurchasesView({
           : 'Registra ordenes de compra, ingresos por compra o ajustes de stock. Solo la compra y el ajuste impactan inventario inmediatamente.'}
       </p>
 
+      <section className="purchases-supplier-catalog" aria-label="Catalogo de proveedores">
+        <h4>Catalogo de proveedores</h4>
+        <p>Gestiona importación, exportación y formato de plantilla sin afectar el formulario de registro.</p>
+        <div className="purchases-supplier-catalog-actions">
+          <button
+            type="button"
+            className="btn-mini"
+            onClick={() => void downloadSupplierTemplate()}
+          >
+            Descargar formato
+          </button>
+          <button
+            type="button"
+            className="btn-mini"
+            onClick={() => supplierImportFileInputRef.current?.click()}
+            disabled={supplierImporting}
+          >
+            {supplierImporting ? 'Importando...' : 'Importar proveedores'}
+          </button>
+          <button
+            type="button"
+            className="btn-mini"
+            onClick={() => void exportSuppliersXlsx()}
+            disabled={supplierExporting}
+          >
+            {supplierExporting ? 'Exportando...' : 'Exportar proveedores'}
+          </button>
+        </div>
+      </section>
+
       {workspaceMode === 'ENTRY' && (
       <form className="sales-form" onSubmit={handleSubmit}>
         <div className="sales-grid-head purchases-grid-head">
@@ -1854,29 +1890,6 @@ export function PurchasesView({
             <div className="purchases-supplier-head">
               <span>Proveedor / RUC</span>
               <div className="purchases-supplier-tools">
-                <button
-                  type="button"
-                  className="btn-mini"
-                  onClick={() => void downloadSupplierTemplate()}
-                >
-                  Formato
-                </button>
-                <button
-                  type="button"
-                  className="btn-mini"
-                  onClick={() => supplierImportFileInputRef.current?.click()}
-                  disabled={supplierImporting}
-                >
-                  {supplierImporting ? 'Importando...' : 'Importar'}
-                </button>
-                <button
-                  type="button"
-                  className="btn-mini"
-                  onClick={() => void exportSuppliersXlsx()}
-                  disabled={supplierExporting}
-                >
-                  {supplierExporting ? 'Exportando...' : 'Exportar'}
-                </button>
                 <button
                   type="button"
                   className="btn-mini"
@@ -1920,7 +1933,7 @@ export function PurchasesView({
                   >
                     <strong>{row.name}</strong>
                     <small>
-                      {[row.doc_number, row.address].filter(Boolean).join(' · ') || 'Sin datos'}
+                      {[row.doc_number, row.phone, row.address].filter(Boolean).join(' · ') || 'Sin datos'}
                     </small>
                   </button>
                 ))}

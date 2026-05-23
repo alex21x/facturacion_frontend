@@ -4627,16 +4627,29 @@ th {
   font-size: 0.74rem;
 }
 
-.sales-cart-cell-input {
-  min-width: 68px;
+.sales-cart-table-scroll .sales-col-qty,
+.sales-cart-table-scroll .sales-col-price {
+  width: 86px;
+  max-width: 86px;
 }
 
-.sales-cart-cell-input--qty {
+.sales-cart-table-scroll .sales-col-subtotal,
+.sales-cart-table-scroll .sales-col-igv,
+.sales-cart-table-scroll .sales-col-total {
+  min-width: 108px;
+  white-space: nowrap;
+}
+
+.sales-cart-cell-input {
   min-width: 62px;
 }
 
+.sales-cart-cell-input--qty {
+  min-width: 56px;
+}
+
 .sales-cart-cell-input--price {
-  min-width: 66px;
+  min-width: 60px;
 }
 
 .purchases-lines-wrap {

@@ -6472,14 +6472,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         <th>Descripcion</th>
                         <th>Stock</th>
                         <th>Tipo IGV</th>
-                        <th>Cantidad</th>
-                        <th>Precio</th>
+                        <th className="sales-col-qty">Cantidad</th>
+                        <th className="sales-col-price">Precio</th>
                         {(salesItemDiscountEnabled || salesFreeItemsEnabled) && (
                           <th>{salesItemDiscountEnabled ? 'Descuento' : 'Gratis'}</th>
                         )}
-                        <th>Subtotal</th>
-                        <th>IGV</th>
-                        <th>Total</th>
+                        <th className="sales-col-subtotal">Subtotal</th>
+                        <th className="sales-col-igv">IGV Items</th>
+                        <th className="sales-col-total">Total</th>
                         <th></th>
                       </tr>
                     </thead>
@@ -6499,7 +6499,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                   })()}
                             </td>
                             <td>{item.taxLabel}</td>
-                            <td>
+                            <td className="sales-col-qty">
                               <input
                                 className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
                                 type="number"
@@ -6509,7 +6509,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                 onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
                               />
                             </td>
-                            <td>
+                            <td className="sales-col-price">
                               <input
                                 className="cell-input sales-cart-cell-input sales-cart-cell-input--price"
                                 type="number"
@@ -6551,9 +6551,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                 </div>
                               </td>
                             )}
-                            <td>{lineAmounts.subtotal.toFixed(2)}</td>
-                            <td>{lineAmounts.tax.toFixed(2)}</td>
-                            <td>{lineAmounts.finalTotal.toFixed(2)}</td>
+                            <td className="sales-col-subtotal">{lineAmounts.subtotal.toFixed(2)}</td>
+                            <td className="sales-col-igv">{lineAmounts.tax.toFixed(2)}</td>
+                            <td className="sales-col-total">{lineAmounts.finalTotal.toFixed(2)}</td>
                             <td>
                               <button type="button" className="btn-mini danger" onClick={() => removeDraftItem(index)}>
                                 Quitar
