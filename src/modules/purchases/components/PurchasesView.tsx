@@ -100,6 +100,26 @@ function normalizeSupplierExcelHeader(value: string): string {
     .replace(/^_+|_+$/g, '');
 }
 
+function normalizeSpreadsheetDocNumber(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value).toString();
+  }
+
+  const raw = String(value ?? '').trim();
+  if (/^\d+(\.0+)?$/u.test(raw)) {
+    return String(Math.trunc(Number(raw)));
+  }
+
+  if (/^\d+(\.\d+)?e\+\d+$/iu.test(raw)) {
+    const numeric = Number(raw);
+    if (Number.isFinite(numeric)) {
+      return Math.trunc(numeric).toString();
+    }
+  }
+
+  return raw;
+}
+
 function normalizeSupplierImportRows(rawRows: Array<Record<string, unknown>>): SupplierBulkImportRow[] {
   return rawRows
     .map((raw) => {
@@ -108,16 +128,23 @@ function normalizeSupplierImportRows(rawRows: Array<Record<string, unknown>>): S
         return acc;
       }, {});
 
+      const normalizedDocNumber = normalizeSpreadsheetDocNumber(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '').replace(/\D+/g, '');
+      const normalizedLegalName = String(row.RAZON_SOCIAL ?? row.LEGAL_NAME ?? row.NOMBRE ?? '').trim();
+
+      if (normalizedDocNumber === '' || normalizedLegalName === '') {
+        return null;
+      }
+
       const payload: SupplierBulkImportRow = {
         doc_type: String(row.TIPO_DOCUMENTO ?? row.DOC_TYPE ?? '').trim() || undefined,
-        doc_number: String(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '').trim(),
-        legal_name: String(row.RAZON_SOCIAL ?? row.LEGAL_NAME ?? row.NOMBRE ?? '').trim(),
+        doc_number: normalizedDocNumber,
+        legal_name: normalizedLegalName,
         address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim() || undefined,
         phone: String(row.TELEFONO ?? row.PHONE ?? '').trim() || undefined,
         source: String(row.ORIGEN ?? row.SOURCE ?? '').trim() || undefined,
       };
 
-      return (payload.doc_number || payload.legal_name) ? payload : null;
+      return payload;
     })
     .filter((row): row is SupplierBulkImportRow => row !== null);
 }
