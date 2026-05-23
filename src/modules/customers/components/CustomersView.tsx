@@ -323,6 +323,40 @@ async function createCustomer(accessToken: string, payload: CustomerFormState) {
   });
 }
 
+type CustomerBulkImportRow = {
+  doc_type?: string;
+  customer_type_id?: number | null;
+  doc_number: string;
+  legal_name: string;
+  trade_name?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  plate?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  status?: number;
+};
+
+type CustomerBulkImportResponse = {
+  message: string;
+  summary: {
+    total: number;
+    created: number;
+    reactivated: number;
+    skipped: number;
+    errors: number;
+  };
+  errors: Array<{ row: number; message: string }>;
+};
+
+async function importCustomersBulk(accessToken: string, rows: CustomerBulkImportRow[]): Promise<CustomerBulkImportResponse> {
+  return apiClient.request<CustomerBulkImportResponse>('/api/sales/customers/bulk-import', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify({ rows }),
+  });
+}
+
 async function fetchPriceTiers(accessToken: string): Promise<PriceTierOption[]> {
   const response = await apiClient.request<{ data: PriceTierOption[] }>('/api/sales/price-tiers', {
     method: 'GET',
@@ -685,22 +719,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
       const typeByName = new Map(customerTypes.map((type) => [normalizeImportText(type.name), type]));
       const typeBySunatCode = new Map(customerTypes.map((type) => [String(type.sunat_code), type]));
-      const currentRows = await fetchCustomers(accessToken, { status: null, limit: 10000 });
-      const existingKeys = new Set<string>();
-      currentRows.forEach((row) => {
-        const typeKey = String(row.customer_type_id ?? 0);
-        const doc = normalizeDocumentIdentity(row.doc_number ?? '');
-        const nameKey = normalizeImportText(row.name ?? '');
-        const identity = doc !== '' ? doc : nameKey;
-        if (identity !== '') {
-          existingKeys.add(`${typeKey}|${identity}`);
-        }
-      });
-
-      const seenInFile = new Set<string>();
-      let created = 0;
-      let skipped = 0;
-      let firstError = '';
+      const payloadRows: CustomerBulkImportRow[] = [];
 
       for (const rawRow of rawRows) {
         const row = Object.entries(rawRow).reduce<Record<string, unknown>>((acc, [key, value]) => {
@@ -710,64 +729,54 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
         const docNumber = normalizeDocNumberCell(row.NUMERO_DOCUMENTO ?? row.DOC_NUMBER ?? '');
         const selectedType = resolveCustomerTypeFromImportRow(row, typeByName, typeBySunatCode, docNumber);
-        if (!selectedType) {
-          skipped++;
-          if (!firstError) {
-            firstError = 'Fila omitida por tipo de cliente no reconocido.';
-          }
-          continue;
-        }
 
         const docNormalized = normalizeDocumentIdentity(docNumber);
         const legalName = String(row.RAZON_SOCIAL_NOMBRE ?? row.RAZON_SOCIAL ?? row.NOMBRE ?? '').trim();
 
-        if (legalName === '') {
-          skipped++;
-          if (!firstError) {
-            firstError = 'Fila omitida por nombre/razón social vacío.';
-          }
+        if (docNormalized === '' || legalName === '') {
           continue;
         }
-
-        const identity = docNormalized !== '' ? docNormalized : normalizeImportText(legalName);
-        const dedupKey = `${selectedType.id}|${identity}`;
-        if (identity === '' || seenInFile.has(dedupKey) || existingKeys.has(dedupKey)) {
-          skipped++;
-          continue;
-        }
-        seenInFile.add(dedupKey);
 
         const statusRaw = normalizeImportText(String(row.ESTADO ?? 'ACTIVO'));
-        const payload: CustomerFormState = {
-          doc_type: String(selectedType.sunat_code),
-          customer_type_id: selectedType.id,
+        payloadRows.push({
+          doc_type: String(row.TIPO_DOCUMENTO ?? row.DOC_TYPE ?? selectedType?.sunat_code ?? '').trim() || undefined,
+          customer_type_id: selectedType?.id ?? null,
           doc_number: docNumber,
           legal_name: legalName,
-          trade_name: String(row.NOMBRE_COMERCIAL ?? row.TRADE_NAME ?? '').trim(),
-          first_name: '',
-          last_name: '',
-          plate: '',
-          address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim(),
-          phone: String(row.TELEFONO ?? row.PHONE ?? '').trim(),
+          trade_name: String(row.NOMBRE_COMERCIAL ?? row.TRADE_NAME ?? '').trim() || undefined,
+          first_name: undefined,
+          last_name: undefined,
+          plate: undefined,
+          address: String(row.DIRECCION ?? row.ADDRESS ?? '').trim() || undefined,
+          phone: String(row.TELEFONO ?? row.PHONE ?? '').trim() || undefined,
           status: statusRaw === 'INACTIVO' ? 0 : 1,
-          default_tier_id: null,
-          discount_percent: 0,
-          price_profile_status: 1,
-        };
+        });
+      }
 
-        try {
-          await createCustomer(accessToken, payload);
-          created++;
-          existingKeys.add(dedupKey);
-        } catch (error) {
-          skipped++;
-          if (!firstError) {
-            firstError = error instanceof Error ? error.message : 'Error creando cliente en importación.';
-          }
+      if (payloadRows.length === 0) {
+        throw new Error('No se encontraron filas válidas para importar.');
+      }
+
+      let created = 0;
+      let reactivated = 0;
+      let skipped = 0;
+      let firstError = '';
+      const chunks: CustomerBulkImportRow[][] = [];
+      for (let index = 0; index < payloadRows.length; index += 500) {
+        chunks.push(payloadRows.slice(index, index + 500));
+      }
+
+      for (const chunk of chunks) {
+        const response = await importCustomersBulk(accessToken, chunk);
+        created += Number(response.summary.created ?? 0);
+        reactivated += Number(response.summary.reactivated ?? 0);
+        skipped += Number(response.summary.skipped ?? 0);
+        if (!firstError && response.errors.length > 0) {
+          firstError = response.errors[0].message;
         }
       }
 
-      setMessage(`Importación clientes: ${created} creados, ${skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`);
+      setMessage(`Importación clientes: ${created} creados, ${reactivated} reactivados, ${skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`);
       await loadCustomers();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo importar clientes.');

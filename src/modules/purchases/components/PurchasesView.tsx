@@ -434,11 +434,24 @@ export function PurchasesView({
         throw new Error('No se encontraron filas válidas para importar.');
       }
 
-      const response = await importSuppliersBulk(accessToken, rows);
-      const firstError = response.errors[0]?.message;
-      setMessage(
-        `Importación proveedores: ${response.summary.created} creados, ${response.summary.skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`
-      );
+      let created = 0;
+      let skipped = 0;
+      let firstError = '';
+      const chunks: SupplierBulkImportRow[][] = [];
+      for (let index = 0; index < rows.length; index += 500) {
+        chunks.push(rows.slice(index, index + 500));
+      }
+
+      for (const chunk of chunks) {
+        const response = await importSuppliersBulk(accessToken, chunk);
+        created += Number(response.summary.created ?? 0);
+        skipped += Number(response.summary.skipped ?? 0);
+        if (!firstError && response.errors.length > 0) {
+          firstError = response.errors[0].message;
+        }
+      }
+
+      setMessage(`Importación proveedores: ${created} creados, ${skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo importar proveedores.');
     } finally {
