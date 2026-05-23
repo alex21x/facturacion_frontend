@@ -90,7 +90,7 @@ const PAGE_SIZE = 10;
 
 const CUSTOMER_BULK_TEMPLATE_HEADERS = [
   'TIPO_CLIENTE',
-  'CODIGO_SUNAT',
+  'TIPO_DOCUMENTO',
   'NUMERO_DOCUMENTO',
   'RAZON_SOCIAL_NOMBRE',
   'NOMBRE_COMERCIAL',
@@ -151,6 +151,23 @@ function resolveSunatCodeAlias(raw: string): string {
   };
 
   return aliasMap[normalized] ?? '';
+}
+
+function sunatCodeToDocumentAlias(raw: string | number | null | undefined): string {
+  const normalized = resolveSunatCodeAlias(String(raw ?? ''));
+  if (normalized === '6') {
+    return 'RUC';
+  }
+  if (normalized === '1') {
+    return 'DNI';
+  }
+  if (normalized === '4') {
+    return 'CE';
+  }
+  if (normalized === '7') {
+    return 'PAS';
+  }
+  return '';
 }
 
 function normalizeDocNumberCell(value: unknown): string {
@@ -431,6 +448,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   const [page, setPage] = useState(1);
   const [importingCustomers, setImportingCustomers] = useState(false);
   const [exportingCustomers, setExportingCustomers] = useState(false);
+  const [searchFocused, setSearchFocused] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeCount = useMemo(() => rows.filter((row) => Number(row.status) === 1).length, [rows]);
@@ -472,6 +490,16 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
     return Array.from(suggestions).slice(0, 120);
   }, [rows]);
+  const visibleSearchHints = useMemo(() => {
+    const query = normalizeImportText(search);
+    if (query === '') {
+      return searchHints.slice(0, 12);
+    }
+
+    return searchHints
+      .filter((item) => normalizeImportText(item).includes(query))
+      .slice(0, 12);
+  }, [search, searchHints]);
 
   useEffect(() => {
     setPage((prev) => Math.min(prev, totalPages));
@@ -548,7 +576,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
         CUSTOMER_BULK_TEMPLATE_HEADERS,
         [
           sampleType?.name ?? 'Cliente general',
-          sampleType ? String(sampleType.sunat_code) : '6',
+          'RUC',
           '20123456789',
           'Cliente ejemplo SAC',
           'Cliente ejemplo',
@@ -559,7 +587,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       ]);
       dataSheet['!cols'] = [
         { wch: 24 },
-        { wch: 16 },
+        { wch: 18 },
         { wch: 22 },
         { wch: 42 },
         { wch: 28 },
@@ -577,8 +605,8 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
       const instructionsSheet = XLSX.utils.aoa_to_sheet([
         ['CAMPO', 'REGLA'],
-        ['TIPO_CLIENTE', 'Obligatorio. Debe coincidir con la hoja TIPOS_CLIENTE o usar CODIGO_SUNAT válido.'],
-        ['CODIGO_SUNAT', 'Obligatorio si no se usa TIPO_CLIENTE.'],
+        ['TIPO_CLIENTE', 'Opcional. Si se envía, debe coincidir con la hoja TIPOS_CLIENTE.'],
+        ['TIPO_DOCUMENTO', 'Recomendado: DNI, RUC, CE, PAS. El sistema mapea automáticamente a su tipo SUNAT correcto.'],
         ['NUMERO_DOCUMENTO', 'Obligatorio. Se omiten duplicados por tipo de cliente + documento.'],
         ['RAZON_SOCIAL_NOMBRE', 'Obligatorio.'],
         ['NOMBRE_COMERCIAL', 'Opcional.'],
@@ -607,7 +635,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       const XLSX = await import('xlsx');
       const exportRows = data.map((row) => ({
         TIPO_CLIENTE: row.customer_type_name ?? '',
-        CODIGO_SUNAT: row.doc_type ?? '',
+        TIPO_DOCUMENTO: sunatCodeToDocumentAlias(row.doc_type),
         NUMERO_DOCUMENTO: row.doc_number ?? '',
         RAZON_SOCIAL_NOMBRE: row.name ?? '',
         NOMBRE_COMERCIAL: row.trade_name ?? '',
@@ -1010,14 +1038,20 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       </div>
 
       <div className="grid-form entity-filters">
-        <label>
+        <label className="with-suggest customers-search-field">
           Buscar
           <input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            list="customers-search-hints"
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setSearchFocused(true);
+            }}
             autoComplete="off"
             placeholder="Documento, razon social, nombre, placa, marca o modelo"
+            onFocus={() => setSearchFocused(true)}
+            onBlur={() => {
+              window.setTimeout(() => setSearchFocused(false), 120);
+            }}
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 event.preventDefault();
@@ -1025,11 +1059,28 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
               }
             }}
           />
-          <datalist id="customers-search-hints">
-            {searchHints.map((item) => (
-              <option key={item} value={item} />
-            ))}
-          </datalist>
+          {searchFocused && visibleSearchHints.length > 0 && (
+            <div className="suggest-box suggest-box--customer customers-search-suggest">
+              {visibleSearchHints.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  className="suggest-item"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={() => {
+                    setSearch(item);
+                    setSearchFocused(false);
+                    window.setTimeout(() => void loadCustomers(), 0);
+                  }}
+                >
+                  <strong>{item}</strong>
+                </button>
+              ))}
+            </div>
+          )}
         </label>
         <label>
           Estado

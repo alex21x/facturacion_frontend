@@ -4629,27 +4629,38 @@ th {
 
 .sales-cart-table-scroll .sales-col-qty,
 .sales-cart-table-scroll .sales-col-price {
-  width: 86px;
-  max-width: 86px;
+  width: 90px;
+  max-width: 90px;
 }
 
 .sales-cart-table-scroll .sales-col-subtotal,
 .sales-cart-table-scroll .sales-col-igv,
 .sales-cart-table-scroll .sales-col-total {
-  min-width: 108px;
+  min-width: 102px;
   white-space: nowrap;
 }
 
 .sales-cart-cell-input {
-  min-width: 62px;
+  min-width: 66px;
 }
 
 .sales-cart-cell-input--qty {
-  min-width: 56px;
+  min-width: 60px;
 }
 
 .sales-cart-cell-input--price {
-  min-width: 60px;
+  min-width: 64px;
+}
+
+.customers-search-field {
+  position: relative;
+}
+
+.customers-search-suggest {
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 25;
 }
 
 .purchases-lines-wrap {
