@@ -35,6 +35,14 @@ function resolveGetResponseCacheTtlMs(path: string): number {
     return 5000;
   }
 
+  if (path.startsWith('/api/appcfg/commerce-settings')) {
+    return 10000;
+  }
+
+  if (path.startsWith('/api/appcfg/modules')) {
+    return 15000;
+  }
+
   return DEFAULT_GET_RESPONSE_CACHE_TTL_MS;
 }
 

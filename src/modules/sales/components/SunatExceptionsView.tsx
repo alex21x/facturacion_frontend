@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchSunatExceptions,
   fetchSunatExceptionsAudit,
@@ -70,6 +70,10 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   const [selected, setSelected] = useState<SunatExceptionItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  // Ref so loadData can read the current selection without being in its deps array
+  const selectedRef = useRef<SunatExceptionItem | null>(null);
+  selectedRef.current = selected;
+
   const [resolution, setResolution] = useState<ManualSunatConfirmPayload['resolution']>('ACCEPTED');
   const [evidenceType, setEvidenceType] = useState<ManualSunatConfirmPayload['evidence_type']>('WHATSAPP');
   const [evidenceRef, setEvidenceRef] = useState('');
@@ -100,7 +104,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
 
       if (queueResponse.data.length === 0) {
         setSelected(null);
-      } else if (!selected || !queueResponse.data.some((row) => row.id === selected.id)) {
+      } else if (!selectedRef.current || !queueResponse.data.some((row) => row.id === selectedRef.current!.id)) {
         setSelected(queueResponse.data[0]);
       }
     } catch (err) {
@@ -108,7 +112,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, branchId, status, minAgeHours, minAttempts, onlyManualNeeded, page, selected]);
+  }, [accessToken, branchId, status, minAgeHours, minAttempts, onlyManualNeeded, page]);
 
   useEffect(() => {
     void loadData();
