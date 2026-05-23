@@ -170,12 +170,27 @@
 
 .customers-header-actions {
   margin-bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .customers-header-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+@media (max-width: 900px) {
+  .customers-header-actions {
+    width: 100%;
+  }
+
+  .customers-header-btn {
+    flex: 1 1 calc(50% - 6px);
+    justify-content: center;
+    min-width: 0;
+  }
 }
 
 .customers-icon-svg {

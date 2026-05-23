@@ -4427,6 +4427,13 @@ th {
   white-space: nowrap;
 }
 
+.suggest-price {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #5f5138;
+  white-space: nowrap;
+}
+
 .sales-summary {
   display: grid;
   grid-template-columns: 1fr;
@@ -4618,6 +4625,18 @@ th {
   min-height: 30px;
   padding: 4px 9px;
   font-size: 0.74rem;
+}
+
+.sales-cart-cell-input {
+  min-width: 68px;
+}
+
+.sales-cart-cell-input--qty {
+  min-width: 62px;
+}
+
+.sales-cart-cell-input--price {
+  min-width: 66px;
 }
 
 .purchases-lines-wrap {
