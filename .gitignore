@@ -30,3 +30,7 @@ pnpm-debug.log*
 # OS
 .DS_Store
 Thumbs.db
+
+# Installer build artifacts
+*.zip
+install-local.log
