@@ -470,14 +470,6 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         <details className="companycfg-section" open>
           <summary>Bancos y certificados</summary>
           <div className="companycfg-section-body">
-            <label className="companycfg-inline-toggle">
-              <input
-                type="checkbox"
-                checked={showPaymentBrandIcons}
-                onChange={(e) => setShowPaymentBrandIcons(e.target.checked)}
-              />
-              Mostrar logos de pago en A4 y ticket
-            </label>
             <div className="form-card companycfg-card">
               <div className="companycfg-card-head">
                 <h4>Cuentas Bancarias</h4>
@@ -625,6 +617,17 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         <details className="companycfg-section" open>
           <summary>Branding de empresa</summary>
           <div className="companycfg-section-body">
+            <div className="form-card companycfg-card">
+              <h4>Opciones de impresión</h4>
+              <label className="companycfg-inline-toggle">
+                <input
+                  type="checkbox"
+                  checked={showPaymentBrandIcons}
+                  onChange={(e) => setShowPaymentBrandIcons(e.target.checked)}
+                />
+                Mostrar logos de pago (Yape, Plin, Culqi) en A4 y ticket
+              </label>
+            </div>
             <div className="form-card companycfg-card">
               <h4>Logo de la Empresa</h4>
               {profile?.logo_url && (

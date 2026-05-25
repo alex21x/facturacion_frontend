@@ -203,9 +203,10 @@ function resolveVehiclePrintData(metadata: Record<string, unknown>): { plate: st
 
 function paymentBrandsFooterHtml(size: 'A4' | '80mm'): string {
   const baseClass = size === 'A4' ? 'paybrands paybrands-a4' : 'paybrands paybrands-80';
-  const yapeLogo = '/assets/payment-logos/yape-official.png';
-  const plinLogo = '/assets/payment-logos/plin-official.png';
-  const culqiLogo = '/assets/payment-logos/culqi-official.png';
+  const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
+  const yapeLogo = `${origin}/assets/payment-logos/yape-official.png`;
+  const plinLogo = `${origin}/assets/payment-logos/plin-official.png`;
+  const culqiLogo = `${origin}/assets/payment-logos/culqi-official.png`;
   return `<div class="${baseClass}">
     <div class="paybrand"><img src="${escapeHtml(yapeLogo)}" alt="Yape" /></div>
     <div class="paybrand"><img src="${escapeHtml(plinLogo)}" alt="Plin" /></div>
@@ -734,8 +735,8 @@ export function buildCommercialDocument80mmHtml(
           body { 
             font-family: 'Courier New', Courier, monospace; 
             color: #000; 
-            font-size: 12px; 
-            line-height: 1.35;
+            font-size: 14px; 
+            line-height: 1.4;
             background: #fff;
             width: 80mm;
             margin: 0 auto;
@@ -794,20 +795,20 @@ export function buildCommercialDocument80mmHtml(
             background: #fff;
           }
           .title { 
-            font-size: 11px; 
+            font-size: 13px; 
             font-weight: 700; 
             text-transform: uppercase; 
             letter-spacing: 0.5px;
             margin-bottom: 1mm;
           }
           .docno { 
-            font-size: 12px; 
+            font-size: 15px; 
             font-weight: 700; 
             margin-bottom: 0.5mm;
             letter-spacing: 1px;
           }
           .date { 
-            font-size: 9px;
+            font-size: 11px;
             color: #333;
           }
           .section { 
@@ -816,7 +817,7 @@ export function buildCommercialDocument80mmHtml(
           .section-title { 
             font-weight: 700; 
             text-transform: uppercase; 
-            font-size: 9px;
+            font-size: 11px;
             margin-bottom: 1mm;
             border-bottom: 1px solid #000;
             padding-bottom: 0.5mm;
@@ -824,8 +825,8 @@ export function buildCommercialDocument80mmHtml(
           .info-row { 
             display: flex; 
             justify-content: space-between; 
-            font-size: 9px; 
-            margin: 0.3mm 0; 
+            font-size: 11px; 
+            margin: 0.4mm 0; 
             word-break: break-word;
           }
           .info-label { 
@@ -849,7 +850,7 @@ export function buildCommercialDocument80mmHtml(
           }
           td {
             padding: 0.5mm 0;
-            font-size: 9px;
+            font-size: 11px;
           }
           .summary { 
             border-top: 1px solid #000;
@@ -859,7 +860,7 @@ export function buildCommercialDocument80mmHtml(
           .summary-row { 
             display: flex; 
             justify-content: space-between; 
-            font-size: 9px; 
+            font-size: 11px; 
             margin: 0.5mm 0;
           }
           .summary-label { 
@@ -872,7 +873,7 @@ export function buildCommercialDocument80mmHtml(
             width: 30mm;
           }
           .total-row { 
-            font-size: 12px; 
+            font-size: 14px; 
             font-weight: 700;
             border-top: 2px solid #000;
             padding-top: 1mm;
@@ -882,7 +883,7 @@ export function buildCommercialDocument80mmHtml(
           }
           .footer { 
             text-align: center; 
-            font-size: 8px; 
+            font-size: 10px; 
             color: #555; 
             margin-top: 2mm;
             border-top: 1px dashed #000;
@@ -913,7 +914,7 @@ export function buildCommercialDocument80mmHtml(
             background: #fff;
           }
           .sunat-ticket .line {
-            font-size: 8px;
+            font-size: 9px;
             margin: 0.3mm 0;
             word-break: break-all;
           }
