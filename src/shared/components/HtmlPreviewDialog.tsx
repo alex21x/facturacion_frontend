@@ -8,9 +8,95 @@ type HtmlPreviewDialogProps = {
   onClose: () => void;
 };
 
-function downloadAsPdf(iframe: HTMLIFrameElement | null): void {
-  iframe?.contentWindow?.focus();
-  iframe?.contentWindow?.print();
+function sanitizeFileName(raw: string): string {
+  const clean = String(raw || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ');
+  return clean || 'documento';
+}
+
+function resolvePdfFileName(doc: Document, fallbackTitle: string): string {
+  const titleText = doc.querySelector('title')?.textContent?.trim() || fallbackTitle;
+  const baseName = sanitizeFileName(titleText);
+  return baseName.toLowerCase().endsWith('.pdf') ? baseName : `${baseName}.pdf`;
+}
+
+async function savePdfBlob(blob: Blob, fileName: string): Promise<void> {
+  const picker = (window as any).showSaveFilePicker;
+  if (typeof picker === 'function') {
+    const handle = await picker({
+      suggestedName: fileName,
+      types: [
+        {
+          description: 'PDF',
+          accept: { 'application/pdf': ['.pdf'] },
+        },
+      ],
+    });
+    const writable = await handle.createWritable();
+    await writable.write(blob);
+    await writable.close();
+    return;
+  }
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function downloadAsPdf(
+  iframe: HTMLIFrameElement | null,
+  title: string,
+  variant: 'compact' | 'wide' | 'xwide',
+): Promise<void> {
+  const sourceDoc = iframe?.contentDocument;
+  if (!sourceDoc?.body) {
+    throw new Error('No se pudo preparar el documento para exportar PDF.');
+  }
+
+  const module = await import('html2pdf.js');
+  const html2pdf = (module as any).default ?? module;
+  const fileName = resolvePdfFileName(sourceDoc, title);
+
+  const sandbox = document.createElement('div');
+  sandbox.style.position = 'fixed';
+  sandbox.style.left = '-99999px';
+  sandbox.style.top = '0';
+  sandbox.style.background = '#fff';
+  sandbox.style.zIndex = '-1';
+
+  const sourceHtml = sourceDoc.documentElement.cloneNode(true) as HTMLElement;
+  sandbox.appendChild(sourceHtml);
+  document.body.appendChild(sandbox);
+
+  try {
+    const target = sourceHtml.querySelector('body') ?? sourceHtml;
+    const worker = html2pdf().set({
+      filename: fileName,
+      margin: variant === 'compact' ? [2, 2, 2, 2] : [8, 8, 8, 8],
+      image: { type: 'jpeg', quality: 0.98 },
+      html2canvas: {
+        scale: variant === 'compact' ? 3 : 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+      },
+      jsPDF: variant === 'compact'
+        ? { unit: 'mm', format: [80, 297], orientation: 'portrait' }
+        : { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] },
+    }).from(target);
+
+    const blob = await worker.outputPdf('blob');
+    await savePdfBlob(blob, fileName);
+  } finally {
+    sandbox.remove();
+  }
 }
 
 export function HtmlPreviewDialog({
@@ -85,7 +171,7 @@ export function HtmlPreviewDialog({
             <button
               type="button"
               onClick={() => {
-                downloadAsPdf(iframeRef.current);
+                void downloadAsPdf(iframeRef.current, title, variant);
               }}
               style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: '0.88rem' }}
             >
