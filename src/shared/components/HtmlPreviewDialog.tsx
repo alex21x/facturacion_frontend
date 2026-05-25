@@ -91,15 +91,20 @@ async function downloadAsPdf(
 
   const module = await import('html2pdf.js');
   const html2pdf = (module as any).default ?? module;
-  const sourceRoot = sourceDoc.documentElement;
-  const sourceWidth = Math.max(sourceRoot.scrollWidth, sourceRoot.clientWidth, sourceDoc.body.scrollWidth, sourceDoc.body.clientWidth);
-  const sourceHeight = Math.max(sourceRoot.scrollHeight, sourceRoot.clientHeight, sourceDoc.body.scrollHeight, sourceDoc.body.clientHeight);
+
+  // A4 = 210mm × 297mm at 96dpi = 794 × 1123px.
+  // Ticket 80mm at 96dpi ≈ 302px wide; use 380px for safety.
+  // CRITICAL: the export iframe MUST be exactly the target paper width in CSS pixels,
+  // otherwise html2canvas captures a wider body and jsPDF distorts the result.
+  const EXPORT_W = variant === 'compact' ? 380 : 794;
+  const EXPORT_H = variant === 'compact' ? 2400 : 3000; // tall enough for any content
+
   const exportFrame = document.createElement('iframe');
   exportFrame.style.position = 'fixed';
   exportFrame.style.left = '-99999px';
   exportFrame.style.top = '0';
-  exportFrame.style.width = `${Math.max(sourceWidth, variant === 'compact' ? 380 : 794)}px`;
-  exportFrame.style.height = `${Math.max(sourceHeight, variant === 'compact' ? 1200 : 1123)}px`;
+  exportFrame.style.width = `${EXPORT_W}px`;
+  exportFrame.style.height = `${EXPORT_H}px`;
   exportFrame.style.opacity = '0';
   exportFrame.style.pointerEvents = 'none';
   exportFrame.setAttribute('aria-hidden', 'true');
@@ -132,17 +137,24 @@ async function downloadAsPdf(
       exportHead.prepend(baseTag);
     }
 
-    const hideNoPrintStyle = exportDoc.createElement('style');
-    hideNoPrintStyle.textContent = '.no-print{display:none !important;}';
-    exportHead?.appendChild(hideNoPrintStyle);
+    // Force body/html to match the exact export frame width so the .sheet fills 100%.
+    const fitStyle = exportDoc.createElement('style');
+    fitStyle.textContent = [
+      '.no-print{display:none !important;}',
+      `html,body{width:${EXPORT_W}px !important;max-width:${EXPORT_W}px !important;margin:0 !important;padding:0 !important;overflow-x:hidden !important;}`,
+    ].join('');
+    exportHead?.appendChild(fitStyle);
 
     await waitForDocumentToRender(exportDoc);
 
     const fileName = resolvePdfFileName(exportDoc, title);
     const target = exportDoc.body;
-    const exportRoot = exportDoc.documentElement;
-    const exportWidth = Math.max(exportRoot.scrollWidth, exportRoot.clientWidth, target.scrollWidth, target.clientWidth, variant === 'compact' ? 380 : 794);
-    const exportHeight = Math.max(exportRoot.scrollHeight, exportRoot.clientHeight, target.scrollHeight, target.clientHeight, variant === 'compact' ? 1200 : 1123);
+    // Measure actual rendered height after styles are applied.
+    const exportHeight = Math.max(
+      target.scrollHeight, target.clientHeight,
+      exportDoc.documentElement.scrollHeight,
+      variant === 'compact' ? 1200 : 1123,
+    );
 
     const worker = html2pdf().set({
       filename: fileName,
@@ -155,7 +167,7 @@ async function downloadAsPdf(
         logging: false,
         foreignObjectRendering: false,
         backgroundColor: '#ffffff',
-        windowWidth: exportWidth,
+        windowWidth: EXPORT_W,
         windowHeight: exportHeight,
       },
       jsPDF: variant === 'compact'
