@@ -11,7 +11,14 @@ type CompanyConfigViewProps = {
   accessToken: string;
 };
 
-const EMPTY_BANK: BankAccount = { bank_name: '', account_number: '', currency: 'PEN', account_type: 'Corriente' };
+const EMPTY_BANK: BankAccount = {
+  bank_name: '',
+  account_number: '',
+  cci: '',
+  account_holder: '',
+  currency: 'PEN',
+  account_type: 'Corriente',
+};
 
 export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [profile, setProfile] = useState<CompanyProfile | null>(null);
@@ -40,6 +47,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
+  const [showPaymentBrandIcons, setShowPaymentBrandIcons] = useState(true);
 
   // Logo
   const [logoFile, setLogoFile] = useState<File | null>(null);
@@ -74,6 +82,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     setClientId(p.client_id ?? '');
     setClientSecret(p.client_secret ?? '');
     setBankAccounts(p.bank_accounts ?? []);
+    setShowPaymentBrandIcons(p.show_payment_brand_icons ?? true);
   }
 
   async function loadProfile() {
@@ -146,6 +155,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         client_id: clientId || undefined,
         client_secret: clientSecret || undefined,
         bank_accounts: bankAccounts,
+        show_payment_brand_icons: showPaymentBrandIcons,
       });
 
       setProfile(updated);
@@ -460,6 +470,14 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         <details className="companycfg-section" open>
           <summary>Bancos y certificados</summary>
           <div className="companycfg-section-body">
+            <label className="companycfg-inline-toggle">
+              <input
+                type="checkbox"
+                checked={showPaymentBrandIcons}
+                onChange={(e) => setShowPaymentBrandIcons(e.target.checked)}
+              />
+              Mostrar logos de pago en A4 y ticket
+            </label>
             <div className="form-card companycfg-card">
               <div className="companycfg-card-head">
                 <h4>Cuentas Bancarias</h4>
@@ -493,6 +511,26 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                         value={acc.account_number}
                         onChange={(e) => updateBankAccount(idx, 'account_number', e.target.value)}
                         placeholder="123-4567890-0-12"
+                      />
+                    </label>
+                    <label>
+                      CCI
+                      <input
+                        type="text"
+                        maxLength={50}
+                        value={acc.cci ?? ''}
+                        onChange={(e) => updateBankAccount(idx, 'cci', e.target.value)}
+                        placeholder="00212345678901234567"
+                      />
+                    </label>
+                    <label>
+                      A nombre de
+                      <input
+                        type="text"
+                        maxLength={120}
+                        value={acc.account_holder ?? ''}
+                        onChange={(e) => updateBankAccount(idx, 'account_holder', e.target.value)}
+                        placeholder="Razón social o titular"
                       />
                     </label>
                     <label>

@@ -84,7 +84,7 @@ export function HtmlPreviewDialog({
                 iframeRef.current?.contentWindow?.print();
               }}
             >
-              Imprimir
+              Imprimir / Guardar PDF
             </button>
             <button type="button" onClick={onClose}>
               Cerrar
