@@ -679,14 +679,14 @@ export function buildCommercialDocument80mmHtml(
       const maxDescLength = 32;
       const desc = escapeHtml(item.description).substring(0, maxDescLength);
       
-      return `<tr>
-        <td style="font-size:8px;font-weight:700">${desc}</td>
+      return `<tr class="item-desc-row">
+        <td class="item-desc">${desc}</td>
       </tr>
-      <tr>
-        <td style="font-size:7px">
-          <div style="display:flex;justify-content:space-between">
-            <span>${qtyStr} x ${doc.currencySymbol} ${priceStr}</span>
-            <span style="font-weight:700">${doc.currencySymbol} ${totalStr}</span>
+      <tr class="item-price-row">
+        <td class="item-price-cell">
+          <div class="item-price-wrap">
+            <span class="item-price-unit">${qtyStr} x ${doc.currencySymbol} ${priceStr}</span>
+            <span class="item-price-total">${doc.currencySymbol} ${totalStr}</span>
           </div>
         </td>
       </tr>`;
@@ -843,6 +843,40 @@ export function buildCommercialDocument80mmHtml(
             border-top: 1px solid #000;
             border-bottom: 1px solid #000;
             padding: 1mm 0;
+          }
+          .item-desc-row td {
+            padding-top: 1.1mm;
+            padding-bottom: 0.5mm;
+          }
+          .item-desc {
+            font-size: 12px;
+            line-height: 1.25;
+            letter-spacing: 0.1px;
+            word-break: break-word;
+          }
+          .item-price-row td {
+            padding-top: 0.2mm;
+            padding-bottom: 1.1mm;
+          }
+          .item-price-cell {
+            font-size: 12px;
+          }
+          .item-price-wrap {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 2mm;
+          }
+          .item-price-unit {
+            font-size: 12px;
+            line-height: 1.2;
+          }
+          .item-price-total {
+            font-size: 13px;
+            line-height: 1.2;
+            font-weight: 800;
+            letter-spacing: 0.2px;
+            white-space: nowrap;
           }
           table {
             width: 100%;
