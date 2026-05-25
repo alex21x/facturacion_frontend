@@ -4,6 +4,7 @@ WORKDIR /app
 
 COPY package.json package-lock.json ./
 RUN npm ci --include=optional
+RUN npm i -D @rollup/rollup-linux-x64-musl@4.60.4
 
 COPY . .
 
