@@ -50,8 +50,8 @@ async function savePdfBlob(blob: Blob, fileName: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
-async function waitForNodeToRender(node: HTMLElement): Promise<void> {
-  const images = Array.from(node.querySelectorAll('img'));
+async function waitForDocumentToRender(doc: Document): Promise<void> {
+  const images = Array.from(doc.querySelectorAll('img'));
   const imagePromises = images.map((img) => {
     if (img.complete && img.naturalWidth > 0) {
       return Promise.resolve();
@@ -68,12 +68,10 @@ async function waitForNodeToRender(node: HTMLElement): Promise<void> {
 
   await Promise.all(imagePromises);
 
-  if ('fonts' in document) {
-    try {
-      await (document as Document & { fonts: { ready: Promise<unknown> } }).fonts.ready;
-    } catch {
-      // noop: si falla fonts.ready seguimos con el render.
-    }
+  try {
+    await (doc as Document & { fonts: { ready: Promise<unknown> } }).fonts.ready;
+  } catch {
+    // noop: si falla fonts.ready seguimos con el render.
   }
 
   // Da tiempo a layout/reflow para que html2canvas capture estado final.
@@ -93,39 +91,63 @@ async function downloadAsPdf(
 
   const module = await import('html2pdf.js');
   const html2pdf = (module as any).default ?? module;
-  const fileName = resolvePdfFileName(sourceDoc, title);
-
-  const sandbox = document.createElement('div');
-  sandbox.style.position = 'fixed';
-  sandbox.style.left = '-99999px';
-  sandbox.style.top = '0';
-  sandbox.style.background = '#fff';
-  sandbox.style.zIndex = '-1';
-
-  const sourceHtml = sourceDoc.documentElement.cloneNode(true) as HTMLElement;
-  const sourceHead = sourceHtml.querySelector('head');
-  if (sourceHead && !sourceHead.querySelector('base')) {
-    const baseTag = sourceDoc.createElement('base');
-    baseTag.setAttribute('href', `${window.location.origin}/`);
-    sourceHead.prepend(baseTag);
-  }
-  sandbox.appendChild(sourceHtml);
-  document.body.appendChild(sandbox);
+  const exportFrame = document.createElement('iframe');
+  exportFrame.style.position = 'fixed';
+  exportFrame.style.left = '-99999px';
+  exportFrame.style.top = '0';
+  exportFrame.style.width = variant === 'compact' ? '420px' : '1200px';
+  exportFrame.style.height = '10px';
+  exportFrame.style.opacity = '0';
+  exportFrame.style.pointerEvents = 'none';
+  exportFrame.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(exportFrame);
 
   try {
-    const target = sourceHtml.querySelector('body') ?? sourceHtml;
-    await waitForNodeToRender(target as HTMLElement);
+    exportFrame.srcdoc = sourceDoc.documentElement.outerHTML;
+
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      exportFrame.addEventListener('load', done, { once: true });
+      exportFrame.addEventListener('error', done, { once: true });
+      window.setTimeout(done, 4000);
+    });
+
+    const exportDoc = exportFrame.contentDocument;
+    if (!exportDoc?.body) {
+      throw new Error('No se pudo preparar el documento aislado para PDF.');
+    }
+
+    const exportHead = exportDoc.head;
+    if (exportHead && !exportHead.querySelector('base')) {
+      const baseTag = exportDoc.createElement('base');
+      baseTag.setAttribute('href', sourceDoc.baseURI || `${window.location.origin}/`);
+      exportHead.prepend(baseTag);
+    }
+
+    const hideNoPrintStyle = exportDoc.createElement('style');
+    hideNoPrintStyle.textContent = '.no-print{display:none !important;}';
+    exportHead?.appendChild(hideNoPrintStyle);
+
+    await waitForDocumentToRender(exportDoc);
+
+    const fileName = resolvePdfFileName(exportDoc, title);
+    const target = exportDoc.body;
 
     const worker = html2pdf().set({
       filename: fileName,
-      margin: variant === 'compact' ? [2, 2, 2, 2] : [8, 8, 8, 8],
+      margin: variant === 'compact' ? [2, 2, 2, 2] : [0, 0, 0, 0],
       image: { type: 'png', quality: 1 },
       html2canvas: {
-        scale: variant === 'compact' ? 3 : 2,
+        scale: variant === 'compact' ? 3 : 2.5,
         useCORS: true,
         allowTaint: false,
         logging: false,
-        foreignObjectRendering: true,
+        foreignObjectRendering: false,
         backgroundColor: '#ffffff',
       },
       jsPDF: variant === 'compact'
@@ -137,7 +159,7 @@ async function downloadAsPdf(
     const blob = await worker.outputPdf('blob');
     await savePdfBlob(blob, fileName);
   } finally {
-    sandbox.remove();
+    exportFrame.remove();
   }
 }
 
