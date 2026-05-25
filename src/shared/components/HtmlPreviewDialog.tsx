@@ -141,27 +141,30 @@ async function downloadAsPdf(
     const fitStyle = exportDoc.createElement('style');
     fitStyle.textContent = [
       '.no-print{display:none !important;}',
-      `html,body{width:${EXPORT_W}px !important;max-width:${EXPORT_W}px !important;margin:0 !important;padding:0 !important;overflow-x:hidden !important;}`,
+      `html,body{width:${EXPORT_W}px !important;max-width:${EXPORT_W}px !important;margin:0 !important;padding:0 !important;overflow-x:hidden !important;zoom:1 !important;transform:none !important;}`,
+      `.sheet{width:${EXPORT_W}px !important;max-width:${EXPORT_W}px !important;box-sizing:border-box !important;}`,
+      'img{max-width:100% !important;height:auto !important;}',
     ].join('');
     exportHead?.appendChild(fitStyle);
 
     await waitForDocumentToRender(exportDoc);
 
     const fileName = resolvePdfFileName(exportDoc, title);
-    const target = exportDoc.body;
-    // Measure actual rendered height after styles are applied.
-    const exportHeight = Math.max(
-      target.scrollHeight, target.clientHeight,
-      exportDoc.documentElement.scrollHeight,
-      variant === 'compact' ? 1200 : 1123,
-    );
+    const target = (exportDoc.querySelector('.sheet') as HTMLElement | null) ?? exportDoc.body;
+
+    // Use rendered box sizes instead of raw scrollHeight to avoid runaway canvases.
+    const targetHeight = Math.ceil(target.getBoundingClientRect().height);
+    const bodyHeight = Math.ceil(exportDoc.body.getBoundingClientRect().height);
+    const minHeight = variant === 'compact' ? 1200 : 1123;
+    const maxHeight = variant === 'compact' ? 5200 : 7200;
+    const exportHeight = Math.min(Math.max(targetHeight, bodyHeight, minHeight), maxHeight);
 
     const worker = html2pdf().set({
       filename: fileName,
       margin: variant === 'compact' ? [2, 2, 2, 2] : [0, 0, 0, 0],
-      image: { type: 'png', quality: 1 },
+      image: { type: 'jpeg', quality: 0.9 },
       html2canvas: {
-        scale: variant === 'compact' ? 3 : 2.5,
+        scale: variant === 'compact' ? 2.2 : 1.9,
         useCORS: true,
         allowTaint: false,
         logging: false,
@@ -169,10 +172,12 @@ async function downloadAsPdf(
         backgroundColor: '#ffffff',
         windowWidth: EXPORT_W,
         windowHeight: exportHeight,
+        scrollX: 0,
+        scrollY: 0,
       },
       jsPDF: variant === 'compact'
-        ? { unit: 'mm', format: [80, 297], orientation: 'portrait' }
-        : { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        ? { unit: 'mm', format: [80, 297], orientation: 'portrait', compress: true }
+        : { unit: 'mm', format: 'a4', orientation: 'portrait', compress: true },
       pagebreak: { mode: ['css', 'legacy'] },
     }).from(target);
 
