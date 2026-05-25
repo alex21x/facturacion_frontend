@@ -57,6 +57,15 @@ export type PrintableCompanyProfile = {
   phone?: string | null;
   email?: string | null;
   logoUrl?: string | null;
+  showPaymentBrandIcons?: boolean | null;
+  bankAccounts?: Array<{
+    bank_name?: string | null;
+    account_number?: string | null;
+    cci?: string | null;
+    account_holder?: string | null;
+    currency?: string | null;
+    account_type?: string | null;
+  }> | null;
 };
 
 function escapeHtml(value: string): string {
@@ -155,6 +164,21 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
     ?? metadata.logo_url
     ?? null
   ) as string | null;
+  const showPaymentBrandIcons = (
+    inputCompany.showPaymentBrandIcons
+    ?? inputCompany.show_payment_brand_icons
+    ?? metadata.show_payment_brand_icons
+    ?? metadata.company_show_payment_brand_icons
+    ?? true
+  ) as boolean;
+
+  const bankAccounts = (
+    inputCompany.bankAccounts
+    ?? inputCompany.bank_accounts
+    ?? metadata.company_bank_accounts
+    ?? metadata.bank_accounts
+    ?? null
+  ) as PrintableCompanyProfile['bankAccounts'];
 
   return {
     taxId,
@@ -164,6 +188,8 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
     phone,
     email,
     logoUrl: normalizePrintAssetUrl(logoCandidate),
+    showPaymentBrandIcons,
+    bankAccounts,
   };
 }
 
@@ -185,6 +211,59 @@ function paymentBrandsFooterHtml(size: 'A4' | '80mm'): string {
     <div class="paybrand"><img src="${escapeHtml(plinLogo)}" alt="Plin" /></div>
     <div class="paybrand"><img src="${escapeHtml(culqiLogo)}" alt="Culqi" /></div>
   </div>`;
+}
+
+function normalizePrintableBankAccounts(company: PrintableCompanyProfile): Array<{
+  bankName: string;
+  accountNumber: string;
+  cci: string;
+  accountHolder: string;
+}> {
+  return (company.bankAccounts ?? [])
+    .map((row) => {
+      const bankName = String(row.bank_name ?? '').trim();
+      const accountNumber = String(row.account_number ?? '').trim();
+      const cci = String(row.cci ?? '').trim() || (String(row.account_type ?? '').trim().toUpperCase() === 'CCI' ? accountNumber : '');
+      const accountHolder = String(row.account_holder ?? '').trim() || String(company.tradeName ?? company.legalName ?? '').trim();
+
+      return {
+        bankName,
+        accountNumber,
+        cci,
+        accountHolder,
+      };
+    })
+    .filter((row) => row.bankName !== '' || row.accountNumber !== '' || row.cci !== '' || row.accountHolder !== '');
+}
+
+function companyFooterHtml(company: PrintableCompanyProfile, size: 'A4' | '80mm'): string {
+  const bankRows = normalizePrintableBankAccounts(company);
+  const showPaymentBrands = company.showPaymentBrandIcons !== false;
+  const logoHtml = showPaymentBrands ? paymentBrandsFooterHtml(size) : '';
+
+  if (bankRows.length === 0 && !showPaymentBrands) {
+    return '';
+  }
+
+  const bankBlocks = bankRows.length > 0
+    ? bankRows.map((row) => `
+        <div class="company-footer-bank">
+          <div><strong>${escapeHtml(row.bankName || '-')}</strong></div>
+          ${row.accountNumber ? `<div>Cuenta: ${escapeHtml(row.accountNumber)}</div>` : ''}
+          ${row.cci ? `<div>CCI: ${escapeHtml(row.cci)}</div>` : ''}
+          ${row.accountHolder ? `<div>Titular: ${escapeHtml(row.accountHolder)}</div>` : ''}
+        </div>
+      `).join('')
+    : '';
+
+  if (size === 'A4') {
+    return `<div class="company-footer">
+      ${bankBlocks ? `<div class="company-footer-banks"><div class="company-footer-title">Datos bancarios</div>${bankBlocks}</div>` : ''}
+      ${logoHtml ? `<div class="company-footer-logos">${logoHtml}</div>` : ''}
+    </div>`;
+  }
+
+  return `${bankBlocks ? `<div class="company-footer-banks company-footer-banks--ticket"><div class="company-footer-title">Bancos</div>${bankBlocks}</div>` : ''}${logoHtml ? `<div class="company-footer-logos company-footer-logos--ticket">${logoHtml}</div>` : ''}`;
 }
 
 function baseDocumentKind(kind: string): string {
@@ -328,6 +407,7 @@ export function buildCommercialDocumentA4Html(
   const companyAddress = String(company.address || '').trim();
   const companyPhone = String(company.phone || '').trim();
   const companyEmail = String(company.email || '').trim();
+  const documentFileName = `${String(doc.series || '').trim()}-${String(doc.number || '').trim()}.pdf`;
   const logoHtml = company.logoUrl
     ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo empresa" class="brand-logo" />`
     : `<div class="brand-logo brand-logo--placeholder">LOGO</div>`;
@@ -384,7 +464,7 @@ export function buildCommercialDocumentA4Html(
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>${escapeHtml(meta.title)} ${escapeHtml(doc.series)}-${doc.number}</title>
+        <title>${escapeHtml(documentFileName)}</title>
         <style>
           @page { size: A4 portrait; margin: 9mm; }
           * { box-sizing: border-box; }
@@ -445,6 +525,14 @@ export function buildCommercialDocumentA4Html(
           .paybrands { display: flex; gap: 10px; align-items: center; justify-content: center; margin-top: 10px; }
           .paybrand { border-radius: 8px; border: 1px solid #d1d5db; background: #fff; padding: 5px 10px; height: 40px; display: inline-flex; align-items: center; }
           .paybrand img { height: 28px; width: auto; display: block; }
+          .company-footer { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
+          .company-footer-banks { text-align: left; font-size: 10px; line-height: 1.35; color: #334155; }
+          .company-footer-banks--ticket { font-size: 7px; margin-top: 1mm; }
+          .company-footer-title { font-weight: 700; color: #0f172a; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.2px; }
+          .company-footer-bank { margin-top: 4px; }
+          .company-footer-bank div { margin: 0; }
+          .company-footer-logos { display: flex; justify-content: flex-end; }
+          .company-footer-logos--ticket { justify-content: center; margin-top: 1mm; }
         </style>
       </head>
       <body>
@@ -553,8 +641,8 @@ export function buildCommercialDocumentA4Html(
             : ''}
 
           <section class="obs">
-            Observaciones: Documento impreso en formato A4 adaptable por tipo de comprobante.
-            ${paymentBrandsFooterHtml('A4')}
+            <div class="company-footer-note">Observaciones: Documento impreso en formato A4 adaptable por tipo de comprobante.</div>
+            ${companyFooterHtml(company, 'A4')}
           </section>
         </section>
       </body>
@@ -578,6 +666,7 @@ export function buildCommercialDocument80mmHtml(
   const companyAddress = String(company.address || '').trim();
   const companyPhone = String(company.phone || '').trim();
   const companyEmail = String(company.email || '').trim();
+  const documentFileName = `${String(doc.series || '').trim()}-${String(doc.number || '').trim()}.pdf`;
 
   const itemsRows = doc.items
     .map((item) => {
@@ -621,7 +710,7 @@ export function buildCommercialDocument80mmHtml(
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>${escapeHtml(meta.title)} ${escapeHtml(doc.series)}-${doc.number}</title>
+        <title>${escapeHtml(documentFileName)}</title>
         <style>
           @media print { 
             @page { 
@@ -645,7 +734,7 @@ export function buildCommercialDocument80mmHtml(
           body { 
             font-family: 'Courier New', Courier, monospace; 
             color: #000; 
-            font-size: 10px; 
+            font-size: 12px; 
             line-height: 1.35;
             background: #fff;
             width: 80mm;
@@ -705,20 +794,20 @@ export function buildCommercialDocument80mmHtml(
             background: #fff;
           }
           .title { 
-            font-size: 10px; 
+            font-size: 11px; 
             font-weight: 700; 
             text-transform: uppercase; 
             letter-spacing: 0.5px;
             margin-bottom: 1mm;
           }
           .docno { 
-            font-size: 11px; 
+            font-size: 12px; 
             font-weight: 700; 
             margin-bottom: 0.5mm;
             letter-spacing: 1px;
           }
           .date { 
-            font-size: 8px;
+            font-size: 9px;
             color: #333;
           }
           .section { 
@@ -727,7 +816,7 @@ export function buildCommercialDocument80mmHtml(
           .section-title { 
             font-weight: 700; 
             text-transform: uppercase; 
-            font-size: 8px;
+            font-size: 9px;
             margin-bottom: 1mm;
             border-bottom: 1px solid #000;
             padding-bottom: 0.5mm;
@@ -735,7 +824,7 @@ export function buildCommercialDocument80mmHtml(
           .info-row { 
             display: flex; 
             justify-content: space-between; 
-            font-size: 8px; 
+            font-size: 9px; 
             margin: 0.3mm 0; 
             word-break: break-word;
           }
@@ -760,7 +849,7 @@ export function buildCommercialDocument80mmHtml(
           }
           td {
             padding: 0.5mm 0;
-            font-size: 8px;
+            font-size: 9px;
           }
           .summary { 
             border-top: 1px solid #000;
@@ -770,7 +859,7 @@ export function buildCommercialDocument80mmHtml(
           .summary-row { 
             display: flex; 
             justify-content: space-between; 
-            font-size: 8px; 
+            font-size: 9px; 
             margin: 0.5mm 0;
           }
           .summary-label { 
@@ -783,7 +872,7 @@ export function buildCommercialDocument80mmHtml(
             width: 30mm;
           }
           .total-row { 
-            font-size: 10px; 
+            font-size: 12px; 
             font-weight: 700;
             border-top: 2px solid #000;
             padding-top: 1mm;
@@ -793,16 +882,19 @@ export function buildCommercialDocument80mmHtml(
           }
           .footer { 
             text-align: center; 
-            font-size: 7px; 
+            font-size: 8px; 
             color: #555; 
             margin-top: 2mm;
             border-top: 1px dashed #000;
             padding-top: 1mm;
             line-height: 1.2;
           }
-          .paybrands { display: flex; gap: 3px; align-items: center; justify-content: center; margin: 1mm 0; }
-          .paybrand { border-radius: 6px; border: 1px solid #d1d5db; background: #fff; padding: 2px 5px; height: 24px; display: inline-flex; align-items: center; }
-          .paybrand img { height: 16px; width: auto; display: block; }
+          .company-footer-title { font-weight: 700; text-transform: uppercase; margin-bottom: 1mm; }
+          .company-footer-banks { text-align: left; margin-top: 1mm; }
+          .company-footer-bank { margin: 0.4mm 0; }
+          .paybrands { display: flex; gap: 5px; align-items: center; justify-content: center; margin: 1.2mm 0; }
+          .paybrand { border-radius: 6px; border: 1px solid #d1d5db; background: #fff; padding: 3px 6px; height: 28px; display: inline-flex; align-items: center; }
+          .paybrand img { height: 20px; width: auto; display: block; }
           .footer-item {
             margin: 0.3mm 0;
           }
@@ -813,15 +905,15 @@ export function buildCommercialDocument80mmHtml(
             text-align: left;
           }
           .sunat-ticket img {
-            width: 26mm;
-            height: 26mm;
+            width: 28mm;
+            height: 28mm;
             border: 1px solid #000;
             display: block;
             margin: 0 auto 1mm;
             background: #fff;
           }
           .sunat-ticket .line {
-            font-size: 7px;
+            font-size: 8px;
             margin: 0.3mm 0;
             word-break: break-all;
           }
@@ -929,7 +1021,7 @@ export function buildCommercialDocument80mmHtml(
                 </div>`
               : ''}
             <div class="divider" style="margin: 1mm 0"></div>
-            ${paymentBrandsFooterHtml('80mm')}
+            ${companyFooterHtml(company, '80mm')}
             <div class="footer-item">Gracias por su compra</div>
             <div class="footer-item">ID: ${doc.id}</div>
           </div>

@@ -1,6 +1,8 @@
 export type BankAccount = {
   bank_name: string;
   account_number: string;
+  cci?: string;
+  account_holder?: string;
   currency: string;
   account_type: string;
 };
@@ -29,6 +31,7 @@ export type CompanyProfile = {
   sunat_secondary_pass?: string | null;
   client_id?: string | null;
   client_secret?: string | null;
+  show_payment_brand_icons?: boolean;
 };
 
 export type UpdateCompanyProfilePayload = {
@@ -52,6 +55,7 @@ export type UpdateCompanyProfilePayload = {
   sunat_secondary_pass?: string;
   client_id?: string;
   client_secret?: string;
+  show_payment_brand_icons?: boolean;
 };
 
 export type CompanyCertBridgeDebug = {
