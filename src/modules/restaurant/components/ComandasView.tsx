@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { checkoutRestaurantOrder, fetchComandas, fetchOrderPreparationRequirements, fetchRestaurantBootstrap, updateComandaStatus } from '../api';
-import { fetchCommercialDocuments, fetchCommercialDocumentDetails, fetchTaxBridgePreview, retryTaxBridgeSend, downloadSunatXml, downloadSunatCdr } from '../../sales/api';
-import { openCommercialDocumentPreview80mm, openCommercialDocumentPrintA4 } from '../../sales/print';
+import { fetchCommercialDocuments, fetchCommercialDocumentDetails, fetchCommercialDocumentPrintHtml, fetchTaxBridgePreview, retryTaxBridgeSend, downloadSunatXml, downloadSunatCdr } from '../../sales/api';
+import { openCommercialDocumentPrintA4 } from '../../sales/print';
 import type { PrintableSalesDocument } from '../../sales/print';
 import type { CommercialDocumentListItem } from '../../sales/types';
 import type {
@@ -419,7 +419,14 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     try {
       const doc = await fetchCommercialDocumentDetails(accessToken, docId);
       if (format === '80mm') {
-        openCommercialDocumentPreview80mm(doc);
+        const html = await fetchCommercialDocumentPrintHtml(accessToken, docId, 'ticket');
+        const win = window.open('', '_blank', 'width=420,height=800');
+        if (win) {
+          win.document.open();
+          win.document.write(html);
+          win.document.close();
+          win.focus();
+        }
       } else {
         openCommercialDocumentPrintA4(doc);
       }
@@ -908,7 +915,16 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                                     onClick={() => {
                                       const cached = hoverCobroCache[doc.id];
                                       if (!cached) return;
-                                      openCommercialDocumentPreview80mm(cached);
+                                      void (async () => {
+                                        const html = await fetchCommercialDocumentPrintHtml(accessToken, cached.id, 'ticket');
+                                        const win = window.open('', '_blank', 'width=420,height=800');
+                                        if (win) {
+                                          win.document.open();
+                                          win.document.write(html);
+                                          win.document.close();
+                                          win.focus();
+                                        }
+                                      })();
                                     }}
                                   >
                                     Ticket 80mm
@@ -1453,7 +1469,22 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
             <button type="button" className="restaurant-ghost-btn" onClick={() => openCommercialDocumentPrintA4(cobroDetail)}>
               Impr. A4
             </button>
-            <button type="button" className="restaurant-primary-btn" onClick={() => openCommercialDocumentPreview80mm(cobroDetail)}>
+            <button
+              type="button"
+              className="restaurant-primary-btn"
+              onClick={() => {
+                void (async () => {
+                  const html = await fetchCommercialDocumentPrintHtml(accessToken, cobroDetail.id, 'ticket');
+                  const win = window.open('', '_blank', 'width=420,height=800');
+                  if (win) {
+                    win.document.open();
+                    win.document.write(html);
+                    win.document.close();
+                    win.focus();
+                  }
+                })();
+              }}
+            >
               Ticket 80mm
             </button>
           </footer>

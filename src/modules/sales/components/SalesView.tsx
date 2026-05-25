@@ -25,6 +25,7 @@ import {
   exportCommercialDocumentsExcel,
   exportCommercialDocumentsJson,
   fetchCommercialDocumentDetails,
+  fetchCommercialDocumentPrintHtml,
   fetchCustomerAutocomplete,
   fetchCustomerVehicles,
   fetchReferenceDocuments,
@@ -3591,19 +3592,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }));
   }
 
-  function printIssuedPreview(format: 'A4' | '80mm' = 'A4') {
+  async function printIssuedPreview(format: 'A4' | '80mm' = 'A4') {
     if (!issuedPreview) {
       return;
     }
 
     const printable = withCompanyForPrint(issuedPreview.printable);
+    let html = buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
+
+    if (format === '80mm') {
+      html = await fetchCommercialDocumentPrintHtml(accessToken, issuedPreview.id, 'ticket');
+    }
 
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
       subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
-      html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
-        : buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
+      html,
       variant: format === '80mm' ? 'compact' : 'wide',
     });
   }
@@ -3771,12 +3775,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     try {
       const data = await fetchCommercialDocumentDetails(accessToken, documentId);
       const printable = withCompanyForPrint(data as PrintableSalesDocument);
+      let html = buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
+
+      if (format === '80mm') {
+        html = await fetchCommercialDocumentPrintHtml(accessToken, documentId, 'ticket');
+      }
+
       setPreviewDialog({
         title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
         subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
-        html: format === '80mm'
-          ? buildCommercialDocument80mmHtml(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
-          : buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
+        html,
         variant: format === '80mm' ? 'compact' : 'wide',
       });
     } catch (error) {
@@ -4572,13 +4580,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           printable: printableWithCompany,
         });
 
+        let issuedPreviewHtml = buildCommercialDocumentA4Html(printableWithCompany, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
+        if (salesFlowMode === 'SELLER_TO_CASHIER') {
+          issuedPreviewHtml = await fetchCommercialDocumentPrintHtml(accessToken, issued.id, 'ticket');
+        }
+
         setPreviewDialog({
           title: salesFlowMode === 'SELLER_TO_CASHIER' ? 'Ticket de pedido para caja' : 'Documento emitido A4',
           subtitle: `${issued.series}-${Number(issued.number).toString().padStart(6, '0')}`,
-          html:
-            salesFlowMode === 'SELLER_TO_CASHIER'
-              ? buildCommercialDocument80mmHtml(printableWithCompany, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
-              : buildCommercialDocumentA4Html(printableWithCompany, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
+          html: issuedPreviewHtml,
           variant: salesFlowMode === 'SELLER_TO_CASHIER' ? 'compact' : 'wide',
         });
       }
@@ -5361,18 +5371,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     await executeConvertDocument(source, targetDocumentKind);
   }
 
-  function openPostConvertPrint(format: '80mm' | 'A4') {
+  async function openPostConvertPrint(format: '80mm' | 'A4') {
     if (!postConvertPrintModal?.details) {
       return;
     }
 
     const details = withCompanyForPrint(postConvertPrintModal.details);
+    let html = buildCommercialDocumentA4Html(details, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
+
+    if (format === '80mm') {
+      html = await fetchCommercialDocumentPrintHtml(accessToken, details.id, 'ticket');
+    }
+
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento A4',
       subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
-      html: format === '80mm'
-        ? buildCommercialDocument80mmHtml(details, { embedded: true, showItemDiscount: salesItemDiscountEnabled })
-        : buildCommercialDocumentA4Html(details, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
+      html,
       variant: format === '80mm' ? 'compact' : 'wide',
     });
     setPostConvertPrintModal(null);
