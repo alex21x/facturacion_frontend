@@ -48,8 +48,6 @@ import {
 import { fetchRestaurantTables } from '../../restaurant/api';
 import type { RestaurantTableRow } from '../../restaurant/types';
 import {
-  buildCommercialDocument80mmHtml,
-  buildCommercialDocumentA4Html,
   type PrintableSalesDocument,
 } from '../print';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
@@ -3597,12 +3595,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
-    const printable = withCompanyForPrint(issuedPreview.printable);
-    let html = buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
-
-    if (format === '80mm') {
-      html = await fetchCommercialDocumentPrintHtml(accessToken, issuedPreview.id, 'ticket');
-    }
+    const html = await fetchCommercialDocumentPrintHtml(
+      accessToken,
+      issuedPreview.id,
+      format === '80mm' ? 'ticket' : 'a4'
+    );
 
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
@@ -3774,12 +3771,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
     try {
       const data = await fetchCommercialDocumentDetails(accessToken, documentId);
-      const printable = withCompanyForPrint(data as PrintableSalesDocument);
-      let html = buildCommercialDocumentA4Html(printable, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
-
-      if (format === '80mm') {
-        html = await fetchCommercialDocumentPrintHtml(accessToken, documentId, 'ticket');
-      }
+      const html = await fetchCommercialDocumentPrintHtml(
+        accessToken,
+        documentId,
+        format === '80mm' ? 'ticket' : 'a4'
+      );
 
       setPreviewDialog({
         title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
@@ -4580,10 +4576,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           printable: printableWithCompany,
         });
 
-        let issuedPreviewHtml = buildCommercialDocumentA4Html(printableWithCompany, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
-        if (salesFlowMode === 'SELLER_TO_CASHIER') {
-          issuedPreviewHtml = await fetchCommercialDocumentPrintHtml(accessToken, issued.id, 'ticket');
-        }
+        const issuedPreviewHtml = await fetchCommercialDocumentPrintHtml(
+          accessToken,
+          issued.id,
+          salesFlowMode === 'SELLER_TO_CASHIER' ? 'ticket' : 'a4'
+        );
 
         setPreviewDialog({
           title: salesFlowMode === 'SELLER_TO_CASHIER' ? 'Ticket de pedido para caja' : 'Documento emitido A4',
@@ -4787,12 +4784,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       }
 
       const printableDetails = withCompanyForPrint(details as PrintableSalesDocument);
+      const previewHtml = await fetchCommercialDocumentPrintHtml(accessToken, source.id, 'a4');
 
       setConvertPreviewModal({
         source,
         targetDocumentKind,
         details: printableDetails,
-        previewHtml: buildCommercialDocumentA4Html(printableDetails, { embedded: true, showItemDiscount: salesItemDiscountEnabled }),
+        previewHtml,
         loading: false,
         error: '',
       });
@@ -5377,11 +5375,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     const details = withCompanyForPrint(postConvertPrintModal.details);
-    let html = buildCommercialDocumentA4Html(details, { embedded: true, showItemDiscount: salesItemDiscountEnabled });
-
-    if (format === '80mm') {
-      html = await fetchCommercialDocumentPrintHtml(accessToken, details.id, 'ticket');
-    }
+    const html = await fetchCommercialDocumentPrintHtml(
+      accessToken,
+      details.id,
+      format === '80mm' ? 'ticket' : 'a4'
+    );
 
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento A4',
