@@ -31,6 +31,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [taxId, setTaxId] = useState('');
   const [legalName, setLegalName] = useState('');
   const [tradeName, setTradeName] = useState('');
+  const [companyDescription, setCompanyDescription] = useState('');
   const [address, setAddress] = useState('');
   const [phone, setPhone] = useState('');
   const [mobilePhone, setMobilePhone] = useState('');
@@ -66,6 +67,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     setTaxId(p.tax_id ?? '');
     setLegalName(p.legal_name ?? '');
     setTradeName(p.trade_name ?? '');
+    setCompanyDescription(p.company_description ?? '');
     setAddress(p.address ?? '');
     setPhone(p.phone ?? '');
     setMobilePhone(p.telefono_movil ?? '');
@@ -139,6 +141,7 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         tax_id: taxId || undefined,
         legal_name: legalName || undefined,
         trade_name: tradeName || undefined,
+        company_description: companyDescription || undefined,
         address: address || undefined,
         phone: phone || undefined,
         telefono_movil: mobilePhone || undefined,
@@ -290,6 +293,16 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                 value={tradeName}
                 onChange={(e) => setTradeName(e.target.value)}
                 placeholder="Mi Empresa"
+              />
+            </label>
+            <label style={{ gridColumn: '1 / -1' }}>
+              Descripcion interna de empresa (no SUNAT)
+              <textarea
+                rows={3}
+                maxLength={600}
+                value={companyDescription}
+                onChange={(e) => setCompanyDescription(e.target.value)}
+                placeholder="Informacion interna para impresion (no se envia a SUNAT)"
               />
             </label>
             <label style={{ gridColumn: '1 / -1' }}>
