@@ -8,15 +8,9 @@ type HtmlPreviewDialogProps = {
   onClose: () => void;
 };
 
-function downloadAsPdf(html: string): void {
-  // Inject auto-print + close script into the HTML for the download window
-  const autoScript = `<script>window.onload=function(){window.focus();window.print();window.addEventListener('afterprint',function(){window.close();});};<\/script>`;
-  const injected = html.replace('</body>', autoScript + '</body>');
-  const printWin = window.open('', '_blank', 'width=1,height=1,top=9999,left=9999');
-  if (!printWin) { return; }
-  printWin.document.open();
-  printWin.document.write(injected);
-  printWin.document.close();
+function downloadAsPdf(iframe: HTMLIFrameElement | null): void {
+  iframe?.contentWindow?.focus();
+  iframe?.contentWindow?.print();
 }
 
 export function HtmlPreviewDialog({
@@ -90,7 +84,9 @@ export function HtmlPreviewDialog({
           <div style={{ display: 'flex', gap: '8px' }}>
             <button
               type="button"
-              onClick={() => downloadAsPdf(html)}
+              onClick={() => {
+                downloadAsPdf(iframeRef.current);
+              }}
               style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: '0.88rem' }}
             >
               Descargar PDF
