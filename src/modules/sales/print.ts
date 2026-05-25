@@ -91,6 +91,95 @@ function formatMoney(amount: number): string {
   return Number(amount || 0).toFixed(2);
 }
 
+function normalizeCurrencyName(currencyCode: string | null | undefined): string {
+  const normalized = String(currencyCode ?? '').trim().toUpperCase();
+  if (normalized === 'USD' || normalized === 'US$' || normalized === '$') {
+    return 'DOLARES';
+  }
+  return 'SOLES';
+}
+
+function numberToSpanishWords(n: number): string {
+  const units = ['', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve'];
+  const teens = ['diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciseis', 'diecisiete', 'dieciocho', 'diecinueve'];
+  const tens = ['', '', 'veinte', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa'];
+  const hundreds = ['', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos'];
+
+  const toHundreds = (value: number): string => {
+    if (value === 0) return '';
+    if (value === 100) return 'cien';
+
+    const c = Math.floor(value / 100);
+    const rem = value % 100;
+    const parts: string[] = [];
+
+    if (c > 0) {
+      parts.push(hundreds[c]);
+    }
+
+    if (rem >= 10 && rem <= 19) {
+      parts.push(teens[rem - 10]);
+    } else {
+      const d = Math.floor(rem / 10);
+      const u = rem % 10;
+
+      if (d === 2 && u > 0) {
+        parts.push(`veinti${units[u]}`);
+      } else {
+        if (d > 0) parts.push(tens[d]);
+        if (u > 0) {
+          if (d > 2) {
+            parts.push(`y ${units[u]}`);
+          } else if (d === 0) {
+            parts.push(units[u]);
+          }
+        }
+      }
+    }
+
+    return parts.join(' ').trim();
+  };
+
+  if (n === 0) return 'cero';
+
+  const millions = Math.floor(n / 1000000);
+  const thousands = Math.floor((n % 1000000) / 1000);
+  const hundredsGroup = n % 1000;
+  const parts: string[] = [];
+
+  if (millions > 0) {
+    if (millions === 1) {
+      parts.push('un millon');
+    } else {
+      parts.push(`${toHundreds(millions)} millones`);
+    }
+  }
+
+  if (thousands > 0) {
+    if (thousands === 1) {
+      parts.push('mil');
+    } else {
+      parts.push(`${toHundreds(thousands)} mil`);
+    }
+  }
+
+  if (hundredsGroup > 0) {
+    parts.push(toHundreds(hundredsGroup));
+  }
+
+  return parts.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+function amountToWords(amount: number, currencyCode: string | null | undefined): string {
+  const safeAmount = Number.isFinite(amount) ? Math.max(0, amount) : 0;
+  const integerPart = Math.floor(safeAmount);
+  const decimalPart = Math.round((safeAmount - integerPart) * 100);
+  const decimalText = String(decimalPart).padStart(2, '0');
+  const words = numberToSpanishWords(integerPart).toUpperCase();
+  const currency = normalizeCurrencyName(currencyCode);
+  return `SON: ${words} CON ${decimalText}/100 ${currency}`;
+}
+
 function resolveItemProductCode(item: PrintableSalesItem): string {
   const itemAny = item as PrintableSalesItem & {
     product_code?: string | null;
@@ -227,10 +316,29 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
   };
 }
 
-function resolveVehiclePrintData(metadata: Record<string, unknown>): { plate: string; brand: string; model: string } {
-  const plate = String(metadata.vehicle_plate ?? metadata.vehiclePlateSnapshot ?? '').trim();
-  const brand = String(metadata.vehicle_brand ?? metadata.vehicleBrand ?? '').trim();
-  const model = String(metadata.vehicle_model ?? metadata.vehicleModel ?? '').trim();
+function resolveVehiclePrintData(
+  metadata: Record<string, unknown>,
+  doc?: PrintableSalesDocument,
+): { plate: string; brand: string; model: string } {
+  const plate = String(
+    doc?.metadata?.vehiclePlateSnapshot
+    ?? (doc as unknown as Record<string, unknown> | undefined)?.vehiclePlateSnapshot
+    ?? metadata.vehicle_plate
+    ?? metadata.vehiclePlateSnapshot
+    ?? ''
+  ).trim();
+  const brand = String(
+    (doc as unknown as Record<string, unknown> | undefined)?.vehicleBrandSnapshot
+    ?? metadata.vehicle_brand
+    ?? metadata.vehicleBrand
+    ?? ''
+  ).trim();
+  const model = String(
+    (doc as unknown as Record<string, unknown> | undefined)?.vehicleModelSnapshot
+    ?? metadata.vehicle_model
+    ?? metadata.vehicleModel
+    ?? ''
+  ).trim();
 
   return { plate, brand, model };
 }
@@ -467,7 +575,7 @@ export function buildCommercialDocumentA4Html(
     .join('');
 
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
-  const vehiclePrint = resolveVehiclePrintData(metaData);
+  const vehiclePrint = resolveVehiclePrintData(metaData, doc);
   const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
@@ -482,6 +590,7 @@ export function buildCommercialDocumentA4Html(
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
   const percepcionType = String(metaData.percepcion_type_name ?? '').trim();
   const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
+  const totalInWords = amountToWords(Number(doc.grandTotal ?? 0), doc.currencyCode);
 
   const tributaryRows = showTributaryBreakdown ? [
     sunatOpCode
@@ -656,6 +765,7 @@ export function buildCommercialDocumentA4Html(
           <section class="summary">
             <article>
               <p class="payment">FORMA PAGO: ${escapeHtml(doc.paymentMethodName || '-')}</p>
+              <p class="payment">${escapeHtml(totalInWords)}</p>
             </article>
             <article class="amounts">
               <table>
@@ -738,7 +848,7 @@ export function buildCommercialDocument80mmHtml(
 
   const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
-  const vehiclePrint = resolveVehiclePrintData(metaData);
+  const vehiclePrint = resolveVehiclePrintData(metaData, doc);
   const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
   const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
@@ -749,6 +859,7 @@ export function buildCommercialDocument80mmHtml(
   const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
   const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
+  const totalInWords = amountToWords(Number(doc.grandTotal ?? 0), doc.currencyCode);
 
   return `
     <html>
@@ -1099,6 +1210,10 @@ export function buildCommercialDocument80mmHtml(
             <div class="total-row">
               <span>TOTAL</span>
               <span>${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</span>
+            </div>
+            <div class="summary-row">
+              <div class="summary-label">SON:</div>
+              <div class="summary-value">${escapeHtml(totalInWords.replace(/^SON:\s*/i, ''))}</div>
             </div>
           </div>
 
