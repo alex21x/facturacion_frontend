@@ -50,6 +50,37 @@ async function savePdfBlob(blob: Blob, fileName: string): Promise<void> {
   URL.revokeObjectURL(url);
 }
 
+async function waitForNodeToRender(node: HTMLElement): Promise<void> {
+  const images = Array.from(node.querySelectorAll('img'));
+  const imagePromises = images.map((img) => {
+    if (img.complete && img.naturalWidth > 0) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      const done = () => resolve();
+      img.addEventListener('load', done, { once: true });
+      img.addEventListener('error', done, { once: true });
+      // Evita bloqueos cuando el navegador no dispara load/error por CORS.
+      window.setTimeout(done, 2500);
+    });
+  });
+
+  await Promise.all(imagePromises);
+
+  if ('fonts' in document && (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready) {
+    try {
+      await (document as Document & { fonts: { ready: Promise<unknown> } }).fonts.ready;
+    } catch {
+      // noop: si falla fonts.ready seguimos con el render.
+    }
+  }
+
+  // Da tiempo a layout/reflow para que html2canvas capture estado final.
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
 async function downloadAsPdf(
   iframe: HTMLIFrameElement | null,
   title: string,
@@ -72,18 +103,29 @@ async function downloadAsPdf(
   sandbox.style.zIndex = '-1';
 
   const sourceHtml = sourceDoc.documentElement.cloneNode(true) as HTMLElement;
+  const sourceHead = sourceHtml.querySelector('head');
+  if (sourceHead && !sourceHead.querySelector('base')) {
+    const baseTag = sourceDoc.createElement('base');
+    baseTag.setAttribute('href', `${window.location.origin}/`);
+    sourceHead.prepend(baseTag);
+  }
   sandbox.appendChild(sourceHtml);
   document.body.appendChild(sandbox);
 
   try {
     const target = sourceHtml.querySelector('body') ?? sourceHtml;
+    await waitForNodeToRender(target as HTMLElement);
+
     const worker = html2pdf().set({
       filename: fileName,
       margin: variant === 'compact' ? [2, 2, 2, 2] : [8, 8, 8, 8],
-      image: { type: 'jpeg', quality: 0.98 },
+      image: { type: 'png', quality: 1 },
       html2canvas: {
         scale: variant === 'compact' ? 3 : 2,
         useCORS: true,
+        allowTaint: false,
+        logging: false,
+        foreignObjectRendering: true,
         backgroundColor: '#ffffff',
       },
       jsPDF: variant === 'compact'
