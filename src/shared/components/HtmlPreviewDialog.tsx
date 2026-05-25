@@ -91,12 +91,15 @@ async function downloadAsPdf(
 
   const module = await import('html2pdf.js');
   const html2pdf = (module as any).default ?? module;
+  const sourceRoot = sourceDoc.documentElement;
+  const sourceWidth = Math.max(sourceRoot.scrollWidth, sourceRoot.clientWidth, sourceDoc.body.scrollWidth, sourceDoc.body.clientWidth);
+  const sourceHeight = Math.max(sourceRoot.scrollHeight, sourceRoot.clientHeight, sourceDoc.body.scrollHeight, sourceDoc.body.clientHeight);
   const exportFrame = document.createElement('iframe');
   exportFrame.style.position = 'fixed';
   exportFrame.style.left = '-99999px';
   exportFrame.style.top = '0';
-  exportFrame.style.width = variant === 'compact' ? '420px' : '1240px';
-  exportFrame.style.height = variant === 'compact' ? '1600px' : '2000px';
+  exportFrame.style.width = `${Math.max(sourceWidth, variant === 'compact' ? 380 : 794)}px`;
+  exportFrame.style.height = `${Math.max(sourceHeight, variant === 'compact' ? 1200 : 1123)}px`;
   exportFrame.style.opacity = '0';
   exportFrame.style.pointerEvents = 'none';
   exportFrame.setAttribute('aria-hidden', 'true');
@@ -137,8 +140,9 @@ async function downloadAsPdf(
 
     const fileName = resolvePdfFileName(exportDoc, title);
     const target = exportDoc.body;
-    const exportWidth = Math.max(target.scrollWidth, target.clientWidth, variant === 'compact' ? 380 : 1100);
-    const exportHeight = Math.max(target.scrollHeight, target.clientHeight, variant === 'compact' ? 1200 : 1600);
+    const exportRoot = exportDoc.documentElement;
+    const exportWidth = Math.max(exportRoot.scrollWidth, exportRoot.clientWidth, target.scrollWidth, target.clientWidth, variant === 'compact' ? 380 : 794);
+    const exportHeight = Math.max(exportRoot.scrollHeight, exportRoot.clientHeight, target.scrollHeight, target.clientHeight, variant === 'compact' ? 1200 : 1123);
 
     const worker = html2pdf().set({
       filename: fileName,
