@@ -68,7 +68,7 @@ async function waitForNodeToRender(node: HTMLElement): Promise<void> {
 
   await Promise.all(imagePromises);
 
-  if ('fonts' in document && (document as Document & { fonts?: { ready?: Promise<unknown> } }).fonts?.ready) {
+  if ('fonts' in document) {
     try {
       await (document as Document & { fonts: { ready: Promise<unknown> } }).fonts.ready;
     } catch {
