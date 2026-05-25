@@ -4,6 +4,7 @@ import { apiClient } from '../../shared/api/client';
 export type PrintableSalesItem = {
   lineNo: number;
   productId?: number | null;
+  productCode?: string | null;
   unitId?: number | null;
   priceTierId?: number | null;
   wholesaleDiscountPercent?: number | null;
@@ -88,6 +89,30 @@ function formatDateTime(value: string | null | undefined): string {
 
 function formatMoney(amount: number): string {
   return Number(amount || 0).toFixed(2);
+}
+
+function resolveItemProductCode(item: PrintableSalesItem): string {
+  const itemAny = item as PrintableSalesItem & {
+    product_code?: string | null;
+    metadata?: Record<string, unknown> | null;
+  };
+  const metadata = itemAny.metadata ?? {};
+
+  const candidate = String(
+    itemAny.productCode
+    ?? itemAny.product_code
+    ?? metadata.product_code
+    ?? metadata.productCode
+    ?? metadata.code
+    ?? ''
+  ).trim();
+
+  if (candidate !== '') {
+    return candidate;
+  }
+
+  const productId = Number(item.productId ?? 0);
+  return Number.isFinite(productId) && productId > 0 ? `ID-${productId}` : '';
 }
 
 function normalizePrintAssetUrl(rawUrl: string | null | undefined): string | null {
@@ -425,9 +450,11 @@ export function buildCommercialDocumentA4Html(
 
   const rows = doc.items
     .map((item) => {
+      const itemCode = resolveItemProductCode(item);
       return `
         <tr>
           <td class="ta-c">${item.lineNo}</td>
+          <td class="ta-c">${itemCode ? escapeHtml(itemCode) : '-'}</td>
           <td class="ta-r">${Number(item.qty).toFixed(3)}</td>
           <td class="ta-c">${escapeHtml(item.unitLabel)}</td>
           <td>${escapeHtml(item.description)}</td>
@@ -504,7 +531,7 @@ export function buildCommercialDocumentA4Html(
           .head { display: grid; grid-template-columns: 1.35fr 0.9fr; gap: 10px; align-items: stretch; }
           .brand { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; }
           .brand-head { display: flex; gap: 10px; align-items: flex-start; }
-          .brand-logo { width: 210px; max-width: 100%; height: auto; max-height: 150px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
+          .brand-logo { width: 210px !important; min-width: 210px; max-width: 210px; height: auto; max-height: 150px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
           .brand-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
           .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.4px; line-height: 1.15; }
           .brand-copy { margin-top: 0; }
@@ -611,6 +638,7 @@ export function buildCommercialDocumentA4Html(
               <thead>
                 <tr>
                   <th style="width:44px">#</th>
+                  <th style="width:98px">Codigo</th>
                   <th style="width:76px">Cantidad</th>
                   <th style="width:86px">Unid. Med.</th>
                   <th>${isNoteDocument ? 'Productos / conceptos afectados' : 'Descripcion'}</th>
@@ -620,7 +648,7 @@ export function buildCommercialDocumentA4Html(
                 </tr>
               </thead>
               <tbody>
-                ${rows || `<tr><td colspan="${showItemDiscount ? '7' : '6'}" class="ta-c">Sin items</td></tr>`}
+                ${rows || `<tr><td colspan="${showItemDiscount ? '8' : '7'}" class="ta-c">Sin items</td></tr>`}
               </tbody>
             </table>
           </section>
@@ -687,13 +715,15 @@ export function buildCommercialDocument80mmHtml(
       const qtyStr = Number(item.qty).toFixed(2);
       const priceStr = formatMoney(item.unitPrice);
       const totalStr = formatMoney(item.lineTotal);
+      const itemCode = resolveItemProductCode(item);
       
       // Ajustar descripción para 80mm (aprox. 32 caracteres por línea)
       const maxDescLength = 32;
       const desc = escapeHtml(item.description).substring(0, maxDescLength);
+      const codeRow = itemCode ? `<div class="item-code">Cod: ${escapeHtml(itemCode)}</div>` : '';
       
       return `<tr class="item-desc-row">
-        <td class="item-desc">${desc}</td>
+        <td class="item-desc">${codeRow}${desc}</td>
       </tr>
       <tr class="item-price-row">
         <td class="item-price-cell">
@@ -868,6 +898,13 @@ export function buildCommercialDocument80mmHtml(
             line-height: 1.25;
             letter-spacing: 0.1px;
             word-break: break-word;
+          }
+          .item-code {
+            font-size: 10px;
+            line-height: 1.2;
+            letter-spacing: 0.1px;
+            font-weight: 800;
+            margin-bottom: 0.35mm;
           }
           .item-price-row td {
             padding-top: 0.2mm;
