@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { checkoutRestaurantOrder, fetchComandas, fetchOrderPreparationRequirements, fetchRestaurantBootstrap, updateComandaStatus } from '../api';
 import { fetchCommercialDocuments, fetchCommercialDocumentDetails, fetchCommercialDocumentPrintHtml, fetchTaxBridgePreview, retryTaxBridgeSend, downloadSunatXml, downloadSunatCdr } from '../../sales/api';
-import { openCommercialDocumentPrintA4 } from '../../sales/print';
 import type { PrintableSalesDocument } from '../../sales/print';
 import type { CommercialDocumentListItem } from '../../sales/types';
 import type {
@@ -417,18 +416,13 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   async function printCheckoutResult(docId: number, format: '80mm' | 'A4') {
     setPrintBusy(true);
     try {
-      const doc = await fetchCommercialDocumentDetails(accessToken, docId);
-      if (format === '80mm') {
-        const html = await fetchCommercialDocumentPrintHtml(accessToken, docId, 'ticket');
-        const win = window.open('', '_blank', 'width=420,height=800');
-        if (win) {
-          win.document.open();
-          win.document.write(html);
-          win.document.close();
-          win.focus();
-        }
-      } else {
-        openCommercialDocumentPrintA4(doc);
+      const html = await fetchCommercialDocumentPrintHtml(accessToken, docId, format === '80mm' ? 'ticket' : 'a4');
+      const win = window.open('', '_blank', format === '80mm' ? 'width=420,height=800' : 'width=1024,height=920');
+      if (win) {
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+        win.focus();
       }
     } catch {
       // silently ignore
@@ -903,7 +897,16 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                                     onClick={() => {
                                       const cached = hoverCobroCache[doc.id];
                                       if (!cached) return;
-                                      openCommercialDocumentPrintA4(cached);
+                                      void (async () => {
+                                        const html = await fetchCommercialDocumentPrintHtml(accessToken, cached.id, 'a4');
+                                        const win = window.open('', '_blank', 'width=1024,height=920');
+                                        if (win) {
+                                          win.document.open();
+                                          win.document.write(html);
+                                          win.document.close();
+                                          win.focus();
+                                        }
+                                      })();
                                     }}
                                   >
                                     Impr. A4
@@ -1466,7 +1469,22 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
             <button type="button" className="restaurant-ghost-btn" onClick={() => setCobroDetail(null)}>
               Cerrar
             </button>
-            <button type="button" className="restaurant-ghost-btn" onClick={() => openCommercialDocumentPrintA4(cobroDetail)}>
+            <button
+              type="button"
+              className="restaurant-ghost-btn"
+              onClick={() => {
+                void (async () => {
+                  const html = await fetchCommercialDocumentPrintHtml(accessToken, cobroDetail.id, 'a4');
+                  const win = window.open('', '_blank', 'width=1024,height=920');
+                  if (win) {
+                    win.document.open();
+                    win.document.write(html);
+                    win.document.close();
+                    win.focus();
+                  }
+                })();
+              }}
+            >
               Impr. A4
             </button>
             <button
