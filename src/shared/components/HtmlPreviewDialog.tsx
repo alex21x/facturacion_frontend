@@ -95,8 +95,8 @@ async function downloadAsPdf(
   exportFrame.style.position = 'fixed';
   exportFrame.style.left = '-99999px';
   exportFrame.style.top = '0';
-  exportFrame.style.width = variant === 'compact' ? '420px' : '1200px';
-  exportFrame.style.height = '10px';
+  exportFrame.style.width = variant === 'compact' ? '420px' : '1240px';
+  exportFrame.style.height = variant === 'compact' ? '1600px' : '2000px';
   exportFrame.style.opacity = '0';
   exportFrame.style.pointerEvents = 'none';
   exportFrame.setAttribute('aria-hidden', 'true');
@@ -137,6 +137,8 @@ async function downloadAsPdf(
 
     const fileName = resolvePdfFileName(exportDoc, title);
     const target = exportDoc.body;
+    const exportWidth = Math.max(target.scrollWidth, target.clientWidth, variant === 'compact' ? 380 : 1100);
+    const exportHeight = Math.max(target.scrollHeight, target.clientHeight, variant === 'compact' ? 1200 : 1600);
 
     const worker = html2pdf().set({
       filename: fileName,
@@ -149,6 +151,8 @@ async function downloadAsPdf(
         logging: false,
         foreignObjectRendering: false,
         backgroundColor: '#ffffff',
+        windowWidth: exportWidth,
+        windowHeight: exportHeight,
       },
       jsPDF: variant === 'compact'
         ? { unit: 'mm', format: [80, 297], orientation: 'portrait' }
