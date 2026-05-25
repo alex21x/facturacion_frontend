@@ -716,6 +716,27 @@ export async function fetchCommercialDocumentDetails(
   return response as PrintableSalesDocument;
 }
 
+export async function fetchCommercialDocumentPrintHtml(
+  accessToken: string,
+  documentId: number,
+  format: 'ticket' | 'a4' = 'ticket'
+): Promise<string> {
+  const response = await fetch(`${apiClient.baseUrl}/api/sales/commercial-documents/${documentId}/print?format=${format}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'text/html',
+    },
+  });
+
+  const html = await response.text();
+  if (!response.ok) {
+    throw new Error(`API ${response.status}: ${html}`);
+  }
+
+  return html;
+}
+
 export async function exportCommercialDocumentsExcel(
   accessToken: string,
   context?: {

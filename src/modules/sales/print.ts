@@ -491,10 +491,10 @@ export function buildCommercialDocumentA4Html(
             margin-left: 8px;
           }
           .sheet { width: 100%; border: 1.5px solid #1f2937; min-height: 277mm; padding: 8mm; }
-          .head { display: grid; grid-template-columns: 1.1fr 1fr; gap: 10px; align-items: stretch; }
+          .head { display: grid; grid-template-columns: 1.35fr 0.9fr; gap: 10px; align-items: stretch; }
           .brand { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; }
           .brand-head { display: flex; gap: 10px; align-items: flex-start; }
-          .brand-logo { width: 116px; height: 116px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
+          .brand-logo { width: 210px; max-width: 100%; height: auto; max-height: 150px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
           .brand-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
           .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.4px; line-height: 1.15; }
           .brand p { margin: 2px 0; font-size: 11px; color: #4b5563; }
