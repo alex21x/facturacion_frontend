@@ -566,8 +566,8 @@ export function buildCommercialDocumentA4Html(
           .paybrand { border-radius: 8px; border: 1px solid #d1d5db; background: #fff; padding: 5px 10px; height: 40px; display: inline-flex; align-items: center; }
           .paybrand img { height: 28px; width: auto; display: block; }
           .company-footer { margin-top: 10px; display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: end; }
-          .company-footer-banks { text-align: left; font-size: 10px; line-height: 1.35; color: #334155; }
-          .company-footer-banks--ticket { font-size: 7px; margin-top: 1mm; }
+          .company-footer-banks { text-align: left; font-size: 11px; line-height: 1.4; color: #334155; }
+          .company-footer-banks--ticket { font-size: 8px; margin-top: 1mm; }
           .company-footer-title { font-weight: 700; color: #0f172a; margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.2px; }
           .company-footer-bank { margin-top: 4px; }
           .company-footer-bank div { margin: 0; }
@@ -979,7 +979,7 @@ export function buildCommercialDocument80mmHtml(
             font-weight: 800;
           }
           .company-footer-title { font-weight: 800; text-transform: uppercase; margin-bottom: 1mm; }
-          .company-footer-banks { text-align: left; margin-top: 1mm; }
+          .company-footer-banks { text-align: left; margin-top: 1mm; font-size: 12px; line-height: 1.35; }
           .company-footer-bank { margin: 0.4mm 0; font-weight: 800; }
           .paybrands { display: flex; gap: 5px; align-items: center; justify-content: center; margin: 1.2mm 0; }
           .paybrand { border-radius: 6px; border: 1px solid #d1d5db; background: #fff; padding: 3px 6px; height: 28px; display: inline-flex; align-items: center; }
