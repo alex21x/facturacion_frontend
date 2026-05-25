@@ -810,6 +810,7 @@ export function buildCommercialDocument80mmHtml(
           .date { 
             font-size: 11px;
             color: #333;
+            font-weight: 800;
           }
           .section { 
             margin-bottom: 2mm;
@@ -830,13 +831,14 @@ export function buildCommercialDocument80mmHtml(
             word-break: break-word;
           }
           .info-label { 
-            font-weight: 600;
+            font-weight: 800;
             flex: 0 0 auto;
             margin-right: 2mm;
           }
           .info-value { 
             flex: 1;
             text-align: right;
+            font-weight: 800;
           }
           .items { 
             margin-bottom: 2mm;
@@ -899,10 +901,11 @@ export function buildCommercialDocument80mmHtml(
           }
           .summary-label { 
             flex: 1; 
+            font-weight: 800;
           }
           .summary-value { 
             text-align: right;
-            font-weight: 600;
+            font-weight: 800;
             flex: 0 0 auto;
             width: 30mm;
           }
@@ -923,10 +926,11 @@ export function buildCommercialDocument80mmHtml(
             border-top: 1px dashed #000;
             padding-top: 1mm;
             line-height: 1.2;
+            font-weight: 800;
           }
-          .company-footer-title { font-weight: 700; text-transform: uppercase; margin-bottom: 1mm; }
+          .company-footer-title { font-weight: 800; text-transform: uppercase; margin-bottom: 1mm; }
           .company-footer-banks { text-align: left; margin-top: 1mm; }
-          .company-footer-bank { margin: 0.4mm 0; }
+          .company-footer-bank { margin: 0.4mm 0; font-weight: 800; }
           .paybrands { display: flex; gap: 5px; align-items: center; justify-content: center; margin: 1.2mm 0; }
           .paybrand { border-radius: 6px; border: 1px solid #d1d5db; background: #fff; padding: 3px 6px; height: 28px; display: inline-flex; align-items: center; }
           .paybrand img { height: 20px; width: auto; display: block; }
