@@ -53,6 +53,7 @@ export type PrintableCompanyProfile = {
   taxId?: string | null;
   legalName?: string | null;
   tradeName?: string | null;
+  companyDescription?: string | null;
   address?: string | null;
   phone?: string | null;
   email?: string | null;
@@ -143,6 +144,13 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
     ?? metadata.address
     ?? null
   ) as string | null;
+  const companyDescription = (
+    inputCompany.companyDescription
+    ?? inputCompany.company_description
+    ?? metadata.company_description
+    ?? metadata.companyDescription
+    ?? null
+  ) as string | null;
   const phone = (
     inputCompany.phone
     ?? inputCompany.company_phone
@@ -184,6 +192,7 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
     taxId,
     legalName,
     tradeName,
+    companyDescription,
     address,
     phone,
     email,
@@ -404,6 +413,7 @@ export function buildCommercialDocumentA4Html(
   const company = resolvePrintableCompanyProfile(doc);
   const companyTitle = String(company.tradeName || company.legalName || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
   const companyLegalName = String(company.legalName || companyTitle).trim();
+  const companyDescription = String(company.companyDescription || '').trim();
   const companyTaxId = String(company.taxId || '00000000000').trim() || '00000000000';
   const companyAddress = String(company.address || '').trim();
   const companyPhone = String(company.phone || '').trim();
@@ -493,11 +503,13 @@ export function buildCommercialDocumentA4Html(
           .sheet { width: 100%; border: 1.5px solid #1f2937; min-height: 277mm; padding: 8mm; }
           .head { display: grid; grid-template-columns: 1.35fr 0.9fr; gap: 10px; align-items: stretch; }
           .brand { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; }
-          .brand-head { display: flex; gap: 10px; align-items: flex-start; }
-          .brand-logo { width: 210px; max-width: 100%; height: auto; max-height: 150px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; flex-shrink: 0; }
+          .brand-head { display: block; }
+          .brand-logo { width: 100%; max-width: 100%; height: auto; max-height: 220px; object-fit: contain; border: 1px solid #d1d5db; border-radius: 8px; background: #fff; display: block; margin: 0 0 8px 0; }
           .brand-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; font-size: 12px; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
           .brand h1 { margin: 0; font-size: 20px; letter-spacing: 0.4px; line-height: 1.15; }
-          .brand p { margin: 2px 0; font-size: 11px; color: #4b5563; }
+          .brand-copy { margin-top: 2px; }
+          .brand p { margin: 2px 0; font-size: 10px; color: #4b5563; }
+          .brand-description { margin: 4px 0 2px; font-size: 11px; line-height: 1.25; color: #1f2937; }
           .voucher { border: 1px solid #9ca3af; border-radius: 8px; padding: 10px; text-align: center; }
           .voucher .ruc { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
           .voucher .title { font-size: 18px; margin-top: 4px; letter-spacing: 2px; }
@@ -551,9 +563,10 @@ export function buildCommercialDocumentA4Html(
             <article class="brand">
               <div class="brand-head">
                 ${logoHtml}
-                <div>
+                <div class="brand-copy">
                   <h1>${escapeHtml(companyTitle)}</h1>
                   ${companyLegalName !== companyTitle ? `<p>${escapeHtml(companyLegalName)}</p>` : ''}
+                  ${companyDescription ? `<p class="brand-description">${escapeHtml(companyDescription)}</p>` : ''}
                   ${companyAddress ? `<p>${escapeHtml(companyAddress)}</p>` : ''}
                   ${companyPhone ? `<p>Tel: ${escapeHtml(companyPhone)}</p>` : ''}
                   ${companyEmail ? `<p>Email: ${escapeHtml(companyEmail)}</p>` : ''}

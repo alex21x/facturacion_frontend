@@ -12,6 +12,7 @@ export type CompanyProfile = {
   tax_id: string | null;
   legal_name: string;
   trade_name: string | null;
+  company_description?: string | null;
   status: number;
   address: string | null;
   phone: string | null;
@@ -39,6 +40,7 @@ export type UpdateCompanyProfilePayload = {
   tax_id?: string;
   legal_name?: string;
   trade_name?: string;
+  company_description?: string;
   address?: string;
   phone?: string;
   telefono_movil?: string;
