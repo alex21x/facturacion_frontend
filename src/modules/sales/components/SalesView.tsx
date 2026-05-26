@@ -7877,10 +7877,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   ? result.blob
                   : new Blob([await result.blob.arrayBuffer()], { type: 'application/pdf' });
 
-                const suggestedName = (result.fileName || `documento-${directPdf.documentId}.pdf`).trim();
-                const safeFileName = suggestedName.toLowerCase().endsWith('.pdf')
-                  ? suggestedName
-                  : `${suggestedName}.pdf`;
+                const correlateSource = `${previewDialog.subtitle ?? ''} ${previewDialog.title ?? ''}`;
+                const correlativeMatch = correlateSource.match(/\b([A-Z0-9]{1,4}-\d{1,8})\b/i);
+                const correlativeBaseName = correlativeMatch?.[1]?.toUpperCase() ?? '';
+                const serverBaseName = (result.fileName || '').trim().replace(/\.pdf$/i, '');
+                const chosenBaseName = (correlativeBaseName || serverBaseName || `documento-${directPdf.documentId}`).trim();
+                const safeFileName = chosenBaseName.toLowerCase().endsWith('.pdf')
+                  ? chosenBaseName
+                  : `${chosenBaseName}.pdf`;
 
                 const picker = (window as any).showSaveFilePicker;
                 if (typeof picker === 'function') {
