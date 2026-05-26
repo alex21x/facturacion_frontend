@@ -330,6 +330,7 @@ export type InventoryBulkStockUpdateResponse = {
   summary: {
     total: number;
     applied: number;
+    created_products?: number;
     omitted: number;
     errors: number;
     ledger_rows?: number;

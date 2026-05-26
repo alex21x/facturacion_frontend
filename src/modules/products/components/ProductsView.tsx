@@ -320,6 +320,10 @@ export function ProductsView({
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
+  const [searchSuggestions, setSearchSuggestions] = useState<InventoryProduct[]>([]);
+  const [searchSuggestOpen, setSearchSuggestOpen] = useState(false);
+  const [searchSearching, setSearchSearching] = useState(false);
+  const [searchActiveIndex, setSearchActiveIndex] = useState(-1);
   const [status, setStatus] = useState<'all' | '1' | '0'>('1');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
@@ -439,6 +443,43 @@ export function ProductsView({
     void loadProducts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accessToken, status]);
+
+  // Debounced product autocomplete for the catalog search input
+  useEffect(() => {
+    const query = search.trim();
+    if (query.length < 2) {
+      setSearchSuggestions([]);
+      setSearchActiveIndex(-1);
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setSearchSearching(true);
+      try {
+        const result = await fetchInventoryProducts(accessToken, {
+          search: query,
+          status: status === 'all' ? null : Number(status),
+          limit: 10,
+          autocomplete: true,
+        });
+        if (!cancelled) {
+          setSearchSuggestions(result);
+          setSearchActiveIndex(result.length > 0 ? 0 : -1);
+        }
+      } catch {
+        if (!cancelled) setSearchSuggestions([]);
+      } finally {
+        if (!cancelled) setSearchSearching(false);
+      }
+    }, 250);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken, search, status]);
 
   function resetForm(keepMasters = false) {
     const nextForm = keepMasters
@@ -1047,17 +1088,84 @@ export function ProductsView({
           <div className="grid-form entity-filters">
             <label>
               Buscar
-              <input
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="SKU, codigo de barras o nombre"
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') {
-                    event.preventDefault();
-                    void loadProducts();
-                  }
-                }}
-              />
+              <div className="with-suggest">
+                <input
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                    setSearchSuggestOpen(true);
+                  }}
+                  onFocus={() => {
+                    if (searchSuggestions.length > 0) setSearchSuggestOpen(true);
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => setSearchSuggestOpen(false), 120);
+                  }}
+                  onKeyDown={(event) => {
+                    if (searchSuggestOpen && searchSuggestions.length > 0) {
+                      if (event.key === 'ArrowDown') {
+                        event.preventDefault();
+                        setSearchActiveIndex((prev) => Math.min(prev + 1, searchSuggestions.length - 1));
+                        return;
+                      }
+                      if (event.key === 'ArrowUp') {
+                        event.preventDefault();
+                        setSearchActiveIndex((prev) => Math.max(prev - 1, 0));
+                        return;
+                      }
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        const selected = searchSuggestions[searchActiveIndex >= 0 ? searchActiveIndex : 0];
+                        if (selected) {
+                          setSearch(selected.sku ? `[${selected.sku}] ${selected.name}` : selected.name);
+                          setSearchSuggestOpen(false);
+                          setSearchSuggestions([]);
+                          void loadProducts();
+                        }
+                        return;
+                      }
+                      if (event.key === 'Escape') {
+                        setSearchSuggestOpen(false);
+                        return;
+                      }
+                    }
+                    if (event.key === 'Enter') {
+                      event.preventDefault();
+                      setSearchSuggestOpen(false);
+                      void loadProducts();
+                    }
+                  }}
+                  placeholder="SKU, codigo de barras o nombre"
+                  autoComplete="off"
+                />
+                {searchSearching && (
+                  <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#7a6f63' }}>
+                    ...
+                  </span>
+                )}
+                {searchSuggestOpen && searchSuggestions.length > 0 && (
+                  <div className="suggest-box suggest-box--product">
+                    {searchSuggestions.map((row, index) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className={`suggest-item ${index === searchActiveIndex ? 'active' : ''}`}
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          setSearch(row.sku ? `[${row.sku}] ${row.name}` : row.name);
+                          setSearchSuggestOpen(false);
+                          setSearchSuggestions([]);
+                          void loadProducts();
+                        }}
+                      >
+                        <strong>{row.name}</strong>
+                        <span className="suggest-sku">{row.sku ?? 'SIN-SKU'}</span>
+                        {row.category_name && <span className="suggest-unit">{row.category_name}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </label>
             <label>
               Estado
