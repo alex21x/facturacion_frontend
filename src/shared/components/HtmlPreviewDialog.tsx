@@ -150,7 +150,7 @@ async function downloadAsPdf(
     await waitForDocumentToRender(exportDoc);
 
     const fileName = resolvePdfFileName(exportDoc, title);
-    const target = (exportDoc.querySelector('.sheet') as HTMLElement | null) ?? exportDoc.body;
+    const target = exportDoc.body;
 
     // Use rendered box sizes instead of raw scrollHeight to avoid runaway canvases.
     const targetHeight = Math.ceil(target.getBoundingClientRect().height);
@@ -170,6 +170,7 @@ async function downloadAsPdf(
         logging: false,
         foreignObjectRendering: false,
         backgroundColor: '#ffffff',
+        width: EXPORT_W,
         windowWidth: EXPORT_W,
         windowHeight: exportHeight,
         scrollX: 0,
