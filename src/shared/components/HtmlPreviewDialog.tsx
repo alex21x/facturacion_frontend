@@ -1,10 +1,11 @@
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 
 type HtmlPreviewDialogProps = {
   title: string;
   subtitle?: string;
   html: string;
   variant?: 'compact' | 'wide' | 'xwide';
+  onDownloadPdf?: () => Promise<void>;
   onClose: () => void;
 };
 
@@ -208,9 +209,25 @@ export function HtmlPreviewDialog({
   subtitle,
   html,
   variant = 'wide',
+  onDownloadPdf,
   onClose,
 }: HtmlPreviewDialogProps) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  async function handleDownloadPdf(): Promise<void> {
+    setDownloading(true);
+    try {
+      if (onDownloadPdf) {
+        await onDownloadPdf();
+        return;
+      }
+
+      await downloadAsPdf(iframeRef.current, title, variant);
+    } finally {
+      setDownloading(false);
+    }
+  }
 
   return (
     <div
@@ -275,11 +292,12 @@ export function HtmlPreviewDialog({
             <button
               type="button"
               onClick={() => {
-                void downloadAsPdf(iframeRef.current, title, variant);
+                void handleDownloadPdf();
               }}
+              disabled={downloading}
               style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: '0.88rem' }}
             >
-              Descargar PDF
+              {downloading ? 'Generando...' : 'Descargar PDF'}
             </button>
             <button
               type="button"
