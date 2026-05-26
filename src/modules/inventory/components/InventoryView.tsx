@@ -8,12 +8,18 @@ import {
   fetchKardex,
   fetchInventoryProductImportBatches,
   fetchInventoryProductImportBatchDetail,
+  updateInventoryStockBulkWithChunking,
   fetchInventoryProDashboard,
   fetchInventoryProDailySnapshot,
   fetchInventoryProLotExpiry,
   createInventoryProReportRequest,
   fetchInventoryProReportRequest,
   fetchInventoryProReportRequests,
+} from '../api';
+import type {
+  InventoryBulkStockUpdateMode,
+  InventoryBulkStockUpdateResponse,
+  InventoryBulkStockUpdateRow,
 } from '../api';
 import type {
   InventoryLotRow,
@@ -37,6 +43,7 @@ type InvTab = 'stock' | 'lotes' | 'ubicaciones' | 'kardex' | 'importaciones' | '
 const REF_TYPE_LABELS: Record<string, string> = {
   STOCK_ENTRY: 'Ingreso',
   PRODUCT_IMPORT: 'Importacion masiva',
+  STOCK_BULK_UPDATE: 'Actualizacion masiva de stock',
   COMMERCIAL_DOCUMENT: 'Doc. Comercial',
   COMMERCIAL_DOCUMENT_VOID: 'Anulacion doc. comercial',
 };
@@ -196,6 +203,71 @@ function formatExportCell(key: string, value: unknown): unknown {
   return value;
 }
 
+function normalizeHeaderKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function parseStockUpdateRowsFromSheet(rows: Record<string, unknown>[]): {
+  parsedRows: InventoryBulkStockUpdateRow[];
+  parseErrors: Array<{ row: number; message: string }>;
+} {
+  const parsedRows: InventoryBulkStockUpdateRow[] = [];
+  const parseErrors: Array<{ row: number; message: string }> = [];
+
+  rows.forEach((source, index) => {
+    const rowNumber = index + 2;
+    const normalized: Record<string, unknown> = {};
+
+    Object.entries(source).forEach(([key, value]) => {
+      normalized[normalizeHeaderKey(key)] = value;
+    });
+
+    const idRaw = normalized.id ?? normalized.product_id;
+    const skuRaw = normalized.sku ?? normalized.codigo;
+    const qtyRaw = normalized.qty ?? normalized.cantidad ?? normalized.stock ?? normalized.delta;
+    const warehouseCodeRaw = normalized.warehouse_code ?? normalized.almacen ?? normalized.codigo_almacen;
+    const noteRaw = normalized.note ?? normalized.nota ?? normalized.observacion;
+
+    const id = idRaw !== undefined && idRaw !== null && String(idRaw).trim() !== ''
+      ? Number(idRaw)
+      : undefined;
+    const sku = skuRaw !== undefined && skuRaw !== null ? String(skuRaw).trim() : '';
+    const qty = qtyRaw !== undefined && qtyRaw !== null && String(qtyRaw).trim() !== ''
+      ? Number(String(qtyRaw).replace(',', '.'))
+      : Number.NaN;
+
+    if ((!id || !Number.isFinite(id)) && sku === '') {
+      parseErrors.push({ row: rowNumber, message: 'Debe enviar ID o SKU.' });
+      return;
+    }
+
+    if (!Number.isFinite(qty)) {
+      parseErrors.push({ row: rowNumber, message: 'Cantidad inválida.' });
+      return;
+    }
+
+    parsedRows.push({
+      id: id && Number.isFinite(id) ? Math.trunc(id) : undefined,
+      sku: sku !== '' ? sku : undefined,
+      qty,
+      warehouse_code: warehouseCodeRaw !== undefined && warehouseCodeRaw !== null && String(warehouseCodeRaw).trim() !== ''
+        ? String(warehouseCodeRaw).trim()
+        : undefined,
+      note: noteRaw !== undefined && noteRaw !== null && String(noteRaw).trim() !== ''
+        ? String(noteRaw).trim()
+        : undefined,
+    });
+  });
+
+  return { parsedRows, parseErrors };
+}
+
 type InventoryViewProps = {
   accessToken: string;
   warehouseId: number | null;
@@ -282,6 +354,12 @@ export function InventoryView({
   const [importBatchItemsPage, setImportBatchItemsPage] = useState(1);
   const [importBatchesPerPage] = useState(8);
   const [importBatchItemsPerPage] = useState(20);
+  const [stockUpdateMode, setStockUpdateMode] = useState<InventoryBulkStockUpdateMode>('replace');
+  const [stockUpdateRows, setStockUpdateRows] = useState<InventoryBulkStockUpdateRow[]>([]);
+  const [stockUpdateFileName, setStockUpdateFileName] = useState('');
+  const [stockUpdateParseErrors, setStockUpdateParseErrors] = useState<Array<{ row: number; message: string }>>([]);
+  const [stockUpdateSubmitting, setStockUpdateSubmitting] = useState(false);
+  const [stockUpdateResult, setStockUpdateResult] = useState<InventoryBulkStockUpdateResponse | null>(null);
 
   const normalizedLocation = (locationRaw: string | null | undefined): string => {
     const location = (locationRaw ?? '').trim();
@@ -799,6 +877,101 @@ export function InventoryView({
       setMessage(error instanceof Error ? error.message : 'Error al cargar el detalle del lote de importación');
     } finally {
       setImportBatchDetailLoading(false);
+    }
+  }
+
+  async function handleDownloadStockTemplate() {
+    try {
+      const XLSX = await import('xlsx');
+      const sampleRows = [
+        { id: 101, sku: '', qty: 15, warehouse_code: 'WH01', note: 'Inventario inicial conteo fisico' },
+        { id: '', sku: 'SKU-ABC-001', qty: -3, warehouse_code: 'WH01', note: 'Merma por ajuste' },
+      ];
+
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(sampleRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'StockUpdate');
+      XLSX.writeFile(workbook, `plantilla_stock_update_${fileNameTimestampLima()}.xlsx`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo generar la plantilla de stock.');
+    }
+  }
+
+  async function handleStockUpdateFileSelected(file: File | null) {
+    setStockUpdateResult(null);
+    setStockUpdateRows([]);
+    setStockUpdateParseErrors([]);
+
+    if (!file) {
+      setStockUpdateFileName('');
+      return;
+    }
+
+    setStockUpdateFileName(file.name);
+
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        setMessage('El archivo no contiene hojas.');
+        return;
+      }
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
+        defval: '',
+        raw: false,
+      });
+
+      if (rows.length === 0) {
+        setMessage('El archivo no contiene filas de datos.');
+        return;
+      }
+
+      const { parsedRows, parseErrors } = parseStockUpdateRowsFromSheet(rows);
+      setStockUpdateRows(parsedRows);
+      setStockUpdateParseErrors(parseErrors);
+
+      if (parsedRows.length === 0) {
+        setMessage('No hay filas válidas para actualización de stock. Revisa el archivo y vuelve a cargarlo.');
+      } else if (parseErrors.length > 0) {
+        setMessage(`Se detectaron ${parseErrors.length} filas inválidas. Se procesarán ${parsedRows.length} filas válidas.`);
+      } else {
+        setMessage(`Archivo listo: ${parsedRows.length} filas válidas para actualización de stock.`);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo procesar el archivo de stock.');
+    }
+  }
+
+  async function handleSubmitBulkStockUpdate() {
+    if (stockUpdateRows.length === 0) {
+      setMessage('Carga un archivo válido con filas de stock antes de procesar.');
+      return;
+    }
+
+    setStockUpdateSubmitting(true);
+    setStockUpdateResult(null);
+    try {
+      const result = await updateInventoryStockBulkWithChunking(
+        accessToken,
+        stockUpdateRows,
+        stockUpdateMode,
+        stockUpdateFileName || undefined,
+      );
+
+      setStockUpdateResult(result);
+      setMessage(
+        `Actualización masiva completada: ${result.summary.applied} aplicadas, ${result.summary.omitted} omitidas, ${result.summary.errors} errores.`
+      );
+
+      await Promise.all([loadInventory(), loadKardex(1), loadImportBatches()]);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo ejecutar la actualización masiva de stock.');
+    } finally {
+      setStockUpdateSubmitting(false);
     }
   }
 
@@ -1740,9 +1913,62 @@ export function InventoryView({
       {activeTab === 'importaciones' && (
         <>
           <div className="form-card">
-            <h4>Trazabilidad de Carga Masiva de Productos</h4>
+            <h4>Actualización masiva de stock (productos existentes)</h4>
             <p style={{ marginTop: '-0.2rem', color: '#6b7280', fontSize: '0.9rem' }}>
-              Aquí se registra cada lote importado desde Excel y el resultado por fila (creado, actualizado u omitido).
+              Este flujo es exclusivo para stock de productos existentes (por ID/SKU). No crea productos. Puedes usar modo sumar o reemplazar.
+            </p>
+            <div className="grid-form" style={{ marginTop: '0.7rem' }}>
+              <label>
+                Modo de actualización
+                <select value={stockUpdateMode} onChange={(e) => setStockUpdateMode(e.target.value as InventoryBulkStockUpdateMode)}>
+                  <option value="replace">Reemplazar stock por valor exacto</option>
+                  <option value="add">Sumar/restar como delta</option>
+                </select>
+              </label>
+              <label>
+                Archivo de actualización
+                <input
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(e) => {
+                    const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                    void handleStockUpdateFileSelected(file);
+                  }}
+                  disabled={stockUpdateSubmitting}
+                />
+              </label>
+            </div>
+            <div className="inventory-search-actions" style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => void handleDownloadStockTemplate()} disabled={stockUpdateSubmitting}>
+                Descargar plantilla stock
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleSubmitBulkStockUpdate()}
+                disabled={stockUpdateSubmitting || stockUpdateRows.length === 0}
+              >
+                {stockUpdateSubmitting ? 'Procesando...' : 'Procesar actualización de stock'}
+              </button>
+            </div>
+            <small style={{ display: 'block', marginTop: '0.5rem', color: '#6b7280' }}>
+              Archivo: {stockUpdateFileName || 'Sin archivo'} | Filas válidas: {stockUpdateRows.length} | Filas inválidas: {stockUpdateParseErrors.length}
+            </small>
+            {stockUpdateParseErrors.length > 0 && (
+              <small style={{ display: 'block', marginTop: '0.35rem', color: '#b45309' }}>
+                Primer error: fila {stockUpdateParseErrors[0].row} - {stockUpdateParseErrors[0].message}
+              </small>
+            )}
+            {stockUpdateResult && (
+              <small style={{ display: 'block', marginTop: '0.35rem', color: '#166534' }}>
+                Resultado: {stockUpdateResult.summary.applied} aplicadas, {stockUpdateResult.summary.omitted} omitidas, {stockUpdateResult.summary.errors} errores.
+              </small>
+            )}
+          </div>
+
+          <div className="form-card">
+            <h4>Subida masiva de productos (trazabilidad)</h4>
+            <p style={{ marginTop: '-0.2rem', color: '#6b7280', fontSize: '0.9rem' }}>
+              Aquí se registra cada lote importado de catálogo de productos y su resultado por fila (creado, actualizado u omitido).
             </p>
           </div>
 
