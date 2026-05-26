@@ -25,6 +25,7 @@ import {
   exportCommercialDocumentsExcel,
   exportCommercialDocumentsJson,
   fetchCommercialDocumentDetails,
+  fetchCommercialDocumentPdf,
   fetchCommercialDocumentPrintHtml,
   fetchCustomerAutocomplete,
   fetchCustomerVehicles,
@@ -1345,6 +1346,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     subtitle: string;
     html: string;
     variant: 'compact' | 'wide';
+    directPdf?: {
+      documentId: number;
+      format: 'a4' | 'ticket';
+    };
   }>(null);
   const [creditPlanModalOpen, setCreditPlanModalOpen] = useState(false);
   const [convertPreviewModal, setConvertPreviewModal] = useState<null | {
@@ -3606,6 +3611,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
       html,
       variant: format === '80mm' ? 'compact' : 'wide',
+      directPdf: {
+        documentId: issuedPreview.id,
+        format: format === '80mm' ? 'ticket' : 'a4',
+      },
     });
   }
 
@@ -3782,6 +3791,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
         html,
         variant: format === '80mm' ? 'compact' : 'wide',
+        directPdf: {
+          documentId,
+          format: format === '80mm' ? 'ticket' : 'a4',
+        },
       });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Error al cargar el documento');
@@ -4587,6 +4600,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           subtitle: `${issued.series}-${Number(issued.number).toString().padStart(6, '0')}`,
           html: issuedPreviewHtml,
           variant: salesFlowMode === 'SELLER_TO_CASHIER' ? 'compact' : 'wide',
+          directPdf: {
+            documentId: issued.id,
+            format: salesFlowMode === 'SELLER_TO_CASHIER' ? 'ticket' : 'a4',
+          },
         });
       }
 
@@ -5386,6 +5403,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
       html,
       variant: format === '80mm' ? 'compact' : 'wide',
+      directPdf: {
+        documentId: details.id,
+        format: format === '80mm' ? 'ticket' : 'a4',
+      },
     });
     setPostConvertPrintModal(null);
   }
@@ -7798,6 +7819,23 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           subtitle={previewDialog.subtitle}
           html={previewDialog.html}
           variant={previewDialog.variant}
+          onDownloadPdf={previewDialog.directPdf
+            ? async () => {
+                const result = await fetchCommercialDocumentPdf(
+                  accessToken,
+                  previewDialog.directPdf.documentId,
+                  previewDialog.directPdf.format,
+                );
+                const blobUrl = URL.createObjectURL(result.blob);
+                const anchor = document.createElement('a');
+                anchor.href = blobUrl;
+                anchor.download = result.fileName;
+                document.body.appendChild(anchor);
+                anchor.click();
+                anchor.remove();
+                URL.revokeObjectURL(blobUrl);
+              }
+            : undefined}
           onClose={() => setPreviewDialog(null)}
         />
       )}

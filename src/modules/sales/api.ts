@@ -737,6 +737,52 @@ export async function fetchCommercialDocumentPrintHtml(
   return html;
 }
 
+function resolveFileNameFromDisposition(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch {
+      return utf8Match[1].trim();
+    }
+  }
+
+  const simpleMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  if (simpleMatch?.[1]) {
+    return simpleMatch[1].trim();
+  }
+
+  return fallback;
+}
+
+export async function fetchCommercialDocumentPdf(
+  accessToken: string,
+  documentId: number,
+  format: 'ticket' | 'a4' = 'a4'
+): Promise<{ blob: Blob; fileName: string }> {
+  const fallbackName = `documento-${documentId}.pdf`;
+  const response = await fetch(`${apiClient.baseUrl}/api/sales/commercial-documents/${documentId}/print-pdf?format=${format}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/pdf',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`API ${response.status}: ${text}`);
+  }
+
+  const blob = await response.blob();
+  const fileName = resolveFileNameFromDisposition(response.headers.get('Content-Disposition'), fallbackName);
+  return { blob, fileName };
+}
+
 export async function exportCommercialDocumentsExcel(
   accessToken: string,
   context?: {
