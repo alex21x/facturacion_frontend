@@ -313,6 +313,31 @@ export type InventoryBulkImportResponse = {
   errors: Array<{ row: number; message: string }>;
 };
 
+export type InventoryBulkStockUpdateMode = 'add' | 'replace';
+
+export type InventoryBulkStockUpdateRow = {
+  id?: number;
+  sku?: string;
+  qty: number | string;
+  warehouse_code?: string;
+  note?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type InventoryBulkStockUpdateResponse = {
+  message: string;
+  batch_id: number;
+  summary: {
+    total: number;
+    applied: number;
+    omitted: number;
+    errors: number;
+    ledger_rows?: number;
+    mode?: InventoryBulkStockUpdateMode | string;
+  };
+  errors: Array<{ row: number; message: string }>;
+};
+
 export type InventoryProductImportBatch = {
   id: number;
   company_id: number;
@@ -427,6 +452,77 @@ export async function importInventoryProductsBulkWithChunking(
     },
     errors: allErrors,
     batch_id: lastBatchId,
+  };
+}
+
+export async function updateInventoryStockBulk(
+  accessToken: string,
+  rows: InventoryBulkStockUpdateRow[],
+  mode: InventoryBulkStockUpdateMode,
+  filename?: string,
+): Promise<InventoryBulkStockUpdateResponse> {
+  return apiClient.request<InventoryBulkStockUpdateResponse>('/api/inventory/products/bulk-stock-update', {
+    method: 'POST',
+    headers: {
+      ...authHeaders(accessToken),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ rows, mode, filename: filename ?? null }),
+  });
+}
+
+export async function updateInventoryStockBulkWithChunking(
+  accessToken: string,
+  rows: InventoryBulkStockUpdateRow[],
+  mode: InventoryBulkStockUpdateMode,
+  filename?: string,
+  chunkSize: number = 500
+): Promise<InventoryBulkStockUpdateResponse> {
+  if (rows.length <= chunkSize) {
+    return updateInventoryStockBulk(accessToken, rows, mode, filename);
+  }
+
+  const chunks: InventoryBulkStockUpdateRow[][] = [];
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    chunks.push(rows.slice(i, i + chunkSize));
+  }
+
+  let totalApplied = 0;
+  let totalOmitted = 0;
+  let totalLedgerRows = 0;
+  let allErrors: Array<{ row: number; message: string }> = [];
+  let lastBatchId = 0;
+
+  for (let i = 0; i < chunks.length; i += 1) {
+    const chunk = chunks[i];
+    const chunkFilename = filename ? `${filename} (parte ${i + 1}/${chunks.length})` : undefined;
+    const result = await updateInventoryStockBulk(accessToken, chunk, mode, chunkFilename);
+
+    totalApplied += result.summary.applied;
+    totalOmitted += result.summary.omitted;
+    totalLedgerRows += result.summary.ledger_rows ?? 0;
+    allErrors = allErrors.concat(result.errors);
+    if (result.batch_id) {
+      lastBatchId = result.batch_id;
+    }
+
+    if (i < chunks.length - 1) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
+  return {
+    message: 'Actualización masiva de stock procesada.',
+    batch_id: lastBatchId,
+    summary: {
+      total: rows.length,
+      applied: totalApplied,
+      omitted: totalOmitted,
+      errors: allErrors.length,
+      ledger_rows: totalLedgerRows,
+      mode,
+    },
+    errors: allErrors,
   };
 }
 
