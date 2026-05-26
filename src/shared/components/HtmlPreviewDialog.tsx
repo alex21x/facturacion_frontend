@@ -17,7 +17,22 @@ function sanitizeFileName(raw: string): string {
   return clean || 'documento';
 }
 
+function extractCorrelativeBase(raw: string): string | null {
+  const text = String(raw || '').toUpperCase();
+  const match = text.match(/\b([A-Z0-9]{1,4}-\d{1,8})\b/);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  return sanitizeFileName(match[1]);
+}
+
 function resolvePdfFileName(doc: Document, fallbackTitle: string): string {
+  const correlative = extractCorrelativeBase(fallbackTitle);
+  if (correlative) {
+    return `${correlative}.pdf`;
+  }
+
   const titleText = doc.querySelector('title')?.textContent?.trim() || fallbackTitle;
   const baseName = sanitizeFileName(titleText);
   return baseName.toLowerCase().endsWith('.pdf') ? baseName : `${baseName}.pdf`;
@@ -89,9 +104,17 @@ async function downloadAsPdf(
   // than canvas-based conversion, so users can save as PDF without distortion.
   if (variant !== 'compact') {
     const win = iframe?.contentWindow;
+    const doc = iframe?.contentDocument;
     if (!win) {
       throw new Error('No se pudo preparar el documento para exportar PDF.');
     }
+
+    const preferredFileName = resolvePdfFileName(doc ?? win.document, title);
+    const preferredTitle = preferredFileName.replace(/\.pdf$/i, '');
+    if (doc) {
+      doc.title = preferredTitle;
+    }
+    win.document.title = preferredTitle;
 
     win.focus();
     win.print();
