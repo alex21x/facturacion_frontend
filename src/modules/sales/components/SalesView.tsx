@@ -7821,10 +7821,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           variant={previewDialog.variant}
           onDownloadPdf={previewDialog.directPdf
             ? async () => {
+                const directPdf = previewDialog.directPdf;
+                if (!directPdf) {
+                  return;
+                }
+
                 const result = await fetchCommercialDocumentPdf(
                   accessToken,
-                  previewDialog.directPdf.documentId,
-                  previewDialog.directPdf.format,
+                  directPdf.documentId,
+                  directPdf.format,
                 );
                 const blobUrl = URL.createObjectURL(result.blob);
                 const anchor = document.createElement('a');
