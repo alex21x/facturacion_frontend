@@ -7873,14 +7873,49 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   throw new Error('El servidor devolvio un PDF vacio.');
                 }
 
-                const blobUrl = URL.createObjectURL(result.blob);
+                const normalizedBlob = result.blob.type === 'application/pdf'
+                  ? result.blob
+                  : new Blob([await result.blob.arrayBuffer()], { type: 'application/pdf' });
+
+                const suggestedName = (result.fileName || `documento-${directPdf.documentId}.pdf`).trim();
+                const safeFileName = suggestedName.toLowerCase().endsWith('.pdf')
+                  ? suggestedName
+                  : `${suggestedName}.pdf`;
+
+                const picker = (window as any).showSaveFilePicker;
+                if (typeof picker === 'function') {
+                  try {
+                    const handle = await picker({
+                      suggestedName: safeFileName,
+                      types: [
+                        {
+                          description: 'PDF',
+                          accept: { 'application/pdf': ['.pdf'] },
+                        },
+                      ],
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(normalizedBlob);
+                    await writable.close();
+                    return;
+                  } catch (pickerError) {
+                    if ((pickerError as { name?: string } | null)?.name === 'AbortError') {
+                      return;
+                    }
+                  }
+                }
+
+                const blobUrl = URL.createObjectURL(normalizedBlob);
                 const anchor = document.createElement('a');
                 anchor.href = blobUrl;
-                anchor.download = result.fileName;
+                anchor.download = safeFileName;
                 anchor.rel = 'noopener';
                 document.body.appendChild(anchor);
                 anchor.click();
                 anchor.remove();
+                window.setTimeout(() => {
+                  window.open(blobUrl, '_blank', 'noopener,noreferrer');
+                }, 120);
                 window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
               }
             : undefined}
