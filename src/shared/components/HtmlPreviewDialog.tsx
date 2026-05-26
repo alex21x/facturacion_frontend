@@ -84,6 +84,19 @@ async function downloadAsPdf(
   title: string,
   variant: 'compact' | 'wide' | 'xwide',
 ): Promise<void> {
+  // For A4/xwide documents, native print engine preserves layout fidelity better
+  // than canvas-based conversion, so users can save as PDF without distortion.
+  if (variant !== 'compact') {
+    const win = iframe?.contentWindow;
+    if (!win) {
+      throw new Error('No se pudo preparar el documento para exportar PDF.');
+    }
+
+    win.focus();
+    win.print();
+    return;
+  }
+
   const sourceDoc = iframe?.contentDocument;
   if (!sourceDoc?.body) {
     throw new Error('No se pudo preparar el documento para exportar PDF.');
