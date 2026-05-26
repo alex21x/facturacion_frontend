@@ -161,6 +161,7 @@ type PriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
 
 const SALES_REPORT_FILTERS_STORAGE_KEY = 'sales.report.filters.v1';
 const PRODUCT_AUTOCOMPLETE_MIN_CHARS = 1;
+const PRINT_HTML_CACHE_LIMIT = 80;
 
 const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
@@ -1661,12 +1662,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const lastBootstrapScopeRef = useRef('');
   const documentsRequestSeqRef = useRef(0);
   const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
+  const printHtmlCacheRef = useRef<Map<string, string>>(new Map());
+  const previewSubtitleCacheRef = useRef<Map<number, string>>(new Map());
   const stockLoadedScopeRef = useRef('');
   const actionConfirmResolverRef = useRef<((result: ActionConfirmResult) => void) | null>(null);
   const [actionConfirmState, setActionConfirmState] = useState<ActionConfirmState | null>(null);
   const [actionConfirmReason, setActionConfirmReason] = useState('');
   const [actionConfirmPassword, setActionConfirmPassword] = useState('');
   const [actionConfirmError, setActionConfirmError] = useState('');
+
+  useEffect(() => {
+    printHtmlCacheRef.current.clear();
+    previewSubtitleCacheRef.current.clear();
+  }, [accessToken, branchId, warehouseId, cashRegisterId]);
 
   function closeActionConfirm(result: ActionConfirmResult) {
     const resolver = actionConfirmResolverRef.current;
@@ -1718,6 +1726,43 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       reason: actionConfirmReason,
       password: actionConfirmPassword,
     });
+  }
+
+  function rememberPreviewSubtitle(documentId: number, series: string, number: number | string): string {
+    const subtitle = `${series}-${String(number).padStart(6, '0')}`;
+    previewSubtitleCacheRef.current.set(documentId, subtitle);
+    return subtitle;
+  }
+
+  async function fetchPrintHtmlCached(documentId: number, format: 'ticket' | 'a4'): Promise<string> {
+    const key = `${documentId}:${format}`;
+    const cache = printHtmlCacheRef.current;
+    const hit = cache.get(key);
+    if (hit) {
+      return hit;
+    }
+
+    const html = await fetchCommercialDocumentPrintHtml(accessToken, documentId, format);
+    cache.set(key, html);
+
+    if (cache.size > PRINT_HTML_CACHE_LIMIT) {
+      const oldestKey = cache.keys().next().value as string | undefined;
+      if (oldestKey) {
+        cache.delete(oldestKey);
+      }
+    }
+
+    return html;
+  }
+
+  async function resolvePreviewSubtitle(documentId: number): Promise<string> {
+    const cached = previewSubtitleCacheRef.current.get(documentId);
+    if (cached) {
+      return cached;
+    }
+
+    const data = await fetchCommercialDocumentDetails(accessToken, documentId);
+    return rememberPreviewSubtitle(documentId, data.series, data.number);
   }
 
   useEffect(() => () => {
@@ -3600,20 +3645,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       return;
     }
 
-    const html = await fetchCommercialDocumentPrintHtml(
-      accessToken,
-      issuedPreview.id,
-      format === '80mm' ? 'ticket' : 'a4'
-    );
+    const printFormat = format === '80mm' ? 'ticket' : 'a4';
+    const html = await fetchPrintHtmlCached(issuedPreview.id, printFormat);
+    const subtitle = rememberPreviewSubtitle(issuedPreview.id, issuedPreview.series, issuedPreview.number);
 
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento emitido A4',
-      subtitle: `${issuedPreview.series}-${issuedPreview.number}`,
+      subtitle,
       html,
       variant: format === '80mm' ? 'compact' : 'wide',
       directPdf: {
         documentId: issuedPreview.id,
-        format: format === '80mm' ? 'ticket' : 'a4',
+        format: printFormat,
       },
     });
   }
@@ -3779,21 +3822,20 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
   async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
     try {
-      const data = await fetchCommercialDocumentDetails(accessToken, documentId);
-      const html = await fetchCommercialDocumentPrintHtml(
-        accessToken,
-        documentId,
-        format === '80mm' ? 'ticket' : 'a4'
-      );
+      const printFormat = format === '80mm' ? 'ticket' : 'a4';
+      const [subtitle, html] = await Promise.all([
+        resolvePreviewSubtitle(documentId),
+        fetchPrintHtmlCached(documentId, printFormat),
+      ]);
 
       setPreviewDialog({
         title: format === '80mm' ? 'Previsualizacion Ticket 80mm' : 'Previsualizacion del documento',
-        subtitle: `${data.series}-${String(data.number).padStart(6, '0')}`,
+        subtitle,
         html,
         variant: format === '80mm' ? 'compact' : 'wide',
         directPdf: {
           documentId,
-          format: format === '80mm' ? 'ticket' : 'a4',
+          format: printFormat,
         },
       });
     } catch (error) {
@@ -4589,20 +4631,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           printable: printableWithCompany,
         });
 
-        const issuedPreviewHtml = await fetchCommercialDocumentPrintHtml(
-          accessToken,
-          issued.id,
-          salesFlowMode === 'SELLER_TO_CASHIER' ? 'ticket' : 'a4'
-        );
+        const issuedPrintFormat = salesFlowMode === 'SELLER_TO_CASHIER' ? 'ticket' : 'a4';
+        const issuedPreviewHtml = await fetchPrintHtmlCached(issued.id, issuedPrintFormat);
+        const issuedSubtitle = rememberPreviewSubtitle(issued.id, issued.series, issued.number);
 
         setPreviewDialog({
           title: salesFlowMode === 'SELLER_TO_CASHIER' ? 'Ticket de pedido para caja' : 'Documento emitido A4',
-          subtitle: `${issued.series}-${Number(issued.number).toString().padStart(6, '0')}`,
+          subtitle: issuedSubtitle,
           html: issuedPreviewHtml,
           variant: salesFlowMode === 'SELLER_TO_CASHIER' ? 'compact' : 'wide',
           directPdf: {
             documentId: issued.id,
-            format: salesFlowMode === 'SELLER_TO_CASHIER' ? 'ticket' : 'a4',
+            format: issuedPrintFormat,
           },
         });
       }
@@ -5392,20 +5432,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
 
     const details = withCompanyForPrint(postConvertPrintModal.details);
-    const html = await fetchCommercialDocumentPrintHtml(
-      accessToken,
-      details.id,
-      format === '80mm' ? 'ticket' : 'a4'
-    );
+    const printFormat = format === '80mm' ? 'ticket' : 'a4';
+    const html = await fetchPrintHtmlCached(details.id, printFormat);
+    const subtitle = rememberPreviewSubtitle(details.id, details.series, details.number);
 
     setPreviewDialog({
       title: format === '80mm' ? 'Ticket 80mm' : 'Documento A4',
-      subtitle: `${details.series}-${String(details.number).padStart(6, '0')}`,
+      subtitle,
       html,
       variant: format === '80mm' ? 'compact' : 'wide',
       directPdf: {
         documentId: details.id,
-        format: format === '80mm' ? 'ticket' : 'a4',
+        format: printFormat,
       },
     });
     setPostConvertPrintModal(null);
