@@ -143,7 +143,8 @@ async function downloadAsPdf(
       '.no-print{display:none !important;}',
       `html,body{width:${EXPORT_W}px !important;max-width:${EXPORT_W}px !important;margin:0 !important;padding:0 !important;overflow-x:hidden !important;zoom:1 !important;transform:none !important;}`,
       `.sheet{width:${EXPORT_W}px !important;max-width:${EXPORT_W}px !important;box-sizing:border-box !important;}`,
-      'img{max-width:100% !important;height:auto !important;}',
+      '.header--a4 .logo-col{width:42mm !important;max-width:42mm !important;min-width:42mm !important;overflow:hidden !important;}',
+      '.header--a4 .header-logo{width:auto !important;max-width:36mm !important;max-height:22mm !important;height:auto !important;display:block !important;object-fit:contain !important;}',
     ].join('');
     exportHead?.appendChild(fitStyle);
 
