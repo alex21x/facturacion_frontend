@@ -97,7 +97,7 @@ async function waitForDocumentToRender(doc: Document): Promise<void> {
 
 async function downloadAsPdf(
   iframe: HTMLIFrameElement | null,
-  title: string,
+  titleSource: string,
   variant: 'compact' | 'wide' | 'xwide',
 ): Promise<void> {
   // For A4/xwide documents, native print engine preserves layout fidelity better
@@ -109,15 +109,20 @@ async function downloadAsPdf(
       throw new Error('No se pudo preparar el documento para exportar PDF.');
     }
 
-    const preferredFileName = resolvePdfFileName(doc ?? win.document, title);
+    const preferredFileName = resolvePdfFileName(doc ?? win.document, titleSource);
     const preferredTitle = preferredFileName.replace(/\.pdf$/i, '');
+    const originalPageTitle = document.title;
     if (doc) {
       doc.title = preferredTitle;
     }
     win.document.title = preferredTitle;
+    document.title = preferredTitle;
 
     win.focus();
     win.print();
+    window.setTimeout(() => {
+      document.title = originalPageTitle;
+    }, 1500);
     return;
   }
 
@@ -187,7 +192,7 @@ async function downloadAsPdf(
 
     await waitForDocumentToRender(exportDoc);
 
-    const fileName = resolvePdfFileName(exportDoc, title);
+    const fileName = resolvePdfFileName(exportDoc, titleSource);
     const target = exportDoc.body;
 
     // Use rendered box sizes instead of raw scrollHeight to avoid runaway canvases.
@@ -239,6 +244,7 @@ export function HtmlPreviewDialog({
   const [downloading, setDownloading] = useState(false);
 
   async function handleDownloadPdf(): Promise<void> {
+    const fileNameSource = `${subtitle ?? ''} ${title}`.trim();
     setDownloading(true);
     try {
       if (onDownloadPdf) {
@@ -247,12 +253,12 @@ export function HtmlPreviewDialog({
           return;
         } catch (directError) {
           // Fallback to built-in export when API-side download fails.
-          await downloadAsPdf(iframeRef.current, title, variant);
+          await downloadAsPdf(iframeRef.current, fileNameSource, variant);
           return;
         }
       }
 
-      await downloadAsPdf(iframeRef.current, title, variant);
+      await downloadAsPdf(iframeRef.current, fileNameSource, variant);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo descargar el PDF.';
       window.alert(message);
