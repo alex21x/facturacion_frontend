@@ -7869,14 +7869,19 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   directPdf.documentId,
                   directPdf.format,
                 );
+                if (result.blob.size <= 0) {
+                  throw new Error('El servidor devolvio un PDF vacio.');
+                }
+
                 const blobUrl = URL.createObjectURL(result.blob);
                 const anchor = document.createElement('a');
                 anchor.href = blobUrl;
                 anchor.download = result.fileName;
+                anchor.rel = 'noopener';
                 document.body.appendChild(anchor);
                 anchor.click();
                 anchor.remove();
-                URL.revokeObjectURL(blobUrl);
+                window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
               }
             : undefined}
           onClose={() => setPreviewDialog(null)}
