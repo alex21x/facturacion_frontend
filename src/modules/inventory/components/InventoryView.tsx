@@ -303,6 +303,11 @@ export function InventoryView({
   // Kardex state
   const [kardex, setKardex] = useState<KardexRow[]>([]);
   const [kardexProductId, setKardexProductId] = useState<number | null>(null);
+  const [kardexProductQuery, setKardexProductQuery] = useState('');
+  const [kardexProductSuggestions, setKardexProductSuggestions] = useState<InventoryProduct[]>([]);
+  const [kardexProductSearching, setKardexProductSearching] = useState(false);
+  const [kardexProductSuggestOpen, setKardexProductSuggestOpen] = useState(false);
+  const [kardexProductActiveIndex, setKardexProductActiveIndex] = useState(-1);
   const [kardexDateFrom, setKardexDateFrom] = useState('');
   const [kardexDateTo, setKardexDateTo] = useState('');
   const [kardexLoading, setKardexLoading] = useState(false);
@@ -589,6 +594,46 @@ export function InventoryView({
       window.clearTimeout(timeoutId);
     };
   }, [accessToken, adjustmentProductQuery, warehouseId]);
+
+  // Debounced autocomplete for kardex product selector
+  useEffect(() => {
+    const query = kardexProductQuery.trim();
+    if (query.length < 1) {
+      setKardexProductSuggestions([]);
+      setKardexProductActiveIndex(-1);
+      return;
+    }
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      setKardexProductSearching(true);
+      try {
+        const rows = await fetchInventoryProducts(accessToken, {
+          search: query,
+          status: 1,
+          limit: 12,
+          autocomplete: true,
+        });
+
+        if (cancelled) return;
+
+        setKardexProductSuggestions(rows);
+        setKardexProductActiveIndex(rows.length > 0 ? 0 : -1);
+      } catch {
+        if (!cancelled) {
+          setKardexProductSuggestions([]);
+          setKardexProductActiveIndex(-1);
+        }
+      } finally {
+        if (!cancelled) setKardexProductSearching(false);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [accessToken, kardexProductQuery]);
 
   useEffect(() => {
     setStockPage(1);
@@ -1798,17 +1843,83 @@ export function InventoryView({
             <div className="grid-form">
               <label>
                 Producto
-                <select
-                  value={kardexProductId ?? ''}
-                  onChange={(e) => setKardexProductId(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">Todos los productos</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.sku ? `[${p.sku}] ` : ''}{p.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="with-suggest">
+                  <input
+                    value={kardexProductQuery}
+                    onChange={(e) => {
+                      setKardexProductQuery(e.target.value);
+                      setKardexProductId(null);
+                      setKardexProductSuggestOpen(true);
+                    }}
+                    onFocus={() => {
+                      if (kardexProductSuggestions.length > 0 || kardexProductQuery.trim().length > 0) {
+                        setKardexProductSuggestOpen(true);
+                      }
+                    }}
+                    onBlur={() => {
+                      window.setTimeout(() => setKardexProductSuggestOpen(false), 120);
+                    }}
+                    onKeyDown={(e) => {
+                      if (!kardexProductSuggestOpen || kardexProductSuggestions.length === 0) return;
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setKardexProductActiveIndex((prev) => Math.min(prev + 1, kardexProductSuggestions.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setKardexProductActiveIndex((prev) => Math.max(prev - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const selected = kardexProductSuggestions[kardexProductActiveIndex >= 0 ? kardexProductActiveIndex : 0];
+                        if (selected) {
+                          setKardexProductId(selected.id);
+                          setKardexProductQuery(`${selected.sku ? `[${selected.sku}] ` : ''}${selected.name}`);
+                          setKardexProductSuggestOpen(false);
+                          setKardexProductSuggestions([]);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setKardexProductSuggestOpen(false);
+                      }
+                    }}
+                    placeholder="Todos los productos (escribe para filtrar)"
+                    autoComplete="off"
+                  />
+                  {kardexProductSearching && (
+                    <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#7a6f63' }}>
+                      Buscando...
+                    </span>
+                  )}
+                  {kardexProductSuggestOpen && kardexProductSuggestions.length > 0 && (
+                    <div className="suggest-box suggest-box--product">
+                      {kardexProductSuggestions.map((row, index) => (
+                        <button
+                          key={row.id}
+                          type="button"
+                          className={`suggest-item ${index === kardexProductActiveIndex ? 'active' : ''}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setKardexProductId(row.id);
+                            setKardexProductQuery(`${row.sku ? `[${row.sku}] ` : ''}${row.name}`);
+                            setKardexProductSuggestOpen(false);
+                            setKardexProductSuggestions([]);
+                          }}
+                        >
+                          <strong>{row.name}</strong>
+                          <span className="suggest-sku">{row.sku ?? 'SIN-SKU'}</span>
+                          {row.category_name && <span className="suggest-unit">{row.category_name}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {kardexProductId && (
+                  <button
+                    type="button"
+                    style={{ marginTop: '0.25rem', fontSize: '0.75rem', padding: '0.15rem 0.4rem' }}
+                    onClick={() => { setKardexProductId(null); setKardexProductQuery(''); setKardexProductSuggestions([]); }}
+                  >
+                    ✕ Todos
+                  </button>
+                )}
               </label>
               <label>
                 Desde
@@ -1960,7 +2071,9 @@ export function InventoryView({
             )}
             {stockUpdateResult && (
               <small style={{ display: 'block', marginTop: '0.35rem', color: '#166534' }}>
-                Resultado: {stockUpdateResult.summary.applied} aplicadas, {stockUpdateResult.summary.omitted} omitidas, {stockUpdateResult.summary.errors} errores.
+                Resultado: {stockUpdateResult.summary.applied} aplicadas
+                {(stockUpdateResult.summary.created_products ?? 0) > 0 && ` (${stockUpdateResult.summary.created_products} productos nuevos creados)`}
+                , {stockUpdateResult.summary.omitted} omitidas, {stockUpdateResult.summary.errors} errores.
               </small>
             )}
           </div>
