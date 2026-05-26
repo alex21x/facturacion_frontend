@@ -219,11 +219,20 @@ export function HtmlPreviewDialog({
     setDownloading(true);
     try {
       if (onDownloadPdf) {
-        await onDownloadPdf();
-        return;
+        try {
+          await onDownloadPdf();
+          return;
+        } catch (directError) {
+          // Fallback to built-in export when API-side download fails.
+          await downloadAsPdf(iframeRef.current, title, variant);
+          return;
+        }
       }
 
       await downloadAsPdf(iframeRef.current, title, variant);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo descargar el PDF.';
+      window.alert(message);
     } finally {
       setDownloading(false);
     }
