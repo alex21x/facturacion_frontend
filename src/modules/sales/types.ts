@@ -101,6 +101,10 @@ export type SunatExceptionItem = {
   sunat_label: string;
   pending_hours: number;
   reconcile_attempts: number;
+  bridge_attempts?: number;
+  effective_attempts?: number;
+  bridge_last_status?: string | null;
+  bridge_last_at?: string | null;
   needs_manual_confirmation: boolean;
   inventory_pending_sunat: boolean;
   inventory_sunat_settled: boolean;

@@ -279,7 +279,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                   <th>Documento</th>
                   <th>SUNAT</th>
                   <th>Horas</th>
-                  <th>Intentos</th>
+                  <th>Recon / Bridge</th>
                   <th>Inventario</th>
                 </tr>
               </thead>
@@ -308,7 +308,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                         </span>
                       </td>
                       <td>{row.pending_hours}</td>
-                      <td>{row.reconcile_attempts}</td>
+                      <td>{row.reconcile_attempts} / {row.bridge_attempts ?? row.effective_attempts ?? row.reconcile_attempts}</td>
                       <td>
                         {row.inventory_mismatch ? (
                           <span className="sunat-exceptions__inventory-alert">Descuadre</span>
