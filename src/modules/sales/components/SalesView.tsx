@@ -681,6 +681,7 @@ function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFil
 
 const SUNAT_OPERATION_WINDOW_DAYS = 3;
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+const SUNAT_SENDING_STALE_MINUTES = 10;
 
 function parseDateOnlyToUtc(value: string | null | undefined): Date | null {
   const raw = String(value ?? '').trim();
@@ -835,7 +836,25 @@ function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: bo
   }
 
   const sunatUi = resolveSunatUiState(row);
-  return !sunatUi.isFinal && !['SENDING', 'PENDING_CONFIRMATION', 'EXPIRED_WINDOW'].includes(sunatUi.statusKey);
+  if (sunatUi.isFinal || sunatUi.statusKey === 'EXPIRED_WINDOW') {
+    return false;
+  }
+
+  if (sunatUi.statusKey === 'SENDING') {
+    const updatedAtRaw = String(row.updated_at ?? '').trim();
+    if (!updatedAtRaw) {
+      return false;
+    }
+
+    const updatedAt = new Date(updatedAtRaw);
+    if (Number.isNaN(updatedAt.getTime())) {
+      return false;
+    }
+
+    return (Date.now() - updatedAt.getTime()) >= SUNAT_SENDING_STALE_MINUTES * 60 * 1000;
+  }
+
+  return sunatUi.statusKey !== 'PENDING_CONFIRMATION';
 }
 
 function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocuments: boolean): boolean {

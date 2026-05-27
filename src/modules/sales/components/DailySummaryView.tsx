@@ -41,6 +41,8 @@ const STATUS_LABELS: Record<DailySummaryStatus, string> = {
   ERROR: 'Error',
 };
 
+const SUNAT_SENDING_STALE_MINUTES = 10;
+
 
 function fmtDate(dateStr: string | null): string {
   if (!dateStr) return '—';
@@ -71,6 +73,15 @@ function normalizeSunatTicket(ticket: string | null | undefined): string | null 
   }
 
   return value;
+}
+
+function isStaleSending(status: DailySummaryStatus, updatedAt: string | null | undefined): boolean {
+  if (status !== 'SENDING') return false;
+
+  const updatedAtMs = new Date(String(updatedAt ?? '')).getTime();
+  if (Number.isNaN(updatedAtMs)) return false;
+
+  return Date.now() - updatedAtMs >= SUNAT_SENDING_STALE_MINUTES * 60 * 1000;
 }
 
 function formatDebugJson(value: unknown): string {
@@ -705,6 +716,7 @@ type SummaryRowProps = {
 function SummaryRow({ row, isSelected, isSending, isDeleting, onSelect, onSend, onDelete }: SummaryRowProps) {
   const sunatTicket = normalizeSunatTicket(row.sunat_ticket);
   const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status)
+    || isStaleSending(row.status, row.updated_at)
     || (row.status === 'SENT' && !sunatTicket);
   const canDelete = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status);
 
