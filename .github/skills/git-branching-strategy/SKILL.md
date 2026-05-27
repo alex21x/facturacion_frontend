@@ -27,8 +27,6 @@ Every functional change committed to `cambios-generales` must be propagated to *
 1. The local Docker installation stays current.
 2. The Railway cloud deployment stays current.
 
-After any functional fix or feature, the related branches must be left aligned with the same fix before closing the task. Do not consider the work complete until the target branches that should receive the change have the corresponding commit or cherry-pick.
-
 ## Typical propagation workflow
 1. Develop and validate the change on `cambios-generales`.
 2. Merge or cherry-pick into `docker-multi-entorno` → rebuild and test local docker.
@@ -39,7 +37,6 @@ After any functional fix or feature, the related branches must be left aligned w
 - Do not push release/deploy commits from `docker-multi-entorno` when the intention is Railway deployment.
 - First propagate functional commits to Railway branch, then push that Railway branch to trigger CI/CD.
 - If a commit was pushed from the wrong branch by mistake, cherry-pick it into Railway branch and redeploy from Railway.
-- For the frontend Railway image, prefer the static server entrypoint (`node scripts/serve-static.mjs dist`) over `vite preview` so healthchecks stay stable in production.
 
 ## Change classification (must decide before committing)
 Use this table to avoid ambiguity:
