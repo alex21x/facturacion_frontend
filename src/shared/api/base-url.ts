@@ -47,6 +47,11 @@ export function getApiBaseUrl(): string {
   const host = window.location.hostname;
   const protocol = window.location.protocol;
   const backendPort = import.meta.env.VITE_BACKEND_PORT || '8000';
+  const isLikelyLanHostname =
+    host !== '' &&
+    !host.includes('.') &&
+    host !== 'localhost' &&
+    !/^\d+\.\d+\.\d+\.\d+$/.test(host);
 
   const isLocalHost =
     host === 'localhost' ||
@@ -57,6 +62,10 @@ export function getApiBaseUrl(): string {
     /^172\.(1[6-9]|2\d|3[0-1])\./.test(host);
 
   if (isLocalHost) {
+    return `${protocol}//${host}:${backendPort}`;
+  }
+
+  if (isLikelyLanHostname || host.endsWith('.local')) {
     return `${protocol}//${host}:${backendPort}`;
   }
 

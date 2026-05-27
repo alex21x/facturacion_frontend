@@ -7917,9 +7917,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 document.body.appendChild(anchor);
                 anchor.click();
                 anchor.remove();
-                window.setTimeout(() => {
-                  window.open(blobUrl, '_blank', 'noopener,noreferrer');
-                }, 120);
                 window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
               }
             : undefined}
