@@ -36,6 +36,7 @@ export type PrintableSalesDocument = {
   currencyCode: string;
   currencySymbol: string;
   paymentMethodName: string;
+  notes?: string | null;
   customerName: string;
   customerDocNumber: string;
   customerAddress: string;
@@ -499,6 +500,25 @@ function resolveSunatPrintData(metadata: Record<string, unknown>, docKind: Print
   return { signature };
 }
 
+function resolveDocumentObservations(doc: PrintableSalesDocument): string {
+  const directNotes = typeof doc.notes === 'string' ? doc.notes.trim() : '';
+  if (directNotes !== '') {
+    return directNotes;
+  }
+
+  return findMetaStringValue((doc.metadata ?? {}) as Record<string, unknown>, [
+    'observations',
+    'observation',
+    'observacion',
+    'observaciones',
+    'notes',
+    'note',
+    'glosa',
+    'comment',
+    'comments',
+  ]) ?? '';
+}
+
 function cashDocumentKindLabel(kind: string): string {
   const normalized = baseDocumentKind(kind);
   if (normalized === 'INVOICE') return 'Factura';
@@ -590,6 +610,7 @@ export function buildCommercialDocumentA4Html(
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
   const percepcionType = String(metaData.percepcion_type_name ?? '').trim();
   const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
+  const observations = resolveDocumentObservations(doc);
   const totalInWords = amountToWords(Number(doc.grandTotal ?? 0), doc.currencyCode);
 
   const tributaryRows = showTributaryBreakdown ? [
@@ -793,7 +814,7 @@ export function buildCommercialDocumentA4Html(
             : ''}
 
           <section class="obs">
-            <div class="company-footer-note">Observaciones: Documento impreso en formato A4 adaptable por tipo de comprobante.</div>
+            <div class="company-footer-note">Observaciones: ${escapeHtml(observations || 'Sin observaciones registradas.')}</div>
             ${companyFooterHtml(company, 'A4')}
           </section>
         </section>
@@ -858,6 +879,7 @@ export function buildCommercialDocument80mmHtml(
   const retencionRate = Number(metaData.retencion_rate_percent ?? 0);
   const percepcionAmount = Number(metaData.percepcion_amount ?? 0);
   const percepcionRate = Number(metaData.percepcion_rate_percent ?? 0);
+  const observations = resolveDocumentObservations(doc);
   const sunatPrint = resolveSunatPrintData(metaData, doc.documentKind);
   const totalInWords = amountToWords(Number(doc.grandTotal ?? 0), doc.currencyCode);
 
@@ -941,7 +963,9 @@ export function buildCommercialDocument80mmHtml(
           }
           .header-logo-wrap {
             display: flex;
+            align-items: center;
             justify-content: center;
+            text-align: center;
             width: 100%;
           }
           .header-logo {
@@ -1122,6 +1146,10 @@ export function buildCommercialDocument80mmHtml(
             margin: 0.3mm 0;
             word-break: break-all;
           }
+          .sunat-ticket .line--wrap {
+            white-space: pre-wrap;
+            word-break: break-word;
+          }
         </style>
       </head>
       <body>
@@ -1224,9 +1252,10 @@ export function buildCommercialDocument80mmHtml(
 
           <div class="footer">
             <div class="footer-item">Forma Pago: ${escapeHtml(doc.paymentMethodName || '-')}</div>
-            ${sunatPrint.signature
+            ${(sunatPrint.signature || observations)
               ? `<div class="sunat-ticket">
                   ${sunatPrint.signature ? `<div class="line"><strong>Firma:</strong> ${escapeHtml(sunatPrint.signature)}</div>` : ''}
+                  ${observations ? `<div class="line line--wrap"><strong>Observaciones:</strong> ${escapeHtml(observations)}</div>` : ''}
                 </div>`
               : ''}
             <div class="divider" style="margin: 1mm 0"></div>
