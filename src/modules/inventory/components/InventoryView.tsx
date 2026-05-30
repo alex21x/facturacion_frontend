@@ -226,6 +226,11 @@ export function InventoryView({
   // Kardex state
   const [kardex, setKardex] = useState<KardexRow[]>([]);
   const [kardexProductId, setKardexProductId] = useState<number | null>(null);
+  const [kardexProductQuery, setKardexProductQuery] = useState('');
+  const [kardexProductSuggestOpen, setKardexProductSuggestOpen] = useState(false);
+  const [kardexProductSearching, setKardexProductSearching] = useState(false);
+  const [kardexProductSuggestions, setKardexProductSuggestions] = useState<InventoryProduct[]>([]);
+  const [kardexProductActiveIndex, setKardexProductActiveIndex] = useState(0);
   const [kardexDateFrom, setKardexDateFrom] = useState('');
   const [kardexDateTo, setKardexDateTo] = useState('');
   const [kardexLoading, setKardexLoading] = useState(false);
@@ -235,6 +240,33 @@ export function InventoryView({
   const [kardexMeta, setKardexMeta] = useState<KardexMeta>({ current_page: 1, per_page: 25, total: 0, total_pages: 1 });
   const [stockPage, setStockPage] = useState(1);
   const [stockPerPage] = useState(20);
+
+  useEffect(() => {
+    const normalizedQuery = kardexProductQuery.trim().toLowerCase();
+
+    if (normalizedQuery === '') {
+      setKardexProductSearching(false);
+      setKardexProductSuggestions([]);
+      setKardexProductActiveIndex(0);
+      if (kardexProductId === null) {
+        setKardexProductSuggestOpen(false);
+      }
+      return;
+    }
+
+    const filtered = products
+      .filter((row) => {
+        const haystack = [row.name, row.sku ?? '', row.barcode ?? '', row.category_name ?? '', row.unit_name ?? '']
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(normalizedQuery);
+      })
+      .slice(0, 12);
+
+    setKardexProductSearching(false);
+    setKardexProductSuggestions(filtered);
+    setKardexProductActiveIndex(0);
+  }, [kardexProductId, kardexProductQuery, products]);
 
   // Inventory Pro dashboard/report state
   const [dashboardDays, setDashboardDays] = useState(30);

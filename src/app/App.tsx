@@ -613,7 +613,7 @@ export function App() {
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
   const [taxTraceabilityEnabled, setTaxTraceabilityEnabled] = useState(false);
-  const [activeVertical, setActiveVertical] = useState<CompanyVerticalSettingsResponse['active_vertical'] | null>(null);
+  const [activeVertical, setActiveVertical] = useState<OperationalContextResponse['active_vertical'] | null>(null);
   const [businessPulseRange, setBusinessPulseRange] = useState<BusinessPulseRange>('DAY');
   const [businessPulseData, setBusinessPulseData] = useState<BusinessPulseDataset>(BUSINESS_PULSE_EMPTY);
   const [businessPulseLoading, setBusinessPulseLoading] = useState(false);

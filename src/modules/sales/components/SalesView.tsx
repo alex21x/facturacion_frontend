@@ -3726,7 +3726,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           currency_id: Number(form.currencyId),
           payment_method_id: Number(form.paymentMethodId),
           due_at: form.dueDate || null,
-          notes: form.notes?.trim() || null,
+          notes: form.notes?.trim() || undefined,
           metadata: normalizedDocumentMetadata,
           items: itemsPayload,
         });
