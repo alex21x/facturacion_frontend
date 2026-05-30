@@ -962,20 +962,28 @@ export function buildCommercialDocument80mmHtml(
             margin-bottom: 2mm;
           }
           .header-logo-wrap {
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            display: grid;
+            place-items: center;
             text-align: center;
             width: 100%;
+            margin: 0 auto 1.2mm;
+          }
+          .header-logo-frame {
+            width: 34mm;
+            min-height: 22mm;
+            display: grid;
+            place-items: center;
           }
           .header-logo {
-            width: 30mm;
-            height: 30mm;
+            max-width: 34mm;
+            width: auto;
+            height: auto;
+            max-height: 22mm;
             object-fit: contain;
-            border: 1px solid #000;
-            margin: 0 auto 1mm;
+            object-position: center center;
+            margin: 0 auto;
             display: block;
-            background: #fff;
+            background: transparent;
           }
           .title { 
             font-size: 13px; 
@@ -1165,7 +1173,7 @@ export function buildCommercialDocument80mmHtml(
         
         <div class="sheet">
           <div class="header">
-            ${company.logoUrl ? `<div class="header-logo-wrap"><img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" /></div>` : ''}
+            ${company.logoUrl ? `<div class="header-logo-wrap"><div class="header-logo-frame"><img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" /></div></div>` : ''}
             <div class="title">${escapeHtml(companyTitle)}</div>
             ${companyTaxId ? `<div class="date">RUC: ${escapeHtml(companyTaxId)}</div>` : ''}
             ${companyAddress ? `<div class="date">${escapeHtml(companyAddress)}</div>` : ''}
