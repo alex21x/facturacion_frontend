@@ -16,6 +16,15 @@ type UiDensity = 'normal' | 'compact';
 type SalesFlowMode = 'DIRECT_CASHIER' | 'SELLER_TO_CASHIER';
 const UI_DENSITY_STORAGE_KEY = 'facturacion.uiDensity';
 
+type BusinessPulseRange = 'DAY' | 'MONTH' | 'YEAR';
+type BusinessPulsePoint = { label: string; sales: number; purchases: number };
+type BusinessPulseDataset = Record<BusinessPulseRange, BusinessPulsePoint[]>;
+
+const BUSINESS_PULSE_RANGES: BusinessPulseRange[] = ['DAY', 'MONTH', 'YEAR'];
+const BUSINESS_PULSE_EMPTY: BusinessPulseDataset = { DAY: [], MONTH: [], YEAR: [] };
+const BUSINESS_PULSE_CACHE_KEY = 'facturacion.businessPulseCache.v1';
+const BUSINESS_PULSE_CACHE_TTL_MS = 2 * 60 * 1000;
+
 type ModuleTab =
   | 'home'
   | 'cash'
