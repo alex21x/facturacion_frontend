@@ -351,6 +351,7 @@ export type CreateDocumentForm = {
   taxCategoryId: number | null;
   customerQuery: string;
   customerAddress: string;
+  notes?: string;
   productQuery: string;
   manualDescription: string;
   isManualItem: boolean;

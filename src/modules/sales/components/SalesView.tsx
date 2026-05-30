@@ -318,6 +318,7 @@ const initialForm: CreateDocumentForm = {
   taxCategoryId: null,
   customerQuery: '',
   customerAddress: '',
+  notes: '',
   productQuery: '',
   manualDescription: '',
   isManualItem: false,
@@ -611,6 +612,83 @@ function resolveViewFilterForDocumentKind(documentKind: string): DocumentViewFil
   }
 
   return 'ALL';
+}
+
+function toEpoch(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function sortDocumentsLatestFirst<T extends { id?: number | null; created_at?: string | null; issue_at?: string | null }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const bGeneratedAt = toEpoch(b.created_at ?? b.issue_at ?? null);
+    const aGeneratedAt = toEpoch(a.created_at ?? a.issue_at ?? null);
+
+    if (bGeneratedAt !== aGeneratedAt) {
+      return bGeneratedAt - aGeneratedAt;
+    }
+
+    return Number(b.id ?? 0) - Number(a.id ?? 0);
+  });
+}
+
+const SUNAT_OPERATION_WINDOW_DAYS = 3;
+const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+const SUNAT_SENDING_STALE_MINUTES = 10;
+
+function parseDateOnlyToUtc(value: string | null | undefined): Date | null {
+  const raw = String(value ?? '').trim();
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function daysFromDateToTodayLima(value: string | null | undefined): number | null {
+  const sourceDate = parseDateOnlyToUtc(value);
+  const todayDate = parseDateOnlyToUtc(todayLima());
+
+  if (!sourceDate || !todayDate) {
+    return null;
+  }
+
+  return Math.floor((todayDate.getTime() - sourceDate.getTime()) / ONE_DAY_IN_MS);
+}
+
+function renderDaysLabel(days: number): string {
+  return days === 1 ? '1 dia' : `${days} dias`;
+}
+
+function buildSunatIndividualSendWindowWarning(row: CommercialDocumentListItem): string {
+  const daysSinceIssue = daysFromDateToTodayLima(row.issue_at);
+  if (daysSinceIssue === null || daysSinceIssue <= SUNAT_OPERATION_WINDOW_DAYS) {
+    return '';
+  }
+
+  return `Este comprobante fue emitido hace ${renderDaysLabel(daysSinceIssue)}. El envio individual SUNAT suele permitirse hasta ${SUNAT_OPERATION_WINDOW_DAYS} dias calendario desde la emision; fuera de plazo puede ser rechazado.`;
+}
+
+function buildSunatIndividualVoidWindowWarning(row: CommercialDocumentListItem): string {
+  const daysSinceIssue = daysFromDateToTodayLima(row.issue_at);
+  if (daysSinceIssue === null || daysSinceIssue <= SUNAT_OPERATION_WINDOW_DAYS) {
+    return '';
+  }
+
+  return `Advertencia operativa: la baja individual de factura se valida por SUNAT en ventana de ${SUNAT_OPERATION_WINDOW_DAYS} dias desde la aceptacion. Este documento fue emitido hace ${renderDaysLabel(daysSinceIssue)} y SUNAT puede rechazar la baja fuera de ventana. RA/RC aplica solo a boletas.`;
 }
 
 function resolveSunatUiState(row: CommercialDocumentListItem): SunatUiState {
@@ -2096,7 +2174,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         });
 
         if (requestSeq === documentsRequestSeqRef.current) {
-          setDocuments(docs.data ?? []);
+          setDocuments(sortDocumentsLatestFirst(docs.data ?? []));
           setDocumentsMeta(docs.meta ?? {
             page: documentsPage,
             per_page: documentsMeta.per_page,
@@ -2313,14 +2391,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           return;
         }
 
-        const expectedTargetKind = noteTargetDocumentKind ?? 'RECEIPT';
-        const allowedRows = fallbackRows.filter((row) => String(row.document_kind ?? '').toUpperCase() === expectedTargetKind);
-        setReferenceDocuments(allowedRows);
-        if (allowedRows.length === 0) {
-          setMessage(`No hay comprobantes ${expectedTargetKind === 'RECEIPT' ? 'boleta' : 'factura'} disponibles para afectar con este cliente.`);
+        const expectedTargetKind = noteTargetDocumentKind;
+        const allowedRows = expectedTargetKind
+          ? fallbackRows.filter((row) => String(row.document_kind ?? '').toUpperCase() === expectedTargetKind)
+          : fallbackRows;
+        const sortedAllowedRows = sortDocumentsLatestFirst(allowedRows);
+        setReferenceDocuments(sortedAllowedRows);
+        if (sortedAllowedRows.length === 0) {
+          setMessage('No hay comprobantes disponibles para afectar con este cliente.');
         }
-        const hasCurrent = allowedRows.some((row) => row.id === Number(form.noteAffectedDocumentId ?? 0));
-        const autoId = hasCurrent ? Number(form.noteAffectedDocumentId ?? 0) : (allowedRows[0]?.id ?? 0);
+        const hasCurrent = sortedAllowedRows.some((row) => row.id === Number(form.noteAffectedDocumentId ?? 0));
+        const autoId = hasCurrent ? Number(form.noteAffectedDocumentId ?? 0) : (sortedAllowedRows[0]?.id ?? 0);
 
         setForm((prev) => ({
           ...prev,
@@ -3645,6 +3726,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           currency_id: Number(form.currencyId),
           payment_method_id: Number(form.paymentMethodId),
           due_at: form.dueDate || null,
+          notes: form.notes?.trim() || null,
           metadata: normalizedDocumentMetadata,
           items: itemsPayload,
         });
@@ -4272,6 +4354,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         customerId?: number;
         currencyId?: number;
         paymentMethodId?: number | null;
+        notes?: string | null;
         customerDocNumber?: string;
         customerAddress?: string;
         items?: Array<{
@@ -4330,6 +4413,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
         customerAddress: details.customerAddress ?? '',
+        notes: details.notes ?? '',
         issueDate: TODAY,
         series: '',
         noteAffectedDocumentId: row.id,
@@ -4375,6 +4459,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         customerId?: number;
         currencyId?: number;
         paymentMethodId?: number | null;
+        notes?: string | null;
         items?: Array<{
           productId?: number | null;
           unitId?: number | null;
@@ -4443,6 +4528,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
         customerAddress: details.customerAddress ?? '',
+        notes: details.notes ?? '',
         issueDate: details.issueDate ? String(details.issueDate).slice(0, 10) : prev.issueDate,
         dueDate: details.dueDate ? String(details.dueDate).slice(0, 10) : '',
         series: details.series ?? prev.series,
@@ -4835,6 +4921,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               value={form.customerAddress}
               onChange={(e) => setForm((prev) => ({ ...prev, customerAddress: e.target.value }))}
               placeholder="Dirección del cliente"
+            />
+          </label>
+
+          <label className="sales-field-address">
+            Observaciones
+            <input
+              value={form.notes ?? ''}
+              onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
+              placeholder="Observación general del comprobante"
             />
           </label>
 
@@ -6106,7 +6201,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 <td>
                   {docKindLabelResolved(row.document_kind)} {row.series}-{row.number}
                 </td>
-                <td>{row.issue_at ? formatStoredDateTime(row.issue_at) : '-'}</td>
+                <td>{row.created_at ? formatStoredDateTime(row.created_at) : (row.issue_at ? formatStoredDateTime(row.issue_at) : '-')}</td>
                 <td>{row.customer_name}</td>
                 <td>{row.payment_method_name ?? 'Sin metodo de pago'}</td>
                 <td>

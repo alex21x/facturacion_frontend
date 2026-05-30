@@ -1292,17 +1292,74 @@ export function InventoryView({
             <div className="grid-form">
               <label>
                 Producto
-                <select
-                  value={kardexProductId ?? ''}
-                  onChange={(e) => setKardexProductId(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">Todos los productos</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.sku ? `[${p.sku}] ` : ''}{p.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="with-suggest">
+                  <input
+                    value={kardexProductQuery}
+                    onChange={(e) => {
+                      setKardexProductQuery(e.target.value);
+                      setKardexProductId(null);
+                      setKardexProductSuggestOpen(true);
+                    }}
+                    onFocus={() => {
+                      if (kardexProductSuggestions.length > 0 || kardexProductQuery.trim().length > 0) {
+                        setKardexProductSuggestOpen(true);
+                      }
+                    }}
+                    onBlur={() => {
+                      window.setTimeout(() => setKardexProductSuggestOpen(false), 120);
+                    }}
+                    onKeyDown={(e) => {
+                      if (!kardexProductSuggestOpen || kardexProductSuggestions.length === 0) return;
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setKardexProductActiveIndex((prev) => Math.min(prev + 1, kardexProductSuggestions.length - 1));
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setKardexProductActiveIndex((prev) => Math.max(prev - 1, 0));
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const selected = kardexProductSuggestions[kardexProductActiveIndex >= 0 ? kardexProductActiveIndex : 0];
+                        if (selected) {
+                          setKardexProductId(selected.id);
+                          setKardexProductQuery(`${selected.sku ? `[${selected.sku}] ` : ''}${selected.name}`);
+                          setKardexProductSuggestOpen(false);
+                          setKardexProductSuggestions([]);
+                        }
+                      } else if (e.key === 'Escape') {
+                        setKardexProductSuggestOpen(false);
+                      }
+                    }}
+                    placeholder="Todos los productos (escribe para filtrar)"
+                    autoComplete="off"
+                  />
+                  {kardexProductSearching && (
+                    <span style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', fontSize: '0.75rem', color: '#7a6f63' }}>
+                      Buscando...
+                    </span>
+                  )}
+                  {kardexProductSuggestOpen && kardexProductSuggestions.length > 0 && (
+                    <div className="suggest-box suggest-box--product">
+                      {kardexProductSuggestions.map((row, index) => (
+                        <button
+                          key={row.id}
+                          type="button"
+                          className={`suggest-item ${index === kardexProductActiveIndex ? 'active' : ''}`}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setKardexProductId(row.id);
+                            setKardexProductQuery(`${row.sku ? `[${row.sku}] ` : ''}${row.name}`);
+                            setKardexProductSuggestOpen(false);
+                            setKardexProductSuggestions([]);
+                          }}
+                        >
+                          <strong>{row.name}</strong>
+                          <span className="suggest-sku">{row.sku ?? 'SIN-SKU'}</span>
+                          {row.category_name && <span className="suggest-unit">{row.category_name}</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </label>
               <label>
                 Desde
@@ -1324,6 +1381,15 @@ export function InventoryView({
             <button type="button" onClick={() => { setKardexPage(1); void loadKardex(1); }} disabled={kardexLoading}>
               {kardexLoading ? 'Cargando...' : 'Buscar'}
             </button>
+            {kardexProductId && (
+              <button
+                type="button"
+                onClick={() => { setKardexProductId(null); setKardexProductQuery(''); setKardexProductSuggestions([]); }}
+                style={{ marginLeft: '0.5rem' }}
+              >
+                ✕ Todos
+              </button>
+            )}
             <button type="button" onClick={() => void handleExportKardex()} disabled={kardexLoading || exportingKardex} style={{ marginLeft: '0.5rem' }}>
               {exportingKardex ? 'Exportando...' : 'Exportar Excel'}
             </button>

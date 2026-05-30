@@ -78,129 +78,146 @@ export function buildPurchaseDetailHtml(
   entry: StockEntryRow,
   options?: { company?: Pick<CompanyProfile, 'tax_id' | 'legal_name' | 'trade_name' | 'address' | 'phone' | 'logo_url'> | null }
 ): string {
+  const escapeHtml = (value: string): string => value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
   const company = options?.company ?? null;
   const companyName = String(company?.trade_name || company?.legal_name || 'SISTEMA FACTURACION').trim() || 'SISTEMA FACTURACION';
   const companyTaxId = String(company?.tax_id || '').trim();
   const companyAddress = String(company?.address || '').trim();
   const companyPhone = String(company?.phone || '').trim();
+  const companyEmail = String((company as CompanyProfile | null)?.email || '').trim();
+  const companyDescription = String((company as CompanyProfile | null)?.company_description || '').trim();
   const logoUrl = String(company?.logo_url || '').trim();
   const logoHtml = logoUrl
-    ? `<img src="${logoUrl}" alt="Logo" class="company-logo" />`
+    ? `<img src="${escapeHtml(logoUrl)}" alt="Logo" class="company-logo" />`
     : `<div class="company-logo company-logo--placeholder">LOGO</div>`;
 
   const details = entry.items ?? [];
   const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
-  const itemDiscountTotal = details.reduce((acc, item) => acc + Number(item.discount_total ?? 0), 0);
-  const globalDiscountTotal = Number(metadata.discount_total ?? 0);
-  const hasDetraccion = Boolean(metadata.has_detraccion);
-  const hasRetencion = Boolean(metadata.has_retencion);
-  const hasPercepcion = Boolean(metadata.has_percepcion);
+  const supplierReference = String(entry.supplier_reference ?? '').trim();
+  const entryReference = String(entry.reference_no ?? '').trim();
+  const observations = String(entry.notes ?? '').trim();
+  const paymentMethod = String(entry.payment_method ?? '-').trim() || '-';
+
   const summary = details.reduce((acc, item) => {
     const subtotal = Number(item.subtotal ?? 0);
     const taxAmount = Number(item.tax_amount ?? 0);
     const taxRate = Number(item.tax_rate ?? 0);
     const taxLabel = String(item.tax_label ?? '').toUpperCase();
+    const discountTotal = Number(item.discount_total ?? 0);
 
-    acc.netTotal += subtotal;
+    acc.subtotal += subtotal;
     acc.taxTotal += taxAmount;
+    acc.discountTotal += discountTotal;
 
     if (taxRate > 0) {
       acc.gravadaTotal += subtotal;
-      return acc;
-    }
-
-    if (taxLabel.includes('EXONER')) {
+    } else if (taxLabel.includes('EXONER')) {
       acc.exoneradaTotal += subtotal;
-      return acc;
-    }
-
-    if (taxLabel.includes('INAFECT')) {
+    } else if (taxLabel.includes('INAFECT')) {
       acc.inafectaTotal += subtotal;
-      return acc;
+    } else {
+      acc.noTributariaTotal += subtotal;
     }
 
-    acc.noTributariaTotal += subtotal;
     return acc;
   }, {
-    netTotal: 0,
+    subtotal: 0,
     taxTotal: 0,
+    discountTotal: 0,
     gravadaTotal: 0,
     exoneradaTotal: 0,
     inafectaTotal: 0,
     noTributariaTotal: 0,
   });
-  const computedGrandTotal = summary.netTotal + summary.taxTotal;
+
+  const computedGrandTotal = Math.max(summary.subtotal + summary.taxTotal - summary.discountTotal, 0);
+  const reportedGrandTotal = Number(entry.total_amount ?? 0);
+  const finalGrandTotal = Number.isFinite(reportedGrandTotal) && reportedGrandTotal > 0 ? reportedGrandTotal : computedGrandTotal;
   const hasTributarySummary = summary.taxTotal > 0 || summary.gravadaTotal > 0 || summary.exoneradaTotal > 0 || summary.inafectaTotal > 0;
+  const itemCount = details.length;
+
   const tributaryRows: string[] = [];
+  const pushTributaryRow = (label: string, value: string) => {
+    if (value.trim() !== '') {
+      tributaryRows.push(`<div class="summary-row"><span class="summary-label">${label}</span><span class="summary-value">${escapeHtml(value)}</span></div>`);
+    }
+  };
 
-  if (hasDetraccion) {
-    tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
-    tributaryRows.push(`<tr><td>Detraccion</td><td>${String(metadata.detraccion_service_code ?? '-')}: ${String(metadata.detraccion_service_name ?? '-')}</td></tr>`);
-    tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.detraccion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.detraccion_amount ?? 0).toFixed(2)}</td></tr>`);
+  pushTributaryRow('Operacion SUNAT', String(metadata.sunat_operation_type_code ?? '') + (String(metadata.sunat_operation_type_name ?? '').trim() !== '' ? ` - ${String(metadata.sunat_operation_type_name ?? '')}` : ''));
+  pushTributaryRow('Detraccion', String(metadata.detraccion_service_code ?? '') + (String(metadata.detraccion_service_name ?? '').trim() !== '' ? ` - ${String(metadata.detraccion_service_name ?? '')}` : ''));
+  if (Number(metadata.detraccion_rate_percent ?? 0) > 0 || Number(metadata.detraccion_amount ?? 0) > 0) {
+    pushTributaryRow('Monto detraccion', `${Number(metadata.detraccion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.detraccion_amount ?? 0).toFixed(2)}`);
   }
-  if (hasRetencion) {
-    tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
-    tributaryRows.push(`<tr><td>Retencion</td><td>${String(metadata.retencion_type_code ?? '-')}: ${String(metadata.retencion_type_name ?? '-')}</td></tr>`);
-    tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.retencion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.retencion_amount ?? 0).toFixed(2)}</td></tr>`);
+  pushTributaryRow('Retencion', String(metadata.retencion_type_code ?? '') + (String(metadata.retencion_type_name ?? '').trim() !== '' ? ` - ${String(metadata.retencion_type_name ?? '')}` : ''));
+  if (Number(metadata.retencion_rate_percent ?? 0) > 0 || Number(metadata.retencion_amount ?? 0) > 0) {
+    pushTributaryRow('Monto retencion', `${Number(metadata.retencion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.retencion_amount ?? 0).toFixed(2)}`);
   }
-  if (hasPercepcion) {
-    tributaryRows.push(`<tr><td>Operacion SUNAT</td><td>${String(metadata.sunat_operation_type_code ?? '-')}: ${String(metadata.sunat_operation_type_name ?? '-')}</td></tr>`);
-    tributaryRows.push(`<tr><td>Percepcion</td><td>${String(metadata.percepcion_type_code ?? '-')}: ${String(metadata.percepcion_type_name ?? '-')}</td></tr>`);
-    tributaryRows.push(`<tr><td>Tasa/Monto</td><td>${Number(metadata.percepcion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.percepcion_amount ?? 0).toFixed(2)}</td></tr>`);
+  pushTributaryRow('Percepcion', String(metadata.percepcion_type_code ?? '') + (String(metadata.percepcion_type_name ?? '').trim() !== '' ? ` - ${String(metadata.percepcion_type_name ?? '')}` : ''));
+  if (Number(metadata.percepcion_rate_percent ?? 0) > 0 || Number(metadata.percepcion_amount ?? 0) > 0) {
+    pushTributaryRow('Monto percepcion', `${Number(metadata.percepcion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.percepcion_amount ?? 0).toFixed(2)}`);
   }
 
-  const tributaryHtml = tributaryRows.length > 0
-    ? `<h3 style="margin:16px 0 8px;">Condiciones tributarias</h3>
-       <table>
-         <tbody>${tributaryRows.join('')}</tbody>
-       </table>`
-    : '';
-  const tributarySummaryHtml = hasTributarySummary
-    ? `<h3 style="margin:16px 0 8px;">Resumen tributario</h3>
-       <table>
-         <tbody>
-           <tr><td>Operacion gravada</td><td style="text-align:right">${summary.gravadaTotal.toFixed(2)}</td></tr>
-           <tr><td>Operacion exonerada</td><td style="text-align:right">${summary.exoneradaTotal.toFixed(2)}</td></tr>
-           <tr><td>Operacion inafecta</td><td style="text-align:right">${summary.inafectaTotal.toFixed(2)}</td></tr>
-           <tr><td>No tributaria</td><td style="text-align:right">${summary.noTributariaTotal.toFixed(2)}</td></tr>
-           <tr><td>Total IGV</td><td style="text-align:right">${summary.taxTotal.toFixed(2)}</td></tr>
-           ${itemDiscountTotal > 0 ? `<tr><td>Descuento por item</td><td style="text-align:right">-${itemDiscountTotal.toFixed(2)}</td></tr>` : ''}
-           ${globalDiscountTotal > 0 ? `<tr><td>Descuento global</td><td style="text-align:right">-${globalDiscountTotal.toFixed(2)}</td></tr>` : ''}
-           <tr class="total-row"><td>Importe total</td><td style="text-align:right">${computedGrandTotal.toFixed(2)}</td></tr>
-         </tbody>
-       </table>`
-    : '';
-  const totalsRowsHtml = details.length > 0
-    ? `
-        <tr><td>Cantidad total</td><td>${Number(entry.total_qty).toFixed(3)}</td></tr>
-        <tr><td>Subtotal</td><td>${summary.netTotal.toFixed(2)}</td></tr>
-        ${hasTributarySummary ? `<tr><td>IGV</td><td>${summary.taxTotal.toFixed(2)}</td></tr>` : ''}
-        ${itemDiscountTotal > 0 ? `<tr><td>Descuento por item</td><td>-${itemDiscountTotal.toFixed(2)}</td></tr>` : ''}
-        ${globalDiscountTotal > 0 ? `<tr><td>Descuento global</td><td>-${globalDiscountTotal.toFixed(2)}</td></tr>` : ''}
-        <tr class="total-row"><td>Total ingreso</td><td>${computedGrandTotal.toFixed(2)}</td></tr>
-      `
-    : `
-        <tr><td>Cantidad total</td><td>${Number(entry.total_qty).toFixed(3)}</td></tr>
-        <tr class="total-row"><td>Total ingreso</td><td>${Number(entry.total_amount).toFixed(2)}</td></tr>
+  const bankAccounts = Array.isArray((company as CompanyProfile | null)?.bank_accounts)
+    ? ((company as CompanyProfile | null)?.bank_accounts ?? [])
+    : [];
+  const bankRows = bankAccounts
+    .map((bank) => {
+      const bankName = String(bank.bank_name || '').trim();
+      const accountNumber = String(bank.account_number || '').trim();
+      const cci = String(bank.cci || '').trim();
+      const accountHolder = String(bank.account_holder || '').trim();
+
+      if (bankName === '' && accountNumber === '' && cci === '' && accountHolder === '') {
+        return '';
+      }
+
+      return `
+        <div class="company-footer-bank">
+          ${bankName ? `<div><strong>${escapeHtml(bankName)}</strong></div>` : ''}
+          ${accountNumber ? `<div>Cuenta: ${escapeHtml(accountNumber)}</div>` : ''}
+          ${cci ? `<div>CCI: ${escapeHtml(cci)}</div>` : ''}
+          ${accountHolder ? `<div>Titular: ${escapeHtml(accountHolder)}</div>` : ''}
+        </div>
       `;
+    })
+    .filter((row) => row !== '')
+    .join('');
+
+  const showPaymentBrands = (company as CompanyProfile | null)?.show_payment_brand_icons !== false;
+  const paymentBrandsSection = showPaymentBrands
+    ? `<div class="company-footer-logos">
+        <div class="paybrand"><img src="/assets/payment-logos/yape-official.png" alt="Yape" /></div>
+        <div class="paybrand"><img src="/assets/payment-logos/plin-official.png" alt="Plin" /></div>
+        <div class="paybrand"><img src="/assets/payment-logos/culqi-official.png" alt="Culqi" /></div>
+      </div>`
+    : '';
+
   const rows = details.length > 0
     ? details.map((item) => {
+        const taxLabel = String(item.tax_label ?? 'Sin IGV');
         return `
           <tr>
-            <td>${item.product_name}</td>
-            <td>${item.lot_code ?? '-'}</td>
-            <td style="text-align:right">${Number(item.qty).toFixed(3)}</td>
-            <td style="text-align:right">${Number(item.unit_cost).toFixed(4)}</td>
-            <td style="text-align:right">${Number(item.subtotal).toFixed(2)}</td>
-            <td>${item.tax_label || 'Sin IGV'}</td>
-            <td style="text-align:right">${Number(item.tax_rate).toFixed(2)}%</td>
-            <td style="text-align:right">${Number(item.tax_amount).toFixed(2)}</td>
-            <td style="text-align:right">${Number(item.discount_total ?? 0).toFixed(2)}</td>
-            <td style="text-align:right">${Number(item.line_total).toFixed(2)}</td>
+            <td class="ta-c">${item.entry_id ?? entry.id}</td>
+            <td>${escapeHtml(String(item.product_name ?? '-'))}</td>
+            <td>${escapeHtml(String(item.lot_code ?? '-'))}</td>
+            <td class="ta-r">${Number(item.qty ?? 0).toFixed(3)}</td>
+            <td class="ta-r">${Number(item.unit_cost ?? 0).toFixed(4)}</td>
+            <td class="ta-r">${Number(item.subtotal ?? 0).toFixed(2)}</td>
+            <td>${escapeHtml(taxLabel)}</td>
+            <td class="ta-r">${Number(item.tax_rate ?? 0).toFixed(2)}%</td>
+            <td class="ta-r">${Number(item.tax_amount ?? 0).toFixed(2)}</td>
+            <td class="ta-r">${Number(item.discount_total ?? 0).toFixed(2)}</td>
+            <td class="ta-r">${Number(item.line_total ?? 0).toFixed(2)}</td>
           </tr>
         `;
       }).join('')
-    : '<tr><td colspan="10" style="text-align:center;color:#64748b">No hay detalle de items para este ingreso.</td></tr>';
+    : '<tr><td colspan="11" class="ta-c">Sin items</td></tr>';
 
   return `
 <!doctype html>
@@ -208,70 +225,133 @@ export function buildPurchaseDetailHtml(
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Detalle compra #${entry.id}</title>
+    <title>Compra #${entry.id}</title>
     <style>
-      body { font-family: Arial, sans-serif; margin: 16px; color: #0f172a; }
-      h2 { margin: 0 0 6px; }
-      .header { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: center; margin-bottom: 10px; }
-      .company-logo { width: 92px; height: 92px; object-fit: contain; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; display: block; }
-      .company-logo--placeholder { display: inline-flex; align-items: center; justify-content: center; color: #64748b; font-weight: 700; letter-spacing: 0.4px; }
-      .company-name { margin: 0; font-size: 20px; line-height: 1.1; }
-      .company-kv { margin: 2px 0; font-size: 12px; color: #475569; }
-      .meta { margin: 0 0 12px; color: #475569; font-size: 13px; }
-      table { width: 100%; border-collapse: collapse; font-size: 13px; }
-      th, td { border: 1px solid #cbd5e1; padding: 7px; vertical-align: top; }
-      th { background: #e2e8f0; text-align: left; }
-      .totals { margin-top: 10px; width: 360px; margin-left: auto; }
-      .totals td { text-align: right; }
-      .totals td:first-child { text-align: left; }
-      .total-row { font-weight: 700; background: #f1f5f9; }
+      @page { size: A4 portrait; margin: 9mm; }
+      * { box-sizing: border-box; }
+      body { margin: 0; font-family: Arial, Helvetica, sans-serif; color: #111827; background: #fff; }
+      .sheet { width: 100%; min-height: 277mm; padding: 6mm; border: 1px solid #1f2937; }
+      .header { display: grid; grid-template-columns: auto 1fr 58mm; gap: 4mm; align-items: stretch; margin-bottom: 4mm; padding-bottom: 3mm; border-bottom: 2px solid #1e3a8a; }
+      .logo-col { display: flex; align-items: center; justify-content: center; padding-right: 2mm; border-right: 1px solid #e5e7eb; }
+      .brand-col { display: flex; flex-direction: column; justify-content: center; gap: 0.4mm; }
+      .company-logo { display: block; max-width: 140px; max-height: 90px; height: auto; object-fit: contain; }
+      .company-logo--placeholder { width: 140px; height: 90px; display: inline-flex; align-items: center; justify-content: center; color: #64748b; border: 1px solid #cbd5e1; border-radius: 6px; font-weight: 700; letter-spacing: 0.4px; background: #fff; }
+      .brand-name { font-size: 13pt; font-weight: 900; text-transform: uppercase; color: #1e3a8a; margin-bottom: 0.3mm; }
+      .brand-legal { font-size: 8pt; font-weight: 700; color: #374151; text-transform: uppercase; margin-bottom: 0.8mm; }
+      .brand-desc { font-size: 8.5pt; font-weight: 700; color: #374151; }
+      .brand-meta { font-size: 8.5pt; line-height: 1.25; color: #374151; }
+      .voucher-box { border: 2px solid #1e3a8a; border-radius: 4px; overflow: hidden; text-align: center; }
+      .voucher-ruc { padding: 2.5mm 3mm; font-size: 9.5pt; font-weight: 900; color: #1e3a8a; background: #fff; }
+      .voucher-type { padding: 3mm; background: #1e3a8a; color: #fff; font-size: 9pt; font-weight: 900; text-transform: uppercase; line-height: 1.3; }
+      .voucher-number { padding: 3mm; font-size: 15pt; font-weight: 900; color: #dc2626; letter-spacing: 0.5px; background: #fff; }
+      .voucher-date { font-size: 8pt; color: #374151; padding: 1.5mm 3mm; background: #f8fafc; border-top: 1px solid #bfdbfe; }
+      .info-box { border: 1px solid #1f2937; border-radius: 4px; padding: 3mm 4mm; margin-bottom: 4mm; }
+      .info-grid { width: 100%; border-collapse: collapse; }
+      .info-grid td { width: 50%; vertical-align: top; padding: 0 2mm; }
+      .line { margin: 2px 0; font-size: 9pt; }
+      .k { display: inline-block; width: 128px; font-weight: 900; letter-spacing: 0.2px; }
+      .v { display: inline-block; font-weight: 700; }
+      .items-a4 { width: 100%; border-collapse: collapse; border: 1px solid #cbd5e1; overflow: hidden; }
+      .items-a4 thead th { background: #1e3a8a; color: #fff; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.2px; padding: 1.5mm 2mm; border-bottom: 1px solid #1e3a8a; font-weight: 700; }
+      .items-a4 tbody td { border-bottom: 1px solid #e2e8f0; font-size: 8.5pt; padding: 1.5mm 2mm; vertical-align: top; }
+      .items-a4-row:last-child td { border-bottom: none; }
+      .ta-r { text-align: right; }
+      .ta-c { text-align: center; }
+      .summary { margin-top: 4mm; border-top: 2px solid #1e3a8a; padding-top: 2mm; display: grid; grid-template-columns: 1fr 300px; gap: 10px; }
+      .summary-words { font-size: 9pt; font-weight: 900; line-height: 1.35; word-break: break-word; }
+      .summary-box table { width: 100%; border-collapse: collapse; }
+      .summary-row { display: flex; justify-content: space-between; font-size: 9pt; margin: 0.6mm 0; }
+      .summary-label, .summary-value { font-weight: 900; }
+      .summary-total { display: flex; justify-content: space-between; border-top: 2px solid #1e3a8a; margin-top: 1mm; padding: 1mm 2mm; font-size: 12pt; font-weight: 900; background: #f0f4ff; border-radius: 4px; }
+      .footer { margin-top: 3mm; border-top: 1px dashed #111827; padding-top: 2mm; }
+      .footer-title { text-transform: uppercase; margin-bottom: 0.8mm; font-size: 9pt; font-weight: 900; }
+      .footer-note { font-size: 9pt; line-height: 1.35; margin-bottom: 1.5mm; }
+      .company-footer-banks { font-size: 9pt; line-height: 1.35; margin-bottom: 2mm; }
+      .company-footer-bank { margin: 0.5mm 0; }
+      .company-footer-logos { display: flex; align-items: center; justify-content: flex-start; gap: 1.4mm; margin-top: 1mm; flex-wrap: wrap; }
+      .paybrand { border: 1px solid #d1d5db; border-radius: 8px; background: #fff; padding: 1mm 2mm; height: 10mm; display: inline-flex; align-items: center; justify-content: center; }
+      .paybrand img { height: 7mm; width: auto; display: block; }
+      .summary-trib { margin-top: 2mm; }
     </style>
   </head>
   <body>
-    <section class="header">
-      ${logoHtml}
-      <article>
-        <h3 class="company-name">${companyName}</h3>
-        ${companyTaxId ? `<p class="company-kv">RUC: ${companyTaxId}</p>` : ''}
-        ${companyAddress ? `<p class="company-kv">${companyAddress}</p>` : ''}
-        ${companyPhone ? `<p class="company-kv">Tel: ${companyPhone}</p>` : ''}
-      </article>
+    <section class="sheet">
+      <header class="header">
+        <div class="logo-col">${logoHtml}</div>
+        <div class="brand-col">
+          <div class="brand-name">${escapeHtml(companyName)}</div>
+          ${company?.legal_name && company?.legal_name !== companyName ? `<div class="brand-legal">${escapeHtml(String(company.legal_name))}</div>` : ''}
+          ${companyDescription ? `<div class="brand-desc">${escapeHtml(companyDescription)}</div>` : ''}
+          ${companyAddress ? `<div class="brand-meta">${escapeHtml(companyAddress)}</div>` : ''}
+          ${companyPhone ? `<div class="brand-meta">Tel: ${escapeHtml(companyPhone)}</div>` : ''}
+          ${companyEmail ? `<div class="brand-meta">Email: ${escapeHtml(companyEmail)}</div>` : ''}
+        </div>
+        <div class="voucher-box">
+          <div class="voucher-ruc">R.U.C. ${escapeHtml(companyTaxId || '-')}</div>
+          <div class="voucher-type">${escapeHtml(entryTypeLabel(entry.entry_type)).toUpperCase()}</div>
+          <div class="voucher-number">${escapeHtml(entryReference !== '' ? entryReference : `#${String(entry.id)}`)}</div>
+          <div class="voucher-date">${escapeHtml(formatDateTime(entry.issue_at))}</div>
+        </div>
+      </header>
+
+      <section class="info-box">
+        <table class="info-grid">
+          <tr>
+            <td>
+              <div class="line"><span class="k">ESTADO:</span><span class="v">${escapeHtml(purchaseStatusLabel(entry.status, entry.status_label))}</span></div>
+              <div class="line"><span class="k">REFERENCIA PROV.:</span><span class="v">${escapeHtml(supplierReference || '-')}</span></div>
+              <div class="line"><span class="k">ALMACEN:</span><span class="v">${escapeHtml(String(entry.warehouse_name || entry.warehouse_code || '-'))}</span></div>
+              <div class="line"><span class="k">METODO PAGO:</span><span class="v">${escapeHtml(paymentMethod)}</span></div>
+            </td>
+            <td>
+              <div class="line"><span class="k">TIPO INGRESO:</span><span class="v">${escapeHtml(entryTypeLabel(entry.entry_type))}</span></div>
+              <div class="line"><span class="k">FECHA EMISION:</span><span class="v">${escapeHtml(formatDateTime(entry.issue_at))}</span></div>
+              <div class="line"><span class="k">TOTAL ITEMS:</span><span class="v">${itemCount}</span></div>
+              <div class="line"><span class="k">NOTAS:</span><span class="v">${escapeHtml(observations || '-')}</span></div>
+            </td>
+          </tr>
+        </table>
+      </section>
+
+      <table class="items-a4">
+        <thead>
+          <tr>
+            <th style="width: 7mm">#</th>
+            <th>Producto</th>
+            <th style="width: 18mm">Lote</th>
+            <th style="width: 16mm">Cant.</th>
+            <th style="width: 22mm">Costo U.</th>
+            <th style="width: 22mm">Subtotal</th>
+            <th style="width: 18mm">IGV</th>
+            <th style="width: 18mm">Tasa</th>
+            <th style="width: 22mm">Monto IGV</th>
+            <th style="width: 22mm">Dscto.</th>
+            <th style="width: 24mm">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows}
+        </tbody>
+      </table>
+
+      <section class="summary">
+        <div class="summary-words">${escapeHtml(`SON: ${Number(finalGrandTotal || 0).toFixed(2)} SOLES`)}</div>
+        <div class="summary-box">
+          <div class="summary-row"><span class="summary-label">Subtotal</span><span class="summary-value">${Number(summary.subtotal).toFixed(2)}</span></div>
+          ${hasTributarySummary ? `<div class="summary-row"><span class="summary-label">IGV</span><span class="summary-value">${Number(summary.taxTotal).toFixed(2)}</span></div>` : ''}
+          ${summary.discountTotal > 0 ? `<div class="summary-row"><span class="summary-label">Descuentos</span><span class="summary-value">-${Number(summary.discountTotal).toFixed(2)}</span></div>` : ''}
+          <div class="summary-total"><span>Total ingreso</span><span>${Number(finalGrandTotal).toFixed(2)}</span></div>
+          ${tributaryRows.length > 0 ? `<div class="summary-trib">${tributaryRows.join('')}</div>` : ''}
+        </div>
+      </section>
+
+      <footer class="footer">
+        <div class="footer-title">Observaciones</div>
+        <div class="footer-note">${escapeHtml(observations || 'Documento generado en formato A4 con la misma estructura visual que ventas.')}</div>
+        ${bankRows ? `<div class="company-footer-banks"><div class="footer-title">Datos bancarios</div>${bankRows}</div>` : ''}
+        ${paymentBrandsSection}
+      </footer>
     </section>
-    <h2>Detalle de compra #${entry.id}</h2>
-    <p class="meta">
-      Tipo: ${entryTypeLabel(entry.entry_type)} |
-      Estado: ${purchaseStatusLabel(entry.status, entry.status_label)} |
-      Fecha: ${formatDateTime(entry.issue_at)} |
-      Referencia: ${entry.reference_no ?? entry.supplier_reference ?? '-'}
-    </p>
-
-    <table>
-      <thead>
-        <tr>
-          <th>Producto</th>
-          <th>Lote</th>
-          <th>Cantidad</th>
-          <th>Costo unitario</th>
-          <th>Subtotal</th>
-          <th>Tipo IGV</th>
-          <th>Tasa IGV</th>
-          <th>IGV</th>
-          <th>Descuento</th>
-          <th>Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-
-    <table class="totals">
-      <tbody>
-        ${totalsRowsHtml}
-      </tbody>
-    </table>
-    ${tributarySummaryHtml}
-    ${tributaryHtml}
   </body>
 </html>`;
 }
