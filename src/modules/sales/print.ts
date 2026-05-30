@@ -962,20 +962,24 @@ export function buildCommercialDocument80mmHtml(
             margin-bottom: 2mm;
           }
           .header-logo-wrap {
-            display: grid;
-            place-items: center;
+            display: block;
             text-align: center;
             width: 100%;
             margin: 0 auto 1.2mm;
           }
           .header-logo-frame {
-            width: 34mm;
-            min-height: 22mm;
-            display: grid;
-            place-items: center;
+            position: relative;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 36mm;
+            height: 22mm;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
           }
           .header-logo {
-            max-width: 34mm;
+            max-width: 36mm;
             width: auto;
             height: auto;
             max-height: 22mm;
