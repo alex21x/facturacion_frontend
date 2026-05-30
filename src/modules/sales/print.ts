@@ -939,6 +939,11 @@ export function buildCommercialDocument80mmHtml(
             text-align: center;
             margin-bottom: 2mm;
           }
+          .header-logo-wrap {
+            display: flex;
+            justify-content: center;
+            width: 100%;
+          }
           .header-logo {
             width: 30mm;
             height: 30mm;
@@ -1132,7 +1137,7 @@ export function buildCommercialDocument80mmHtml(
         
         <div class="sheet">
           <div class="header">
-            ${company.logoUrl ? `<img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" />` : ''}
+            ${company.logoUrl ? `<div class="header-logo-wrap"><img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" /></div>` : ''}
             <div class="title">${escapeHtml(companyTitle)}</div>
             ${companyTaxId ? `<div class="date">RUC: ${escapeHtml(companyTaxId)}</div>` : ''}
             ${companyAddress ? `<div class="date">${escapeHtml(companyAddress)}</div>` : ''}
