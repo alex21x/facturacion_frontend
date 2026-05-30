@@ -172,6 +172,37 @@ function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
 }
 
+function resolveReportEntryGrandTotal(entry: StockEntryRow): number {
+  const details = Array.isArray(entry.items) ? entry.items : [];
+  const reportedTotal = Number(entry.total_amount ?? 0);
+
+  if (details.length === 0) {
+    return Number.isFinite(reportedTotal) ? reportedTotal : 0;
+  }
+
+  const grossFromItems = details.reduce((acc, item) => {
+    const lineTotal = Number(item.line_total ?? 0);
+    if (Number.isFinite(lineTotal)) {
+      return acc + lineTotal;
+    }
+
+    const subtotal = Number(item.subtotal ?? 0);
+    const taxAmount = Number(item.tax_amount ?? 0);
+    return acc + (Number.isFinite(subtotal) ? subtotal : 0) + (Number.isFinite(taxAmount) ? taxAmount : 0);
+  }, 0);
+
+  const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
+  const itemDiscountFromMetadata = Number(metadata.item_discount_total ?? 0);
+  const globalDiscountFromMetadata = Number(metadata.discount_total ?? 0);
+  const discountFromMetadata = Math.max(
+    0,
+    (Number.isFinite(itemDiscountFromMetadata) ? itemDiscountFromMetadata : 0)
+      + (Number.isFinite(globalDiscountFromMetadata) ? globalDiscountFromMetadata : 0)
+  );
+
+  return Math.max(grossFromItems - discountFromMetadata, 0);
+}
+
 export function PurchasesView({
   accessToken,
   warehouseId,
@@ -2771,7 +2802,7 @@ export function PurchasesView({
                 <td>{entry.payment_method ?? '-'}</td>
                 <td>{entry.total_items}</td>
                 <td>{Number(entry.total_qty).toFixed(3)}</td>
-                <td>{Number(entry.total_amount).toFixed(2)}</td>
+                <td>{resolveReportEntryGrandTotal(entry).toFixed(2)}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   <div style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: entry.entry_type === 'PURCHASE_ORDER' && !['CLOSED', 'VOID', 'CANCELED'].includes(String(entry.status || '').toUpperCase()) ? 'flex-start' : 'center', gap: '0.35rem' }}>
                     {canEditPurchaseEntries && (

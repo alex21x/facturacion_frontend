@@ -188,9 +188,21 @@ export function buildPurchaseDetailHtml(
     noTributariaTotal: 0,
   });
 
-  const computedGrandTotal = Math.max(summary.subtotal + summary.taxTotal - summary.discountTotal, 0);
+  const itemDiscountFromMetadata = Number(metadata.item_discount_total ?? 0);
+  const globalDiscountFromMetadata = Number(metadata.discount_total ?? 0);
+  const fallbackDiscountTotal = Math.max(
+    0,
+    (Number.isFinite(itemDiscountFromMetadata) ? itemDiscountFromMetadata : 0)
+      + (Number.isFinite(globalDiscountFromMetadata) ? globalDiscountFromMetadata : 0)
+  );
+  const effectiveDiscountTotal = summary.discountTotal > 0 ? summary.discountTotal : fallbackDiscountTotal;
+
+  const computedGrandTotal = Math.max(summary.subtotal + summary.taxTotal - effectiveDiscountTotal, 0);
   const reportedGrandTotal = Number(entry.total_amount ?? 0);
-  const finalGrandTotal = Number.isFinite(reportedGrandTotal) && reportedGrandTotal > 0 ? reportedGrandTotal : computedGrandTotal;
+  const hasDetailItems = details.length > 0;
+  const finalGrandTotal = hasDetailItems
+    ? computedGrandTotal
+    : (Number.isFinite(reportedGrandTotal) && reportedGrandTotal > 0 ? reportedGrandTotal : computedGrandTotal);
   const hasTributarySummary = summary.taxTotal > 0 || summary.gravadaTotal > 0 || summary.exoneradaTotal > 0 || summary.inafectaTotal > 0;
   const itemCount = details.length;
 
