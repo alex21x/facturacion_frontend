@@ -1177,7 +1177,7 @@ export function buildCommercialDocument80mmHtml(
         
         <div class="sheet">
           <div class="header">
-            ${company.logoUrl ? `<div class="header-logo-wrap"><div class="header-logo-frame"><img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" /></div></div>` : ''}
+            ${company.logoUrl ? `<div class="header-logo-wrap"><div class="header-logo-frame"><img src="${escapeHtml(company.logoUrl)}" alt="Logo" class="header-logo" data-autocrop="1" /></div></div>` : ''}
             <div class="title">${escapeHtml(companyTitle)}</div>
             ${companyTaxId ? `<div class="date">RUC: ${escapeHtml(companyTaxId)}</div>` : ''}
             ${companyAddress ? `<div class="date">${escapeHtml(companyAddress)}</div>` : ''}
@@ -1276,6 +1276,129 @@ export function buildCommercialDocument80mmHtml(
             <div class="footer-item">ID: ${doc.id}</div>
           </div>
         </div>
+        <script>
+          (function () {
+            function loadImage(url) {
+              return new Promise(function (resolve, reject) {
+                var image = new Image();
+                image.crossOrigin = 'anonymous';
+                image.onload = function () { resolve(image); };
+                image.onerror = function () { reject(new Error('image-load-failed')); };
+                image.src = url;
+              });
+            }
+
+            function detectBounds(data, width, height) {
+              var minX = width;
+              var minY = height;
+              var maxX = -1;
+              var maxY = -1;
+
+              for (var y = 0; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                  var idx = (y * width + x) * 4;
+                  var r = data[idx];
+                  var g = data[idx + 1];
+                  var b = data[idx + 2];
+                  var a = data[idx + 3];
+                  var isOpaque = a > 10;
+                  var isNotNearWhite = r < 245 || g < 245 || b < 245;
+                  if (!isOpaque && !isNotNearWhite) {
+                    continue;
+                  }
+                  if (x < minX) minX = x;
+                  if (x > maxX) maxX = x;
+                  if (y < minY) minY = y;
+                  if (y > maxY) maxY = y;
+                }
+              }
+
+              if (maxX < minX || maxY < minY) {
+                return null;
+              }
+
+              return { minX: minX, minY: minY, maxX: maxX, maxY: maxY };
+            }
+
+            function clamp(value, min, max) {
+              return Math.max(min, Math.min(max, value));
+            }
+
+            async function autocropLogo(img) {
+              var src = img.getAttribute('src');
+              if (!src) {
+                return;
+              }
+
+              try {
+                var loaded = await loadImage(src);
+                var width = loaded.naturalWidth || loaded.width;
+                var height = loaded.naturalHeight || loaded.height;
+                if (!width || !height) {
+                  return;
+                }
+
+                var canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                var ctx = canvas.getContext('2d');
+                if (!ctx) {
+                  return;
+                }
+
+                ctx.drawImage(loaded, 0, 0, width, height);
+
+                var imageData;
+                try {
+                  imageData = ctx.getImageData(0, 0, width, height);
+                } catch (_err) {
+                  return;
+                }
+
+                var bounds = detectBounds(imageData.data, width, height);
+                if (!bounds) {
+                  return;
+                }
+
+                var pad = 2;
+                var cropX = clamp(bounds.minX - pad, 0, width - 1);
+                var cropY = clamp(bounds.minY - pad, 0, height - 1);
+                var cropW = clamp(bounds.maxX - bounds.minX + 1 + pad * 2, 1, width - cropX);
+                var cropH = clamp(bounds.maxY - bounds.minY + 1 + pad * 2, 1, height - cropY);
+
+                if (cropX === 0 && cropY === 0 && cropW === width && cropH === height) {
+                  return;
+                }
+
+                var out = document.createElement('canvas');
+                out.width = cropW;
+                out.height = cropH;
+                var outCtx = out.getContext('2d');
+                if (!outCtx) {
+                  return;
+                }
+
+                outCtx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+                img.src = out.toDataURL('image/png');
+              } catch (_error) {
+                // Ignore autocrop failures to preserve original logo rendering.
+              }
+            }
+
+            function runAutocrop() {
+              var logos = Array.prototype.slice.call(document.querySelectorAll('img.header-logo[data-autocrop="1"]'));
+              logos.forEach(function (logo) {
+                void autocropLogo(logo);
+              });
+            }
+
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+              runAutocrop();
+            } else {
+              document.addEventListener('DOMContentLoaded', runAutocrop, { once: true });
+            }
+          })();
+        </script>
       </body>
     </html>
   `;
