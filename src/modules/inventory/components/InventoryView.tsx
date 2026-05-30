@@ -1911,15 +1911,6 @@ export function InventoryView({
                     </div>
                   )}
                 </div>
-                {kardexProductId && (
-                  <button
-                    type="button"
-                    style={{ marginTop: '0.25rem', fontSize: '0.75rem', padding: '0.15rem 0.4rem' }}
-                    onClick={() => { setKardexProductId(null); setKardexProductQuery(''); setKardexProductSuggestions([]); }}
-                  >
-                    ✕ Todos
-                  </button>
-                )}
               </label>
               <label>
                 Desde
@@ -1941,6 +1932,15 @@ export function InventoryView({
             <button type="button" onClick={() => { setKardexPage(1); void loadKardex(1); }} disabled={kardexLoading}>
               {kardexLoading ? 'Cargando...' : 'Buscar'}
             </button>
+            {kardexProductId && (
+              <button
+                type="button"
+                onClick={() => { setKardexProductId(null); setKardexProductQuery(''); setKardexProductSuggestions([]); }}
+                style={{ marginLeft: '0.5rem' }}
+              >
+                ✕ Todos
+              </button>
+            )}
             <button type="button" onClick={() => void handleExportKardex()} disabled={kardexLoading || exportingKardex} style={{ marginLeft: '0.5rem' }}>
               {exportingKardex ? 'Exportando...' : 'Exportar Excel'}
             </button>

@@ -2854,7 +2854,7 @@ export function PurchasesView({
 
       {detailPreviewEntry && (
         <HtmlPreviewDialog
-          title="Detalle de compra"
+          title="Documento de compra A4"
           subtitle={`Ingreso #${detailPreviewEntry.id} | ${formatDateTime(detailPreviewEntry.issue_at)}`}
           html={buildPurchaseDetailHtml(detailPreviewEntry, { company: companyProfile })}
           variant="wide"
