@@ -650,6 +650,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
       customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
       currency_id: Number(form.currencyId),
       payment_method_id: Number(form.paymentMethodId),
+      notes: form.notes?.trim() || null,
       metadata: {
         defer_sunat_send: form.receiptSendMode === 'NO_SEND',
         table_label: form.documentKind === 'SALES_ORDER'
