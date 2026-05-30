@@ -3,6 +3,19 @@ import type { PurchasesLookups, StockEntryRow, StockEntryType } from '../types';
 import type { CompanyProfile } from '../../company/types';
 
 export type PurchasePriceTaxMode = 'EXCLUSIVE' | 'INCLUSIVE';
+type PurchaseCompanyBankAccount = {
+  bank_name?: string | null;
+  account_number?: string | null;
+  cci?: string | null;
+  account_holder?: string | null;
+};
+
+type PurchaseDetailCompany = Pick<CompanyProfile, 'tax_id' | 'legal_name' | 'trade_name' | 'address' | 'phone' | 'logo_url'> & {
+  email?: string | null;
+  company_description?: string | null;
+  show_payment_brand_icons?: boolean | null;
+  bank_accounts?: PurchaseCompanyBankAccount[] | null;
+};
 
 export type PurchaseEntryDraft = {
   key: string;
@@ -115,7 +128,7 @@ export function stockToneClass(stock: number): 'stock-chip--danger' | 'stock-chi
 
 export function buildPurchaseDetailHtml(
   entry: StockEntryRow,
-  options?: { company?: Pick<CompanyProfile, 'tax_id' | 'legal_name' | 'trade_name' | 'address' | 'phone' | 'logo_url'> | null }
+  options?: { company?: PurchaseDetailCompany | null }
 ): string {
   const escapeHtml = (value: string): string => value
     .replace(/&/g, '&amp;')
@@ -129,8 +142,8 @@ export function buildPurchaseDetailHtml(
   const companyTaxId = String(company?.tax_id || '').trim();
   const companyAddress = String(company?.address || '').trim();
   const companyPhone = String(company?.phone || '').trim();
-  const companyEmail = String((company as CompanyProfile | null)?.email || '').trim();
-  const companyDescription = String((company as CompanyProfile | null)?.company_description || '').trim();
+  const companyEmail = String(company?.email || '').trim();
+  const companyDescription = String(company?.company_description || '').trim();
   const logoUrl = String(company?.logo_url || '').trim();
   const logoHtml = logoUrl
     ? `<img src="${escapeHtml(logoUrl)}" alt="Logo" class="company-logo" />`
@@ -202,8 +215,8 @@ export function buildPurchaseDetailHtml(
     pushTributaryRow('Monto percepcion', `${Number(metadata.percepcion_rate_percent ?? 0).toFixed(2)}% / ${Number(metadata.percepcion_amount ?? 0).toFixed(2)}`);
   }
 
-  const bankAccounts = Array.isArray((company as CompanyProfile | null)?.bank_accounts)
-    ? ((company as CompanyProfile | null)?.bank_accounts ?? [])
+  const bankAccounts = Array.isArray(company?.bank_accounts)
+    ? (company?.bank_accounts ?? [])
     : [];
   const bankRows = bankAccounts
     .map((bank) => {
@@ -228,7 +241,7 @@ export function buildPurchaseDetailHtml(
     .filter((row) => row !== '')
     .join('');
 
-  const showPaymentBrands = (company as CompanyProfile | null)?.show_payment_brand_icons !== false;
+  const showPaymentBrands = company?.show_payment_brand_icons !== false;
   const paymentBrandsSection = showPaymentBrands
     ? `<div class="company-footer-logos">
         <div class="paybrand"><img src="/assets/payment-logos/yape-official.png" alt="Yape" /></div>
