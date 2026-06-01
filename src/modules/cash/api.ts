@@ -8,6 +8,7 @@ import type {
   OpenSessionPayload,
   PaginatedCashSessions,
   SessionDetailResponse,
+  UpdateMovementPayload,
 } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
@@ -117,6 +118,18 @@ export async function createCashMovement(
 ): Promise<{ message: string; movement: CashMovement }> {
   return apiClient.request('/api/cash/movements', {
     method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCashMovement(
+  accessToken: string,
+  movementId: number,
+  payload: UpdateMovementPayload
+): Promise<{ message: string; movement: CashMovement }> {
+  return apiClient.request(`/api/cash/movements/${movementId}`, {
+    method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   });

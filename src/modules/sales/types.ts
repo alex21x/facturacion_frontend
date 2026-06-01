@@ -330,6 +330,14 @@ export type SalesCustomerVehicle = {
   status: number;
 };
 
+export type SalesCustomerType = {
+  id: number;
+  name: string;
+  sunat_code: number;
+  sunat_abbr?: string | null;
+  is_active: boolean;
+};
+
 export type SalesLookups = {
   document_kinds: SalesDocumentKind[];
   currencies: SalesCurrency[];

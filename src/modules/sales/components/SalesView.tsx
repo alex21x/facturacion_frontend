@@ -20,6 +20,7 @@ import {
 import {
   convertCommercialDocument,
   createCommercialDocument,
+  createSalesCustomer,
   createCustomerVehicle,
   fetchCommercialDocuments,
   exportCommercialDocumentsExcel,
@@ -28,6 +29,7 @@ import {
   fetchCommercialDocumentPdf,
   fetchCommercialDocumentPrintHtml,
   fetchCustomerAutocomplete,
+  fetchCustomerTypes,
   fetchCustomerVehicles,
   fetchReferenceDocuments,
   fetchProductCommercialConfig,
@@ -59,6 +61,7 @@ import type {
   CreateDocumentForm,
   PaginationMeta,
   SalesCustomerSuggestion,
+  SalesCustomerType,
   SalesCustomerVehicle,
   SalesDraftItem,
   SalesLookups,
@@ -704,6 +707,7 @@ function sortDocumentsLatestFirst<T extends { id?: number | null; created_at?: s
 
 const SUNAT_OPERATION_WINDOW_DAYS = 3;
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
+const SUNAT_SENDING_STALE_MINUTES = 10;
 
 function parseDateOnlyToUtc(value: string | null | undefined): Date | null {
   const raw = String(value ?? '').trim();
@@ -858,7 +862,25 @@ function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: bo
   }
 
   const sunatUi = resolveSunatUiState(row);
-  return !sunatUi.isFinal && !['SENDING', 'PENDING_CONFIRMATION', 'EXPIRED_WINDOW'].includes(sunatUi.statusKey);
+  if (sunatUi.isFinal || sunatUi.statusKey === 'EXPIRED_WINDOW') {
+    return false;
+  }
+
+  if (sunatUi.statusKey === 'SENDING') {
+    const updatedAtRaw = String(row.updated_at ?? '').trim();
+    if (!updatedAtRaw) {
+      return false;
+    }
+
+    const updatedAt = new Date(updatedAtRaw);
+    if (Number.isNaN(updatedAt.getTime())) {
+      return false;
+    }
+
+    return (Date.now() - updatedAt.getTime()) >= SUNAT_SENDING_STALE_MINUTES * 60 * 1000;
+  }
+
+  return sunatUi.statusKey !== 'PENDING_CONFIRMATION';
 }
 
 function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocuments: boolean): boolean {
@@ -1338,6 +1360,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [customerVehicles, setCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
   const [loadingCustomerVehicles, setLoadingCustomerVehicles] = useState(false);
   const [showAddVehiclePopup, setShowAddVehiclePopup] = useState(false);
+  const [showQuickCustomerPopup, setShowQuickCustomerPopup] = useState(false);
+  const [customerTypesCatalog, setCustomerTypesCatalog] = useState<SalesCustomerType[]>([]);
+  const [loadingCustomerTypesCatalog, setLoadingCustomerTypesCatalog] = useState(false);
+  const [submittingQuickCustomer, setSubmittingQuickCustomer] = useState(false);
+  const [quickCustomerName, setQuickCustomerName] = useState('');
+  const [quickCustomerAddress, setQuickCustomerAddress] = useState('');
+  const [quickCustomerPhone, setQuickCustomerPhone] = useState('');
+  const [quickCustomerUseAutoDoc8, setQuickCustomerUseAutoDoc8] = useState(true);
+  const [quickCustomerDoc8, setQuickCustomerDoc8] = useState('99999999');
   const [newVehiclePlate, setNewVehiclePlate] = useState('');
   const [newVehicleBrand, setNewVehicleBrand] = useState('');
   const [newVehicleModel, setNewVehicleModel] = useState('');
@@ -1757,6 +1788,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return subtitle;
   }
 
+  function invalidateDocumentPreviewCache(documentId: number): void {
+    const cache = printHtmlCacheRef.current;
+    cache.delete(`${documentId}:a4`);
+    cache.delete(`${documentId}:ticket`);
+    previewSubtitleCacheRef.current.delete(documentId);
+  }
   async function fetchPrintHtmlCached(documentId: number, format: 'ticket' | 'a4'): Promise<string> {
     const key = `${documentId}:${format}`;
     const cache = printHtmlCacheRef.current;
@@ -3901,6 +3938,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       updateDocumentInList(row.id, {
         sunat_status: nextSunatStatus,
       });
+      invalidateDocumentPreviewCache(row.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo enviar el comprobante a SUNAT');
 
@@ -4239,6 +4277,119 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }
   }
 
+  async function ensureCustomerTypesCatalog(): Promise<SalesCustomerType[]> {
+    if (customerTypesCatalog.length > 0) {
+      return customerTypesCatalog;
+    }
+
+    setLoadingCustomerTypesCatalog(true);
+    try {
+      const rows = await fetchCustomerTypes(accessToken);
+      setCustomerTypesCatalog(rows);
+      return rows;
+    } finally {
+      setLoadingCustomerTypesCatalog(false);
+    }
+  }
+
+  function resolveDniCustomerTypeId(rows: SalesCustomerType[]): number | null {
+    const bySunatCode = rows.find((row) => Number(row.sunat_code) === 1 && Boolean(row.is_active));
+    if (bySunatCode) {
+      return bySunatCode.id;
+    }
+
+    const active = rows.find((row) => Boolean(row.is_active));
+    return active ? active.id : null;
+  }
+
+  async function handleQuickCreateCustomer() {
+    const legalName = quickCustomerName.trim();
+    if (!legalName) {
+      setMessage('Ingrese nombre o razón social para crear el cliente rápido.');
+      return;
+    }
+
+    setSubmittingQuickCustomer(true);
+    setMessage('');
+
+    try {
+      const types = await ensureCustomerTypesCatalog();
+      const customerTypeId = resolveDniCustomerTypeId(types);
+      if (!customerTypeId) {
+        throw new Error('No se encontró un tipo de cliente activo para documento de 8 dígitos.');
+      }
+
+      let createdDocNumber: string | null = null;
+      if (quickCustomerUseAutoDoc8) {
+        let nextCandidate = Math.max(1, Math.min(99999999, Number(quickCustomerDoc8) || 99999999));
+        let created = false;
+
+        while (nextCandidate >= 1) {
+          const candidate = String(nextCandidate).padStart(8, '0');
+          try {
+            await createSalesCustomer(accessToken, {
+              doc_type: '1',
+              customer_type_id: customerTypeId,
+              doc_number: candidate,
+              legal_name: legalName,
+              address: quickCustomerAddress.trim() || null,
+              phone: quickCustomerPhone.trim() || null,
+              status: 1,
+            });
+            createdDocNumber = candidate;
+            setQuickCustomerDoc8(String(Math.max(1, nextCandidate - 1)).padStart(8, '0'));
+            created = true;
+            break;
+          } catch (error) {
+            const text = error instanceof Error ? error.message : '';
+            if (!text.toLowerCase().includes('existe')) {
+              throw error;
+            }
+            nextCandidate -= 1;
+          }
+        }
+
+        if (!created) {
+          throw new Error('No hay correlativos disponibles para documento automático de 8 dígitos.');
+        }
+      } else {
+        const customDoc = quickCustomerDoc8.trim();
+        if (!/^\d{8}$/.test(customDoc)) {
+          throw new Error('El documento rápido debe tener 8 dígitos.');
+        }
+
+        await createSalesCustomer(accessToken, {
+          doc_type: '1',
+          customer_type_id: customerTypeId,
+          doc_number: customDoc,
+          legal_name: legalName,
+          address: quickCustomerAddress.trim() || null,
+          phone: quickCustomerPhone.trim() || null,
+          status: 1,
+        });
+        createdDocNumber = customDoc;
+      }
+
+      if (createdDocNumber) {
+        const results = await fetchCustomerAutocomplete(accessToken, createdDocNumber);
+        const picked = results.find((row) => String(row.doc_number ?? '').trim() === createdDocNumber) ?? results[0] ?? null;
+        if (picked) {
+          chooseCustomer(picked);
+        }
+      }
+
+      setQuickCustomerName('');
+      setQuickCustomerAddress('');
+      setQuickCustomerPhone('');
+      setShowQuickCustomerPopup(false);
+      setMessage('Cliente rápido creado correctamente.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo crear cliente rápido');
+    } finally {
+      setSubmittingQuickCustomer(false);
+    }
+  }
+
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
@@ -4496,6 +4647,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           metadata: normalizedDocumentMetadata,
           items: itemsPayload,
         });
+
+        invalidateDocumentPreviewCache(targetDocumentId);
 
         const nextFilter = resolveViewFilterForDocumentKind(
           currentEditingContext?.documentKind ?? effectiveDocumentKind
@@ -4792,7 +4945,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const convertedId = Number((conversionResponse as { data?: { id?: number } })?.data?.id ?? 0);
 
+      invalidateDocumentPreviewCache(source.id);
+
       if (convertedId > 0) {
+        invalidateDocumentPreviewCache(convertedId);
         setPostConvertPrintModal({
           title: 'Documento convertido',
           subtitle: 'Elige formato de impresion',
@@ -4971,6 +5127,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         status: 'VOID',
         sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
       });
+      invalidateDocumentPreviewCache(row.id);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
       setMessage(text);
@@ -5057,6 +5214,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       updateDocumentInList(row.id, {
         sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
       });
+      invalidateDocumentPreviewCache(row.id);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo comunicar la baja SUNAT';
       setMessage(text);
@@ -5753,6 +5911,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 disabled={loading || resolvingCustomerDocument}
               >
                 {resolvingCustomerDocument ? 'Consultando...' : 'Consultar DNI/RUC'}
+              </button>
+              <button
+                type="button"
+                className="btn-mini sales-customer-resolve-btn"
+                onClick={() => setShowQuickCustomerPopup(true)}
+                disabled={loading}
+              >
+                Cliente rápido
               </button>
             </div>
             <input
@@ -6821,6 +6987,63 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </aside>
         </div>
       </form>
+
+      {showQuickCustomerPopup && typeof document !== 'undefined' && createPortal(
+        <div className="sales-vehicle-modal-backdrop">
+          <div className="sales-vehicle-modal">
+            <h4 className="sales-vehicle-modal-title">Crear cliente rápido</h4>
+            <p className="sales-vehicle-modal-copy">Ideal para clientes eventuales (ej. colegios) con documento automático de 8 dígitos.</p>
+            <div>
+              <label className="sales-vehicle-modal-field">
+                <span>Nombre / Razón social *</span>
+                <input type="text" maxLength={180} value={quickCustomerName} onChange={(e) => setQuickCustomerName(e.target.value)} placeholder="Ej. Colegio Santa Rosa" />
+              </label>
+              <label className="sales-vehicle-modal-field">
+                <span>Dirección</span>
+                <input type="text" maxLength={250} value={quickCustomerAddress} onChange={(e) => setQuickCustomerAddress(e.target.value)} placeholder="Opcional" />
+              </label>
+              <label className="sales-vehicle-modal-field">
+                <span>Teléfono</span>
+                <input type="text" maxLength={40} value={quickCustomerPhone} onChange={(e) => setQuickCustomerPhone(e.target.value)} placeholder="Opcional" />
+              </label>
+              <label className="sales-vehicle-modal-field">
+                <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={quickCustomerUseAutoDoc8}
+                    onChange={(e) => setQuickCustomerUseAutoDoc8(e.target.checked)}
+                  />
+                  Documento automático 8 dígitos (decreciente)
+                </span>
+              </label>
+              <label className="sales-vehicle-modal-field sales-vehicle-modal-field--last">
+                <span>Documento 8 dígitos</span>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={8}
+                  value={quickCustomerDoc8}
+                  onChange={(e) => setQuickCustomerDoc8(e.target.value.replace(/\D+/g, '').slice(0, 8))}
+                  disabled={quickCustomerUseAutoDoc8}
+                  placeholder="99999999"
+                />
+              </label>
+              <div className="sales-vehicle-modal-actions">
+                <button type="button" className="btn-mini sales-vehicle-modal-btn-cancel" onClick={() => setShowQuickCustomerPopup(false)}>Cancelar</button>
+                <button
+                  type="button"
+                  className="btn-mini sales-vehicle-modal-btn-save"
+                  disabled={submittingQuickCustomer || loadingCustomerTypesCatalog}
+                  onClick={() => void handleQuickCreateCustomer()}
+                >
+                  {submittingQuickCustomer ? 'Guardando...' : 'Guardar cliente'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
       {showAddVehiclePopup && typeof document !== 'undefined' && createPortal(
         <div className="sales-vehicle-modal-backdrop">

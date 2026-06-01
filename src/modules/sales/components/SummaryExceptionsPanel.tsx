@@ -34,6 +34,8 @@ const SUMMARY_EXCEPTION_STATUS_OPTIONS: Array<{ value: DailySummaryStatus | ''; 
   { value: 'SENDING', label: 'Enviando' },
 ];
 
+const SUNAT_SENDING_STALE_MINUTES = 10;
+
 function normalizeSunatTicket(ticket: string | null | undefined): string | null {
   const value = String(ticket ?? '').trim();
   if (!value) return null;
@@ -57,9 +59,20 @@ function formatDateTime(value?: string | null): string {
   }).format(date);
 }
 
+function isStaleSending(status: DailySummaryStatus, updatedAt: string | null | undefined): boolean {
+  if (status !== 'SENDING') return false;
+
+  const updatedAtMs = new Date(String(updatedAt ?? '')).getTime();
+  if (Number.isNaN(updatedAtMs)) return false;
+
+  return Date.now() - updatedAtMs >= SUNAT_SENDING_STALE_MINUTES * 60 * 1000;
+}
+
 function canResendSummary(summary: DailySummaryListItem): boolean {
   const base = ['DRAFT', 'ERROR', 'REJECTED'].includes(summary.status);
   if (base) return true;
+
+  if (isStaleSending(summary.status, summary.updated_at)) return true;
 
   return summary.status === 'SENT' && normalizeSunatTicket(summary.sunat_ticket) === null;
 }

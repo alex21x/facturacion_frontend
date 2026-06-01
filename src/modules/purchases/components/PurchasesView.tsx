@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import '../../../styles/modules/purchases.css';
-import { fetchInventoryLots, fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
+import { createInventoryProduct, fetchInventoryLots, fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
 import type { InventoryLotRow, InventoryProduct, InventoryStockRow } from '../../inventory/types';
 import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, fetchSuppliersCatalog, importSuppliersBulk, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry, type SupplierBulkImportRow } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
@@ -53,7 +54,7 @@ type SupplierSuggestion = {
   doc_number: string;
   name: string;
   address: string | null;
-  phone?: string | null;
+  phone?: string | null;  
   source: string;
 };
 
@@ -203,6 +204,37 @@ function resolveReportEntryGrandTotal(entry: StockEntryRow): number {
   return Math.max(grossFromItems - discountFromMetadata, 0);
 }
 
+function resolveReportEntryGrandTotal(entry: StockEntryRow): number {
+  const details = Array.isArray(entry.items) ? entry.items : [];
+  const reportedTotal = Number(entry.total_amount ?? 0);
+
+  if (details.length === 0) {
+    return Number.isFinite(reportedTotal) ? reportedTotal : 0;
+  }
+
+  const grossFromItems = details.reduce((acc, item) => {
+    const lineTotal = Number(item.line_total ?? 0);
+    if (Number.isFinite(lineTotal)) {
+      return acc + lineTotal;
+    }
+
+    const subtotal = Number(item.subtotal ?? 0);
+    const taxAmount = Number(item.tax_amount ?? 0);
+    return acc + (Number.isFinite(subtotal) ? subtotal : 0) + (Number.isFinite(taxAmount) ? taxAmount : 0);
+  }, 0);
+
+  const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
+  const itemDiscountFromMetadata = Number(metadata.item_discount_total ?? 0);
+  const globalDiscountFromMetadata = Number(metadata.discount_total ?? 0);
+  const discountFromMetadata = Math.max(
+    0,
+    (Number.isFinite(itemDiscountFromMetadata) ? itemDiscountFromMetadata : 0)
+      + (Number.isFinite(globalDiscountFromMetadata) ? globalDiscountFromMetadata : 0)
+  );
+
+  return Math.max(grossFromItems - discountFromMetadata, 0);
+}
+
 export function PurchasesView({
   accessToken,
   warehouseId,
@@ -212,7 +244,7 @@ export function PurchasesView({
 }: PurchasesViewProps) {
   const productInputRef = useRef<HTMLInputElement | null>(null);
   const supplierInputRef = useRef<HTMLInputElement | null>(null);
-  const supplierImportFileInputRef = useRef<HTMLInputElement | null>(null);
+  const supplierImportFileInputRef = useRef<HTMLInputElement | null>(null);  
   const draftDatesPopoverRef = useRef<HTMLDivElement | null>(null);
   const focusedReportRowRef = useRef<HTMLTableRowElement | null>(null);
   const [companyProfile, setCompanyProfile] = useState<CompanyProfile | null>(null);
@@ -271,6 +303,15 @@ export function PurchasesView({
   const [resolvingSupplierDoc, setResolvingSupplierDoc] = useState(false);
   const [supplierImporting, setSupplierImporting] = useState(false);
   const [supplierExporting, setSupplierExporting] = useState(false);
+  const [showQuickProductPopup, setShowQuickProductPopup] = useState(false);
+  const [quickProductName, setQuickProductName] = useState('');
+  const [quickProductSku, setQuickProductSku] = useState('');
+  const [quickProductNature, setQuickProductNature] = useState<'PRODUCT' | 'SUPPLY'>('PRODUCT');
+  const [quickProductCostPrice, setQuickProductCostPrice] = useState('0');
+  const [quickProductSalePrice, setQuickProductSalePrice] = useState('0');
+  const [quickProductInitialQty, setQuickProductInitialQty] = useState('0');
+  const [quickProductStockNote, setQuickProductStockNote] = useState('Alta rápida desde Compras');
+  const [quickProductSaving, setQuickProductSaving] = useState(false);
 
   const isRestaurant = (uiProfile ?? ((activeVerticalCode ?? '').toUpperCase() === 'RESTAURANT' ? 'RESTAURANT' : 'DEFAULT')) === 'RESTAURANT';
 
@@ -424,6 +465,127 @@ export function PurchasesView({
       window.clearTimeout(timer);
     };
   }, [accessToken, supplierInputFocused, supplierReference]);
+
+  async function downloadSupplierTemplate() {
+    try {
+      const XLSX = await import('xlsx');
+      const workbook = XLSX.utils.book_new();
+
+      const dataSheet = XLSX.utils.aoa_to_sheet([
+        SUPPLIER_BULK_TEMPLATE_HEADERS,
+        ['RUC', '20123456789', 'Proveedor ejemplo SAC', 'Av. Principal 123 - Lima', '987654321', 'import'],
+      ]);
+      dataSheet['!cols'] = [
+        { wch: 18 },
+        { wch: 22 },
+        { wch: 42 },
+        { wch: 42 },
+        { wch: 18 },
+        { wch: 14 },
+      ];
+
+      const instructionsSheet = XLSX.utils.aoa_to_sheet([
+        ['CAMPO', 'REGLA'],
+        ['TIPO_DOCUMENTO', 'Opcional: RUC, DNI, CE, PAS. Si va vacío se infiere por longitud del documento.'],
+        ['NUMERO_DOCUMENTO', 'Obligatorio. No se importan duplicados por documento.'],
+        ['RAZON_SOCIAL', 'Obligatorio.'],
+        ['DIRECCION', 'Opcional.'],
+        ['TELEFONO', 'Opcional.'],
+        ['ORIGEN', 'Opcional. Por defecto: import.'],
+      ]);
+      instructionsSheet['!cols'] = [{ wch: 24 }, { wch: 90 }];
+
+      XLSX.utils.book_append_sheet(workbook, dataSheet, 'PROVEEDORES');
+      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'INSTRUCCIONES');
+      XLSX.writeFile(workbook, 'formato_importacion_proveedores.xlsx');
+      setMessage('Formato de proveedores descargado.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo descargar formato de proveedores.');
+    }
+  }
+
+  async function handleSupplierImportFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    setSupplierImporting(true);
+    setMessage('');
+
+    try {
+      const XLSX = await import('xlsx');
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const firstSheet = workbook.Sheets[firstSheetName];
+
+      if (!firstSheet) {
+        throw new Error('El archivo no contiene una hoja válida.');
+      }
+
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+      const rows = normalizeSupplierImportRows(rawRows);
+
+      if (rows.length === 0) {
+        throw new Error('No se encontraron filas válidas para importar.');
+      }
+
+      let created = 0;
+      let skipped = 0;
+      let firstError = '';
+      const chunks: SupplierBulkImportRow[][] = [];
+      for (let index = 0; index < rows.length; index += 500) {
+        chunks.push(rows.slice(index, index + 500));
+      }
+
+      for (const chunk of chunks) {
+        const response = await importSuppliersBulk(accessToken, chunk);
+        created += Number(response.summary.created ?? 0);
+        skipped += Number(response.summary.skipped ?? 0);
+        if (!firstError && response.errors.length > 0) {
+          firstError = response.errors[0].message;
+        }
+      }
+
+      setMessage(`Importación proveedores: ${created} creados, ${skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo importar proveedores.');
+    } finally {
+      setSupplierImporting(false);
+    }
+  }
+
+  async function exportSuppliersXlsx() {
+    setSupplierExporting(true);
+    setMessage('');
+
+    try {
+      const rows = await fetchSuppliersCatalog(accessToken, { limit: 10000 });
+      const XLSX = await import('xlsx');
+
+      const sheetRows = rows.map((row) => ({
+        TIPO_DOCUMENTO: row.doc_type ?? '',
+        NUMERO_DOCUMENTO: row.doc_number ?? '',
+        RAZON_SOCIAL: row.name ?? '',
+        DIRECCION: row.address ?? '',
+        TELEFONO: row.phone ?? '',
+        ORIGEN: row.source ?? '',
+      }));
+
+      const workbook = XLSX.utils.book_new();
+      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Proveedores');
+      XLSX.writeFile(workbook, `proveedores_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+      setMessage(`Exportación completada: ${rows.length} proveedores.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo exportar proveedores.');
+    } finally {
+      setSupplierExporting(false);
+    }
+  }
 
   async function downloadSupplierTemplate() {
     try {
@@ -919,6 +1081,79 @@ export function PurchasesView({
       setMessage(error instanceof Error ? error.message : 'No se pudo cargar compras y stock');
     } finally {
       setIsLoading(false);
+    }
+  }
+
+  async function reloadProductsCatalogAndPick(productId: number) {
+    const refreshed = await fetchInventoryProducts(accessToken, { status: 1 });
+    const stockable = refreshed.filter((row) => row.is_stockable);
+    setProducts(stockable);
+
+    const picked = stockable.find((row) => row.id === productId) ?? null;
+    if (picked) {
+      chooseProductForDraft(picked);
+    }
+  }
+
+  function openQuickProductPopup() {
+    setQuickProductName(draftItem.product_query.trim());
+    setQuickProductSku('');
+    setQuickProductNature(isRestaurant ? 'SUPPLY' : 'PRODUCT');
+    setQuickProductCostPrice(draftItem.unit_cost || '0');
+    setQuickProductSalePrice('0');
+    setQuickProductInitialQty((Number(draftItem.qty) > 0 ? String(draftItem.qty) : '0'));
+    setQuickProductStockNote('Alta rápida desde Compras');
+    setShowQuickProductPopup(true);
+  }
+
+  async function handleQuickCreateProduct() {
+    const name = quickProductName.trim();
+    if (!name) {
+      setMessage('Ingresa un nombre para crear el producto rápido.');
+      return;
+    }
+
+    const costPrice = Number(quickProductCostPrice || 0);
+    const salePrice = Number(quickProductSalePrice || 0);
+    const initialQty = Number(quickProductInitialQty || 0);
+    if (
+      !Number.isFinite(costPrice)
+      || costPrice < 0
+      || !Number.isFinite(salePrice)
+      || salePrice < 0
+      || !Number.isFinite(initialQty)
+      || initialQty < 0
+    ) {
+      setMessage('Costo, precio de venta y stock inicial deben ser números válidos mayores o iguales a cero.');
+      return;
+    }
+
+    setQuickProductSaving(true);
+    setMessage('');
+    try {
+      const created = await createInventoryProduct(accessToken, {
+        name,
+        sku: quickProductSku.trim() || null,
+        product_nature: quickProductNature,
+        cost_price: costPrice,
+        sale_price: salePrice,
+        is_stockable: true,
+        lot_tracking: false,
+        has_expiration: false,
+        status: 1,
+        initial_qty: initialQty,
+        initial_cost: costPrice,
+        warehouse_id: warehouseId,
+        stock_note: quickProductStockNote.trim() || null,
+      });
+
+      await reloadProductsCatalogAndPick(created.id);
+      setShowQuickProductPopup(false);
+      setMessage('Producto creado y seleccionado en el borrador.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo crear el producto rápido');
+    } finally {
+      setQuickProductSaving(false);
     }
   }
 
@@ -1970,7 +2205,24 @@ export function PurchasesView({
                   {resolvingSupplierDoc ? 'Consultando...' : 'Consultar DNI/RUC'}
                 </button>
               </div>
+              <div className="purchases-supplier-tools">
+                <button
+                  type="button"
+                  className="btn-mini"
+                  onClick={() => void resolveSupplierFromPadron()}
+                  disabled={resolvingSupplierDoc}
+                >
+                  {resolvingSupplierDoc ? 'Consultando...' : 'Consultar DNI/RUC'}
+                </button>
+              </div>
             </div>
+            <input
+              ref={supplierImportFileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              style={{ display: 'none' }}
+              onChange={(event) => void handleSupplierImportFileChange(event)}
+            />
             <input
               ref={supplierImportFileInputRef}
               type="file"
@@ -2272,8 +2524,13 @@ export function PurchasesView({
 
             <div className="sales-grid-main">
               <div className={`sales-grid-row sales-grid-row-item tax-on purchases-entry-row ${(purchaseItemDiscountEnabled || purchaseFreeOperationEnabled) ? 'has-line-tools' : ''}`}>
-                <label className="with-suggest sales-field-product">
-                  Producto
+                <label className="with-suggest sales-field-product purchases-quick-product-field">
+                  <span className="purchases-quick-product-field-head">
+                    <span>Producto</span>
+                    <button type="button" className="btn-mini purchases-quick-product-trigger" onClick={openQuickProductPopup}>
+                      Crear producto rápido
+                    </button>
+                  </span>
                   <input
                     ref={productInputRef}
                     value={draftItem.product_query}
@@ -2891,6 +3148,128 @@ export function PurchasesView({
           variant="wide"
           onClose={() => setDetailPreviewEntry(null)}
         />
+      )}
+
+      {showQuickProductPopup && typeof document !== 'undefined' && createPortal(
+        <div className="purchases-quick-product-modal-overlay" role="dialog" aria-modal="true" onClick={() => setShowQuickProductPopup(false)}>
+          <div className="purchases-quick-product-modal-card" onClick={(event) => event.stopPropagation()}>
+            <header className="purchases-quick-product-modal-head">
+              <div>
+              <h4>Crear nuevo producto rápido</h4>
+                <p className="purchases-quick-product-modal-copy">Se registrará en catálogo y se seleccionará automáticamente en la línea de compra.</p>
+              </div>
+              <button
+                type="button"
+                className="purchases-quick-product-modal-close"
+                onClick={() => setShowQuickProductPopup(false)}
+                aria-label="Cerrar"
+                disabled={quickProductSaving}
+              >
+                ×
+              </button>
+            </header>
+
+            <label className="purchases-quick-product-field-control">
+              <span>Nombre *</span>
+              <input
+                type="text"
+                maxLength={180}
+                value={quickProductName}
+                onChange={(event) => setQuickProductName(event.target.value)}
+                placeholder="Ej. Aceite 20W50"
+              />
+            </label>
+
+            <div className="purchases-quick-product-modal-grid">
+              <label className="purchases-quick-product-field-control">
+                <span>SKU</span>
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={quickProductSku}
+                  onChange={(event) => setQuickProductSku(event.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+              <label className="purchases-quick-product-field-control">
+                <span>Naturaleza</span>
+                <select
+                  value={quickProductNature}
+                  onChange={(event) => setQuickProductNature(event.target.value as 'PRODUCT' | 'SUPPLY')}
+                >
+                  <option value="PRODUCT">Producto</option>
+                  <option value="SUPPLY">Insumo</option>
+                </select>
+              </label>
+            </div>
+
+            <div className="purchases-quick-product-modal-grid">
+              <label className="purchases-quick-product-field-control">
+                <span>Costo</span>
+                <input
+                  type="number"
+                  step="0.000001"
+                  min="0"
+                  value={quickProductCostPrice}
+                  onChange={(event) => setQuickProductCostPrice(event.target.value)}
+                />
+              </label>
+              <label className="purchases-quick-product-field-control">
+                <span>Precio venta</span>
+                <input
+                  type="number"
+                  step="0.000001"
+                  min="0"
+                  value={quickProductSalePrice}
+                  onChange={(event) => setQuickProductSalePrice(event.target.value)}
+                />
+              </label>
+            </div>
+
+            <div className="purchases-quick-product-modal-grid">
+              <label className="purchases-quick-product-field-control">
+                <span>Stock inicial inmediato</span>
+                <input
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value={quickProductInitialQty}
+                  onChange={(event) => setQuickProductInitialQty(event.target.value)}
+                />
+              </label>
+              <label className="purchases-quick-product-field-control">
+                <span>Nota de trazabilidad</span>
+                <input
+                  type="text"
+                  maxLength={255}
+                  value={quickProductStockNote}
+                  onChange={(event) => setQuickProductStockNote(event.target.value)}
+                  placeholder="Movimiento de stock inicial"
+                />
+              </label>
+            </div>
+
+            {warehouseId === null && Number(quickProductInitialQty || 0) > 0 && (
+              <p className="purchases-quick-product-modal-warning">
+                El almacén actual no está definido; deja stock inicial en 0 o selecciona un almacén antes de guardar.
+              </p>
+            )}
+
+            <div className="purchases-quick-product-modal-actions">
+              <button type="button" onClick={() => setShowQuickProductPopup(false)} disabled={quickProductSaving}>
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleQuickCreateProduct()}
+                disabled={quickProductSaving || (warehouseId === null && Number(quickProductInitialQty || 0) > 0)}
+              >
+                {quickProductSaving ? 'Guardando...' : 'Guardar producto'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
       {partialReceiveTarget && (

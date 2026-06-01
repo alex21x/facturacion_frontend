@@ -1542,6 +1542,15 @@ function resolveCashMovementLabel(movement: CashReportMovement, origin: 'manual'
   return origin === 'sales' ? `${base} por venta` : `${base} manual`;
 }
 
+function isCashPaymentMethodName(value: string | null | undefined): boolean {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized.includes('efect') || normalized.includes('cash') || normalized.includes('contado');
+}
+
 export type CashReportPrintData = {
   cashRegisterCode: string;
   cashRegisterName: string;
@@ -1748,6 +1757,16 @@ export function buildCashReportHtml80mm(
   const totalProductMarginCommercialPercent = totalProductGross > 0 ? (totalProductMarginCommercial / totalProductGross) * 100 : 0;
   const movements = data.movements ?? [];
   const cashMovementsByOrigin = splitCashMovementsByOrigin(movements);
+  const manualInTotal = cashMovementsByOrigin.manual
+    .filter((m) => m.movement_type === 'IN')
+    .reduce((s, m) => s + m.amount, 0);
+  const manualOutTotal = cashMovementsByOrigin.manual
+    .filter((m) => m.movement_type === 'OUT')
+    .reduce((s, m) => s + m.amount, 0);
+  const salesCashInTotal = data.paymentMethodBreakdown
+    .filter((pm) => isCashPaymentMethodName(pm.payment_method_name))
+    .reduce((sum, pm) => sum + Number(pm.total_amount || 0), 0);
+  const effectiveCashTotal = data.openingBalance + manualInTotal - manualOutTotal + salesCashInTotal;
   const renderMovementRows = (rows: CashReportMovement[], origin: 'manual' | 'sales') => rows.length > 0
     ? rows.map((m) => `
                 <tr>
@@ -1824,11 +1843,12 @@ export function buildCashReportHtml80mm(
           <div class="section">
             <div class="section-title">SALDOS</div>
             <div class="row"><div class="label">Saldo Inicial:</div><div class="value">S/ ${formatMoney(data.openingBalance)}</div></div>
-            <div class="row"><div class="label">Entradas (+):</div><div class="value">S/ ${formatMoney(data.totalIn)}</div></div>
-            <div class="row"><div class="label">Salidas (-):</div><div class="value">S/ ${formatMoney(data.totalOut)}</div></div>
+            <div class="row"><div class="label">Mov. efectivo (+):</div><div class="value">S/ ${formatMoney(manualInTotal)}</div></div>
+            <div class="row"><div class="label">Mov. efectivo (-):</div><div class="value">S/ ${formatMoney(manualOutTotal)}</div></div>
+            <div class="row"><div class="label">Ventas efectivo:</div><div class="value">S/ ${formatMoney(salesCashInTotal)}</div></div>
             ${showNetMargin ? `<div class="row"><div class="label">Margen neto:</div><div class="value">S/ ${formatMoney(totalProductMargin)}</div></div>` : ''}
             <div class="row"><div class="label">Margen comercial:</div><div class="value">S/ ${formatMoney(totalProductMarginCommercial)}</div></div>
-            <div class="row"><div class="label">Esperado:</div><div class="value">S/ ${formatMoney(data.expectedBalance)}</div></div>
+            <div class="row"><div class="label">Total efectivo:</div><div class="value">S/ ${formatMoney(effectiveCashTotal)}</div></div>
             <div class="row" style="font-weight:700;border-top:1px solid #000;padding-top:1mm"><div class="label">Real:</div><div class="value">S/ ${formatMoney(data.closingBalance)}</div></div>
             ${data.difference !== 0 ? `<div class="row" style="color:${data.difference >= 0 ? '#008000' : '#cc0000'}"><div class="label">Diferencia:</div><div class="value">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</div></div>` : ''}
           </div>
@@ -1864,16 +1884,6 @@ export function buildCashReportHtml80mm(
               <tbody>
                 ${renderMovementRows(cashMovementsByOrigin.manual, 'manual')}
                 <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="section">
-            <div class="section-title">MOVIMIENTOS POR VENTAS</div>
-            <table>
-              <thead><tr><th>Tipo</th><th class="ta-r">Monto</th><th>Descripción</th></tr></thead>
-              <tbody>
-                ${renderMovementRows(cashMovementsByOrigin.sales, 'sales')}
-                <tr class="total-row"><td>TOTAL VENTAS</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.sales.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
               </tbody>
             </table>
           </div>` : ''}
@@ -1994,6 +2004,16 @@ export function buildCashReportHtmlA4(
   const totalProductMarginCommercialPercent = totalProductGross > 0 ? (totalProductMarginCommercial / totalProductGross) * 100 : 0;
   const movements = data.movements ?? [];
   const cashMovementsByOrigin = splitCashMovementsByOrigin(movements);
+  const manualInTotal = cashMovementsByOrigin.manual
+    .filter((m) => m.movement_type === 'IN')
+    .reduce((s, m) => s + m.amount, 0);
+  const manualOutTotal = cashMovementsByOrigin.manual
+    .filter((m) => m.movement_type === 'OUT')
+    .reduce((s, m) => s + m.amount, 0);
+  const salesCashInTotal = data.paymentMethodBreakdown
+    .filter((pm) => isCashPaymentMethodName(pm.payment_method_name))
+    .reduce((sum, pm) => sum + Number(pm.total_amount || 0), 0);
+  const effectiveCashTotal = data.openingBalance + manualInTotal - manualOutTotal + salesCashInTotal;
   const renderMovementRows = (rows: CashReportMovement[], origin: 'manual' | 'sales') => rows.length > 0
     ? rows.map((m) => `
                 <tr>
@@ -2063,7 +2083,7 @@ export function buildCashReportHtmlA4(
 
           <div class="summary-grid">
             <article class="metric"><span>Saldo inicial</span><strong>S/ ${formatMoney(data.openingBalance)}</strong></article>
-            <article class="metric"><span>Saldo esperado</span><strong>S/ ${formatMoney(data.expectedBalance)}</strong></article>
+            <article class="metric"><span>Total efectivo</span><strong>S/ ${formatMoney(effectiveCashTotal)}</strong></article>
             <article class="metric"><span>Saldo real</span><strong>S/ ${formatMoney(data.closingBalance)}</strong></article>
             <article class="metric"><span>Diferencia</span><strong style="color:${data.difference >= 0 ? '#059669' : '#dc2626'}">${data.difference > 0 ? '+' : ''}S/ ${formatMoney(data.difference)}</strong></article>
             ${showNetMargin ? `<article class="metric"><span>Margen neto</span><strong style="color:${totalProductMargin >= 0 ? '#0f766e' : '#dc2626'}">S/ ${formatMoney(totalProductMargin)}</strong></article>` : ''}
@@ -2100,16 +2120,6 @@ export function buildCashReportHtmlA4(
               <tbody>
                 ${renderMovementRows(cashMovementsByOrigin.manual, 'manual')}
                 <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="section">
-            <div class="section-title">MOVIMIENTOS POR VENTAS</div>
-            <table>
-              <thead><tr><th style="width:15%">Tipo de movimiento</th><th class="ta-r" style="width:20%">Monto</th><th style="width:65%">Descripción</th></tr></thead>
-              <tbody>
-                ${renderMovementRows(cashMovementsByOrigin.sales, 'sales')}
-                <tr class="total-row"><td>TOTAL VENTAS</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.sales.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
               </tbody>
             </table>
           </div>` : ''}

@@ -63,6 +63,8 @@ const STATUS_LABEL: Record<GreGuideStatus, string> = {
   CANCELLED: 'Anulado',
 };
 
+const SUNAT_SENDING_STALE_MINUTES = 10;
+
 const DEFAULT_LOOKUPS: GreLookups = {
   guide_types: [
     { code: 'REMITENTE', sunat_code: '01', name: 'Guia de remitente' },
@@ -156,6 +158,15 @@ function normalizeGreBridgeEndpoint(endpoint: string | null | undefined): string
   return value
     .replace(/send_xmlGuiaRemisionGRE/gi, 'send_guiaRemision')
     .replace(/send_statusTicketGuiaRemisionGRE/gi, 'send_statusTicketGRE');
+}
+
+function isStaleSending(status: GreGuideStatus, updatedAt: string | null | undefined): boolean {
+  if (status !== 'SENDING') return false;
+
+  const updatedAtMs = new Date(String(updatedAt ?? '')).getTime();
+  if (Number.isNaN(updatedAtMs)) return false;
+
+  return Date.now() - updatedAtMs >= SUNAT_SENDING_STALE_MINUTES * 60 * 1000;
 }
 
 function isGreStatusBridgeMethod(method: string | null | undefined): boolean {
@@ -1167,7 +1178,8 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
                     sunatStatus === 'RECHAZADO'         ? 'Rechazado' :
                     sunatStatus === 'PENDIENTE_TICKET'  ? 'Ticket pendiente' :
                     sunatStatus === 'SIN_ENVIO'         ? 'Sin envio' : sunatStatus;
-                  const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status);
+                  const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status)
+                    || isStaleSending(row.status, row.updated_at);
                   const canTicket = row.status === 'SENT' || (!!row.sunat_ticket && !['ACCEPTED', 'CANCELLED'].includes(row.status));
                   const canEditRow = !['ACCEPTED', 'CANCELLED'].includes(row.status);
                   return (

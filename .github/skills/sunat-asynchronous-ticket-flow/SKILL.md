@@ -17,6 +17,9 @@ This skill covers:
 ## Core rule
 A ticket is not a final approval.
 
+If the bridge returns a null-like or empty response, the operation must not remain blocked in `SENDING`.
+Move the record to a recoverable state (`ERROR` or `PENDING_CONFIRMATION` depending on module contract) and keep manual retry available.
+
 If the bridge returns a ticket, the system must:
 1. Persist the request as a transitory state.
 2. Store ticket, HTTP code, raw response, and endpoint.
@@ -31,6 +34,39 @@ If the bridge returns a ticket, the system must:
 5. Interpret the final code and update the document state atomically.
 6. Apply inventory and cash effects only if the final state requires it.
 
+## Per-company automatic reconcile (Admin matrix)
+This project supports per-company reconcile configuration from Admin through the `SALES_TAX_BRIDGE` config payload.
+
+Relevant backend entry points:
+- `GET /api/appcfg/company-sunat-reconcile-admin-matrix`
+- `PUT /api/appcfg/company-sunat-reconcile-admin-matrix`
+
+Supported per-company keys:
+- `auto_reconcile_enabled`
+- `reconcile_batch_size`
+- `reconcile_retry_base_minutes`
+- `reconcile_retry_max_minutes`
+- `reconcile_warn_attempts`
+- `sunat_exception_notify_enabled`
+- `sunat_exception_notify_hours`
+- `sunat_alert_repeat_minutes`
+- `sunat_exception_notify_limit`
+
+Scheduler command:
+- `sales:reconcile-sunat-pending`
+
+The scheduler only reconciles documents already in SUNAT pending/error states.
+
+Included by reconcile job:
+- `metadata.sunat_status in (PENDING_CONFIRMATION, HTTP_ERROR, NETWORK_ERROR)`
+
+Not included by reconcile job:
+- `metadata.sunat_status` empty/null (documents never sent to bridge yet)
+
+Important implication:
+- Per-company auto reconcile does NOT auto-send unsent documents.
+- It only retries/settles documents that were already attempted and got stuck pending confirmation or transient errors.
+
 ## Ticket consultation contract
 Use the bridge's async consultation method as the source of truth.
 
@@ -41,6 +77,28 @@ Expected behavior:
 
 ## State mapping
 Use one consistent state model for UI and persistence.
+
+### Anti-static state guardrails
+- Never leave `SENDING` indefinitely.
+- If send response is null-like (`null`, `"null"`, empty payload), force a recoverable state and register technical detail.
+- If a row is `SENT`/`SENDING` without a valid ticket placeholder, normalize ticket to null and allow resend.
+- In UI, treat `SENDING` older than a bounded threshold (recommended: 10 minutes) as stale and enable a recovery action (resend).
+- Keep `Consultar ticket` enabled only when a valid ticket exists.
+- In retries/ticket queries, prioritize explicit SUNAT outcome from bridge payload (`ACCEPTED`/`REJECTED`) over transport HTTP code.
+- If HTTP is non-2xx but payload indicates final accepted/rejected, persist the final SUNAT state accordingly.
+
+### Operational recovery command
+Use `sales:repair-stuck-sending` to repair stale records directly in DB.
+
+Supported scopes:
+- `documents`
+- `summaries`
+- `gre`
+- `all`
+
+Example:
+- `php artisan sales:repair-stuck-sending --scope=all --older-than-minutes=10 --limit=500`
+- `php artisan sales:repair-stuck-sending --company-access-slug=emp-xxxxxxxxxxxx --scope=summaries,gre`
 
 ### Suggested technical states
 - `SENDING`
@@ -92,6 +150,7 @@ Treat financial impact separately from transport or ticket state.
 - The final state is reflected in the commercial document.
 - Inventory and cash side effects happened only on final acceptance.
 - The user-facing status is not ambiguous.
+- For company-level reconcile, confirm whether the document is truly pending (`sunat_status` set) versus unsent (`sunat_status` empty).
 
 ## When to apply the functional flow
 If this skill leads to code changes, apply them first in `feature/cambios-generales`, then propagate to `feature/docker-multientorno`, and finally to the deployment branch.
