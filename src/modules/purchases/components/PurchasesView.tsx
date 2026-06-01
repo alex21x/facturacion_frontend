@@ -204,37 +204,6 @@ function resolveReportEntryGrandTotal(entry: StockEntryRow): number {
   return Math.max(grossFromItems - discountFromMetadata, 0);
 }
 
-function resolveReportEntryGrandTotal(entry: StockEntryRow): number {
-  const details = Array.isArray(entry.items) ? entry.items : [];
-  const reportedTotal = Number(entry.total_amount ?? 0);
-
-  if (details.length === 0) {
-    return Number.isFinite(reportedTotal) ? reportedTotal : 0;
-  }
-
-  const grossFromItems = details.reduce((acc, item) => {
-    const lineTotal = Number(item.line_total ?? 0);
-    if (Number.isFinite(lineTotal)) {
-      return acc + lineTotal;
-    }
-
-    const subtotal = Number(item.subtotal ?? 0);
-    const taxAmount = Number(item.tax_amount ?? 0);
-    return acc + (Number.isFinite(subtotal) ? subtotal : 0) + (Number.isFinite(taxAmount) ? taxAmount : 0);
-  }, 0);
-
-  const metadata = (entry.metadata ?? {}) as Record<string, unknown>;
-  const itemDiscountFromMetadata = Number(metadata.item_discount_total ?? 0);
-  const globalDiscountFromMetadata = Number(metadata.discount_total ?? 0);
-  const discountFromMetadata = Math.max(
-    0,
-    (Number.isFinite(itemDiscountFromMetadata) ? itemDiscountFromMetadata : 0)
-      + (Number.isFinite(globalDiscountFromMetadata) ? globalDiscountFromMetadata : 0)
-  );
-
-  return Math.max(grossFromItems - discountFromMetadata, 0);
-}
-
 export function PurchasesView({
   accessToken,
   warehouseId,
@@ -504,60 +473,6 @@ export function PurchasesView({
     }
   }
 
-  async function handleSupplierImportFileChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-
-    if (!file) {
-      return;
-    }
-
-    setSupplierImporting(true);
-    setMessage('');
-
-    try {
-      const XLSX = await import('xlsx');
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const firstSheetName = workbook.SheetNames[0];
-      const firstSheet = workbook.Sheets[firstSheetName];
-
-      if (!firstSheet) {
-        throw new Error('El archivo no contiene una hoja válida.');
-      }
-
-      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
-      const rows = normalizeSupplierImportRows(rawRows);
-
-      if (rows.length === 0) {
-        throw new Error('No se encontraron filas válidas para importar.');
-      }
-
-      let created = 0;
-      let skipped = 0;
-      let firstError = '';
-      const chunks: SupplierBulkImportRow[][] = [];
-      for (let index = 0; index < rows.length; index += 500) {
-        chunks.push(rows.slice(index, index + 500));
-      }
-
-      for (const chunk of chunks) {
-        const response = await importSuppliersBulk(accessToken, chunk);
-        created += Number(response.summary.created ?? 0);
-        skipped += Number(response.summary.skipped ?? 0);
-        if (!firstError && response.errors.length > 0) {
-          firstError = response.errors[0].message;
-        }
-      }
-
-      setMessage(`Importación proveedores: ${created} creados, ${skipped} omitidos.${firstError ? ` Primer error: ${firstError}` : ''}`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'No se pudo importar proveedores.');
-    } finally {
-      setSupplierImporting(false);
-    }
-  }
-
   async function exportSuppliersXlsx() {
     setSupplierExporting(true);
     setMessage('');
@@ -585,45 +500,7 @@ export function PurchasesView({
     } finally {
       setSupplierExporting(false);
     }
-  }
-
-  async function downloadSupplierTemplate() {
-    try {
-      const XLSX = await import('xlsx');
-      const workbook = XLSX.utils.book_new();
-
-      const dataSheet = XLSX.utils.aoa_to_sheet([
-        SUPPLIER_BULK_TEMPLATE_HEADERS,
-        ['RUC', '20123456789', 'Proveedor ejemplo SAC', 'Av. Principal 123 - Lima', '987654321', 'import'],
-      ]);
-      dataSheet['!cols'] = [
-        { wch: 18 },
-        { wch: 22 },
-        { wch: 42 },
-        { wch: 42 },
-        { wch: 18 },
-        { wch: 14 },
-      ];
-
-      const instructionsSheet = XLSX.utils.aoa_to_sheet([
-        ['CAMPO', 'REGLA'],
-        ['TIPO_DOCUMENTO', 'Opcional: RUC, DNI, CE, PAS. Si va vacío se infiere por longitud del documento.'],
-        ['NUMERO_DOCUMENTO', 'Obligatorio. No se importan duplicados por documento.'],
-        ['RAZON_SOCIAL', 'Obligatorio.'],
-        ['DIRECCION', 'Opcional.'],
-        ['TELEFONO', 'Opcional.'],
-        ['ORIGEN', 'Opcional. Por defecto: import.'],
-      ]);
-      instructionsSheet['!cols'] = [{ wch: 24 }, { wch: 90 }];
-
-      XLSX.utils.book_append_sheet(workbook, dataSheet, 'PROVEEDORES');
-      XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'INSTRUCCIONES');
-      XLSX.writeFile(workbook, 'formato_importacion_proveedores.xlsx');
-      setMessage('Formato de proveedores descargado.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'No se pudo descargar formato de proveedores.');
-    }
-  }
+  }  
 
   async function handleSupplierImportFileChange(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -676,35 +553,6 @@ export function PurchasesView({
       setMessage(error instanceof Error ? error.message : 'No se pudo importar proveedores.');
     } finally {
       setSupplierImporting(false);
-    }
-  }
-
-  async function exportSuppliersXlsx() {
-    setSupplierExporting(true);
-    setMessage('');
-
-    try {
-      const rows = await fetchSuppliersCatalog(accessToken, { limit: 10000 });
-      const XLSX = await import('xlsx');
-
-      const sheetRows = rows.map((row) => ({
-        TIPO_DOCUMENTO: row.doc_type ?? '',
-        NUMERO_DOCUMENTO: row.doc_number ?? '',
-        RAZON_SOCIAL: row.name ?? '',
-        DIRECCION: row.address ?? '',
-        TELEFONO: row.phone ?? '',
-        ORIGEN: row.source ?? '',
-      }));
-
-      const workbook = XLSX.utils.book_new();
-      const worksheet = XLSX.utils.json_to_sheet(sheetRows);
-      XLSX.utils.book_append_sheet(workbook, worksheet, 'Proveedores');
-      XLSX.writeFile(workbook, `proveedores_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
-      setMessage(`Exportación completada: ${rows.length} proveedores.`);
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'No se pudo exportar proveedores.');
-    } finally {
-      setSupplierExporting(false);
     }
   }
 
