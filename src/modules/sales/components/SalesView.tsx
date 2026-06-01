@@ -1788,6 +1788,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return subtitle;
   }
 
+  function invalidateDocumentPreviewCache(documentId: number): void {
+    const cache = printHtmlCacheRef.current;
+    cache.delete(`${documentId}:a4`);
+    cache.delete(`${documentId}:ticket`);
+    previewSubtitleCacheRef.current.delete(documentId);
+  }
+
   async function fetchPrintHtmlCached(documentId: number, format: 'ticket' | 'a4'): Promise<string> {
     const key = `${documentId}:${format}`;
     const cache = printHtmlCacheRef.current;
@@ -3932,6 +3939,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       updateDocumentInList(row.id, {
         sunat_status: nextSunatStatus,
       });
+      invalidateDocumentPreviewCache(row.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo enviar el comprobante a SUNAT');
 
@@ -4641,6 +4649,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           items: itemsPayload,
         });
 
+        invalidateDocumentPreviewCache(targetDocumentId);
+
         const nextFilter = resolveViewFilterForDocumentKind(
           currentEditingContext?.documentKind ?? effectiveDocumentKind
         );
@@ -4936,7 +4946,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const convertedId = Number((conversionResponse as { data?: { id?: number } })?.data?.id ?? 0);
 
+      invalidateDocumentPreviewCache(source.id);
+
       if (convertedId > 0) {
+        invalidateDocumentPreviewCache(convertedId);
         setPostConvertPrintModal({
           title: 'Documento convertido',
           subtitle: 'Elige formato de impresion',
@@ -5115,6 +5128,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         status: 'VOID',
         sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
       });
+      invalidateDocumentPreviewCache(row.id);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo anular el documento';
       setMessage(text);
@@ -5201,6 +5215,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       updateDocumentInList(row.id, {
         sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
       });
+      invalidateDocumentPreviewCache(row.id);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo comunicar la baja SUNAT';
       setMessage(text);
