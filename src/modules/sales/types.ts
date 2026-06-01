@@ -27,6 +27,7 @@ export type CommercialDocumentListItem = {
   source_document_number?: string | null;
   issue_at: string;
   created_at?: string | null;
+  updated_at?: string | null;
   status: string;
   sunat_status?: string | null;
   sunat_void_status?: string | null;
