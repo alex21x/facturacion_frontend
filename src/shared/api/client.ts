@@ -9,6 +9,85 @@ let refreshingPromise: Promise<string | null> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
 const recentGetResponses = new Map<string, { expiresAt: number; data: unknown }>();
 const DEFAULT_GET_RESPONSE_CACHE_TTL_MS = 1000;
+const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
+const AUTH_REQUEST_TIMEOUT_MS = 12000;
+const EXPORT_REQUEST_TIMEOUT_MS = 45000;
+const SLOW_LOOKUP_REQUEST_TIMEOUT_MS = 30000;
+const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function resolveRequestTimeoutMs(path: string, method: string): number {
+  if (isAuthRoute(path)) {
+    return AUTH_REQUEST_TIMEOUT_MS;
+  }
+
+  if (path.includes('/export') || path.includes('/print-pdf') || path.includes('/print')) {
+    return EXPORT_REQUEST_TIMEOUT_MS;
+  }
+
+  if (
+    method === 'GET'
+    && (
+      path.startsWith('/api/sales/lookups')
+      || path.startsWith('/api/sales/bootstrap')
+      || path.startsWith('/api/sales/commercial-documents')
+    )
+  ) {
+    return SLOW_LOOKUP_REQUEST_TIMEOUT_MS;
+  }
+
+  return DEFAULT_REQUEST_TIMEOUT_MS;
+}
+
+function resolveRetryCount(path: string, method: string): number {
+  if (isAuthRoute(path)) {
+    return 0;
+  }
+
+  return method === 'GET' || method === 'HEAD' ? 1 : 0;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
+function toNetworkMessage(error: unknown, timeoutMs: number): string {
+  if (isAbortError(error)) {
+    return `La solicitud excedio el tiempo de espera (${Math.round(timeoutMs / 1000)}s). Intenta nuevamente.`;
+  }
+
+  return 'No se pudo conectar con el servidor. Verifica la red o intenta nuevamente en unos segundos.';
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = init.signal;
+
+  const abortFromExternal = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      controller.abort();
+    } else {
+      externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', abortFromExternal);
+    }
+  }
+}
 
 function resolveGetResponseCacheTtlMs(path: string): number {
   if (path.startsWith('/api/appcfg/operational-context')) {
@@ -182,6 +261,9 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
   const authHeader = baseHeaders.Authorization ?? (session ? `Bearer ${session.accessToken}` : undefined);
 
   const method = String(init?.method ?? 'GET').toUpperCase();
+  const timeoutMs = resolveRequestTimeoutMs(path, method);
+  const transientRetryCount = allowRetry ? resolveRetryCount(path, method) : 0;
+  const maxAttempts = transientRetryCount + 1;
   const canDeduplicateGet = method === 'GET' && !init?.body && !isAuthRoute(path);
   const authScopeKey = resolveAuthScopeKey(session, authHeader);
   const dedupKey = canDeduplicateGet
@@ -204,14 +286,40 @@ async function request<T>(path: string, init?: RequestInit, allowRetry = true): 
   }
 
   const executeRequest = async (): Promise<T> => {
-    const response = await fetch(`${baseUrl}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...baseHeaders,
-        ...(authHeader ? { Authorization: authHeader } : {}),
-      },
-    });
+    let response: Response | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        response = await fetchWithTimeout(`${baseUrl}${path}`, {
+          ...init,
+          headers: {
+            'Content-Type': 'application/json',
+            ...baseHeaders,
+            ...(authHeader ? { Authorization: authHeader } : {}),
+          },
+        }, timeoutMs);
+      } catch (error) {
+        const canRetryNetwork = attempt < maxAttempts;
+
+        if (canRetryNetwork) {
+          await sleep(250 * attempt);
+          continue;
+        }
+
+        throw new Error(toNetworkMessage(error, timeoutMs));
+      }
+
+      if (response && TRANSIENT_STATUS_CODES.has(response.status) && attempt < maxAttempts) {
+        await sleep(250 * attempt);
+        continue;
+      }
+
+      break;
+    }
+
+    if (!response) {
+      throw new Error('No se recibio respuesta del servidor. Intenta nuevamente.');
+    }
 
     if (response.status === 401 && allowRetry && !isAuthRoute(path) && authHeader) {
       const newAccessToken = await refreshAccessToken();
@@ -318,14 +426,43 @@ async function requestRaw(path: string, init?: RequestInit, allowRetry = true): 
   const baseHeaders = toHeadersObject(init?.headers);
   const session = loadAuthSession();
   const authHeader = baseHeaders.Authorization ?? (session ? `Bearer ${session.accessToken}` : undefined);
+  const method = String(init?.method ?? 'GET').toUpperCase();
+  const timeoutMs = resolveRequestTimeoutMs(path, method);
+  const transientRetryCount = allowRetry ? resolveRetryCount(path, method) : 0;
+  const maxAttempts = transientRetryCount + 1;
 
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      ...baseHeaders,
-      ...(authHeader ? { Authorization: authHeader } : {}),
-    },
-  });
+  let response: Response | null = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      response = await fetchWithTimeout(`${baseUrl}${path}`, {
+        ...init,
+        headers: {
+          ...baseHeaders,
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+      }, timeoutMs);
+    } catch (error) {
+      const canRetryNetwork = attempt < maxAttempts;
+      if (canRetryNetwork) {
+        await sleep(250 * attempt);
+        continue;
+      }
+
+      throw new Error(toNetworkMessage(error, timeoutMs));
+    }
+
+    if (response && TRANSIENT_STATUS_CODES.has(response.status) && attempt < maxAttempts) {
+      await sleep(250 * attempt);
+      continue;
+    }
+
+    break;
+  }
+
+  if (!response) {
+    throw new Error('No se recibio respuesta del servidor. Intenta nuevamente.');
+  }
 
   if (response.status === 401 && allowRetry && !isAuthRoute(path) && authHeader) {
     const newAccessToken = await refreshAccessToken();

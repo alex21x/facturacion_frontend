@@ -8,6 +8,7 @@ import type {
   PaginatedCommercialDocuments,
   PaginatedSunatExceptions,
   SalesCustomerSuggestion,
+  SalesCustomerType,
   SalesCustomerVehicle,
   SunatExceptionsAuditResponse,
   SalesLookups,
@@ -195,6 +196,37 @@ export async function fetchCustomerVehicles(
   );
 
   return response.data;
+}
+
+export async function fetchCustomerTypes(accessToken: string): Promise<SalesCustomerType[]> {
+  const response = await apiClient.request<{ data: SalesCustomerType[] }>(
+    '/api/sales/customer-types',
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  return response.data;
+}
+
+export async function createSalesCustomer(
+  accessToken: string,
+  payload: {
+    doc_type?: string | null;
+    customer_type_id: number;
+    doc_number?: string | null;
+    legal_name: string;
+    address?: string | null;
+    phone?: string | null;
+    status?: number;
+  }
+): Promise<{ message: string; id: number; reactivated?: boolean }> {
+  return apiClient.request('/api/sales/customers', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function createCustomerVehicle(

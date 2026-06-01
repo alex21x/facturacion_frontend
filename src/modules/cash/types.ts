@@ -65,6 +65,12 @@ export type CreateMovementPayload = {
   description: string;
 };
 
+export type UpdateMovementPayload = {
+  movement_type: 'IN' | 'OUT';
+  amount: number;
+  description: string;
+};
+
 export type PaymentMethodBreakdown = {
   payment_method_id: number;
   payment_method_code: string;

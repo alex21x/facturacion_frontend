@@ -113,6 +113,13 @@ type ProductFormState = {
   status: number;
 };
 
+type ProductStockTraceabilityState = {
+  qty: string;
+  cost: string;
+  warehouse_code: string;
+  note: string;
+};
+
 type ProductUiTab = 'catalogo' | 'maestros' | 'comercial';
 type ProductFormStep = 1 | 2 | 3;
 
@@ -257,7 +264,15 @@ async function updateProductMaster(
   });
 }
 
-async function createProduct(accessToken: string, payload: ProductFormState) {
+async function createProduct(
+  accessToken: string,
+  payload: ProductFormState & {
+    initial_qty?: number;
+    initial_cost?: number;
+    warehouse_code?: string | null;
+    stock_note?: string | null;
+  }
+) {
   return apiClient.request('/api/inventory/products', {
     method: 'POST',
     headers: authHeaders(accessToken),
@@ -265,7 +280,16 @@ async function createProduct(accessToken: string, payload: ProductFormState) {
   });
 }
 
-async function updateProduct(accessToken: string, id: number, payload: Partial<ProductFormState>) {
+async function updateProduct(
+  accessToken: string,
+  id: number,
+  payload: Partial<ProductFormState> & {
+    stock_adjust_qty?: number;
+    stock_adjust_cost?: number;
+    warehouse_code?: string | null;
+    stock_note?: string | null;
+  }
+) {
   return apiClient.request(`/api/inventory/products/${id}`, {
     method: 'PUT',
     headers: authHeaders(accessToken),
@@ -327,6 +351,12 @@ export function ProductsView({
   const [status, setStatus] = useState<'all' | '1' | '0'>('1');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ProductFormState>(EMPTY_FORM);
+  const [stockTraceability, setStockTraceability] = useState<ProductStockTraceabilityState>({
+    qty: '0',
+    cost: '0',
+    warehouse_code: '',
+    note: '',
+  });
   const [commercialConfig, setCommercialConfig] = useState<ProductCommercialConfig | null>(null);
   const [commercialLoading, setCommercialLoading] = useState(false);
   const [commercialUnits, setCommercialUnits] = useState<ProductSaleUnitRow[]>([]);
@@ -497,6 +527,12 @@ export function ProductsView({
 
     setEditingId(null);
     setForm(nextForm);
+    setStockTraceability({
+      qty: '0',
+      cost: String(nextForm.cost_price ?? 0),
+      warehouse_code: '',
+      note: '',
+    });
     setCommercialConfig(null);
     setCommercialUnits([]);
     setCommercialConversions([]);
@@ -511,6 +547,12 @@ export function ProductsView({
     setFormStep(1);
     setEditingId(null);
     setForm((prev) => ({ ...EMPTY_FORM, product_nature: nature, unit_id: prev.unit_id, category_id: prev.category_id }));
+    setStockTraceability({
+      qty: '0',
+      cost: '0',
+      warehouse_code: '',
+      note: '',
+    });
   }
 
   function openNewProductForm() {
@@ -518,6 +560,12 @@ export function ProductsView({
     setFormStep(1);
     setEditingId(null);
     setForm(EMPTY_FORM);
+    setStockTraceability({
+      qty: '0',
+      cost: '0',
+      warehouse_code: '',
+      note: '',
+    });
   }
 
   async function startEdit(row: InventoryProduct) {
@@ -544,6 +592,12 @@ export function ProductsView({
       lot_tracking: Boolean(row.lot_tracking),
       has_expiration: Boolean(row.has_expiration),
       status: Number(row.status) === 1 ? 1 : 0,
+    });
+    setStockTraceability({
+      qty: '0',
+      cost: String(Number(row.cost_price ?? 0)),
+      warehouse_code: '',
+      note: '',
     });
 
     setCommercialLoading(true);
@@ -855,12 +909,44 @@ export function ProductsView({
     setMessage('');
 
     try {
+      const traceQty = Number(stockTraceability.qty || 0);
+      const traceCost = Number(stockTraceability.cost || form.cost_price || 0);
+      const traceWarehouseCode = stockTraceability.warehouse_code.trim();
+      const traceNote = stockTraceability.note.trim();
+
+      if (!Number.isFinite(traceQty)) {
+        throw new Error('La cantidad de stock debe ser numérica.');
+      }
+      if (!Number.isFinite(traceCost) || traceCost < 0) {
+        throw new Error('El costo de stock debe ser numérico y mayor o igual a cero.');
+      }
+
       if (editingId) {
-        await updateProduct(accessToken, editingId, form);
+        const payload: Parameters<typeof updateProduct>[2] = { ...form };
+        if (Math.abs(traceQty) > 0.0000001) {
+          payload.stock_adjust_qty = traceQty;
+          payload.stock_adjust_cost = traceCost;
+          payload.warehouse_code = traceWarehouseCode || null;
+          payload.stock_note = traceNote || null;
+        }
+
+        await updateProduct(accessToken, editingId, payload);
         setMessage('Producto actualizado correctamente.');
         await loadProducts();
       } else {
-        await createProduct(accessToken, form);
+        const payload = {
+          ...form,
+          ...(traceQty > 0.0000001
+            ? {
+                initial_qty: traceQty,
+                initial_cost: traceCost,
+                warehouse_code: traceWarehouseCode || null,
+                stock_note: traceNote || null,
+              }
+            : {}),
+        };
+
+        await createProduct(accessToken, payload);
         setMessage('Producto creado correctamente.');
         resetForm(true);
         await loadProducts();
@@ -1576,6 +1662,47 @@ export function ProductsView({
             <option value={1}>ACTIVO</option>
             <option value={0}>INACTIVO</option>
           </select>
+        </label>
+        <div className="products-section-title products-field-span-full">Trazabilidad de stock</div>
+        <label>
+          {editingId ? 'Ajuste de stock (+ ingreso / - salida)' : 'Stock inicial'}
+          <input
+            type="number"
+            step="0.001"
+            value={stockTraceability.qty}
+            onChange={(event) => setStockTraceability((prev) => ({ ...prev, qty: event.target.value }))}
+            placeholder={editingId ? 'Ej: 5 o -2' : 'Ej: 10'}
+          />
+        </label>
+        <label>
+          Costo para trazabilidad
+          <input
+            type="number"
+            step="0.0001"
+            min="0"
+            value={stockTraceability.cost}
+            onChange={(event) => setStockTraceability((prev) => ({ ...prev, cost: event.target.value }))}
+            placeholder="0.00"
+          />
+        </label>
+        <label>
+          Almacén código (opcional)
+          <input
+            maxLength={80}
+            value={stockTraceability.warehouse_code}
+            onChange={(event) => setStockTraceability((prev) => ({ ...prev, warehouse_code: event.target.value.toUpperCase() }))}
+            placeholder="PRINCIPAL"
+          />
+          <small className="products-field-hint">Si va vacío, se usa almacén principal/preferente.</small>
+        </label>
+        <label>
+          Nota de trazabilidad
+          <input
+            maxLength={255}
+            value={stockTraceability.note}
+            onChange={(event) => setStockTraceability((prev) => ({ ...prev, note: event.target.value }))}
+            placeholder={editingId ? 'Ajuste por corrección de inventario' : 'Stock inicial desde Nuevo producto'}
+          />
         </label>
           </>
         )}

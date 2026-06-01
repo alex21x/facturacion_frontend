@@ -11,6 +11,7 @@ import {
   fetchCurrentSession,
   openCashSession,
   fetchSessionDetail,
+  updateCashMovement,
 } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import type { CompanyProfile } from '../../company/types';
@@ -134,7 +135,29 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
   const [movAmount, setMovAmount] = useState('');
   const [movDescription, setMovDescription] = useState('');
   const [submittingMov, setSubmittingMov] = useState(false);
+  const [editingMovementId, setEditingMovementId] = useState<number | null>(null);
   const [exportingCashReport, setExportingCashReport] = useState(false);
+
+  function isSalesMovement(refType: string | null): boolean {
+    const normalized = String(refType ?? '').trim().toUpperCase();
+    return [
+      'COMMERCIAL_DOCUMENT',
+      'COMMERCIAL_DOCUMENT_EDIT',
+      'COMMERCIAL_DOCUMENT_VOID',
+      'INVOICE',
+      'RECEIPT',
+      'SALES_ORDER',
+      'QUOTATION',
+      'CREDIT_NOTE',
+      'DEBIT_NOTE',
+    ].includes(normalized);
+  }
+
+  function isCashPaymentName(value: string | null | undefined): boolean {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('efect') || normalized.includes('cash') || normalized.includes('contado');
+  }
 
   const totalIn = useMemo(
     () => movements.filter((m) => m.movement_type === 'IN').reduce((a, m) => a + Number(m.amount), 0),
@@ -146,6 +169,28 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
   );
   const inMovements = useMemo(() => movements.filter((m) => m.movement_type === 'IN'), [movements]);
   const outMovements = useMemo(() => movements.filter((m) => m.movement_type === 'OUT'), [movements]);
+  const manualInTotal = useMemo(
+    () => movements
+      .filter((m) => !isSalesMovement(m.ref_type) && m.movement_type === 'IN')
+      .reduce((sum, m) => sum + Number(m.amount), 0),
+    [movements]
+  );
+  const manualOutTotal = useMemo(
+    () => movements
+      .filter((m) => !isSalesMovement(m.ref_type) && m.movement_type === 'OUT')
+      .reduce((sum, m) => sum + Number(m.amount), 0),
+    [movements]
+  );
+  const salesCashInTotal = useMemo(
+    () => movements
+      .filter((m) => isSalesMovement(m.ref_type) && m.movement_type === 'IN' && isCashPaymentName(m.payment_method_name))
+      .reduce((sum, m) => sum + Number(m.amount), 0),
+    [movements]
+  );
+  const effectiveCashTotal = useMemo(
+    () => Number(currentSession?.opening_balance ?? 0) + manualInTotal - manualOutTotal + salesCashInTotal,
+    [currentSession?.opening_balance, manualInTotal, manualOutTotal, salesCashInTotal]
+  );
 
   function formatMovementType(type: CashMovement['movement_type']): string {
     return type === 'IN' ? 'Ingreso' : 'Egreso';
@@ -750,7 +795,23 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     }
   }
 
-  async function handleAddMovement(e: React.FormEvent) {
+  function openEditMovement(movement: CashMovement) {
+    setEditingMovementId(movement.id);
+    setMovType(movement.movement_type === 'OUT' ? 'OUT' : 'IN');
+    setMovAmount(Number(movement.amount).toFixed(2));
+    setMovDescription(String(movement.description ?? ''));
+    setShowMovementPopup(true);
+  }
+
+  function closeMovementPopup() {
+    setShowMovementPopup(false);
+    setEditingMovementId(null);
+    setMovType('IN');
+    setMovAmount('');
+    setMovDescription('');
+  }
+
+  async function handleSaveMovement(e: React.FormEvent) {
     e.preventDefault();
     if (!cashRegisterId) {
       setMessage('No hay caja seleccionada');
@@ -761,20 +822,26 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     setMessage('');
     setIsError(false);
     try {
-      await createCashMovement(accessToken, {
-        cash_register_id: cashRegisterId,
-        cash_session_id: currentSession?.id,
-        movement_type: movType,
-        amount: parseFloat(movAmount),
-        description: movDescription,
-      });
-      setMovAmount('');
-      setMovDescription('');
-      setShowMovementPopup(false);
+      if (editingMovementId) {
+        await updateCashMovement(accessToken, editingMovementId, {
+          movement_type: movType,
+          amount: parseFloat(movAmount),
+          description: movDescription,
+        });
+      } else {
+        await createCashMovement(accessToken, {
+          cash_register_id: cashRegisterId,
+          cash_session_id: currentSession?.id,
+          movement_type: movType,
+          amount: parseFloat(movAmount),
+          description: movDescription,
+        });
+      }
+      closeMovementPopup();
       await loadCurrentSession();
     } catch (e) {
       setIsError(true);
-      setMessage(e instanceof Error ? e.message : 'Error al registrar movimiento');
+      setMessage(e instanceof Error ? e.message : 'Error al guardar movimiento');
     } finally {
       setSubmittingMov(false);
     }
@@ -898,16 +965,20 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                     <strong>{Number(currentSession.opening_balance).toFixed(2)}</strong>
                   </article>
                   <article className="cash-metric-card cash-metric-card-in">
-                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="in" /></span>Ingresos</span>
-                    <strong className="cash-value-positive">+{totalIn.toFixed(2)}</strong>
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="in" /></span>Mov. manuales (+)</span>
+                    <strong className="cash-value-positive">+{manualInTotal.toFixed(2)}</strong>
                   </article>
                   <article className="cash-metric-card cash-metric-card-out">
-                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="out" /></span>Egresos</span>
-                    <strong className="cash-value-negative">-{totalOut.toFixed(2)}</strong>
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="out" /></span>Mov. manuales (-)</span>
+                    <strong className="cash-value-negative">-{manualOutTotal.toFixed(2)}</strong>
+                  </article>
+                  <article className="cash-metric-card cash-metric-card-in">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="in" /></span>Ventas efectivo</span>
+                    <strong className="cash-value-positive">+{salesCashInTotal.toFixed(2)}</strong>
                   </article>
                   <article className="cash-metric-card cash-metric-card-expected">
-                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="expected" /></span>Saldo esperado</span>
-                    <strong>{Number(currentSession.expected_balance).toFixed(2)}</strong>
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="expected" /></span>Total efectivo</span>
+                    <strong>{effectiveCashTotal.toFixed(2)}</strong>
                   </article>
                 </div>
 
@@ -924,7 +995,18 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                     <h4>Registrar Movimiento</h4>
                     <p>Registra ingresos o egresos manuales desde un formulario rapido. Disponible para Caja y Vendedor.</p>
                   </div>
-                  <button className="cash-btn cash-btn-primary" type="button" onClick={() => setShowMovementPopup(true)} disabled={loading}>
+                  <button
+                    className="cash-btn cash-btn-primary"
+                    type="button"
+                    onClick={() => {
+                      setEditingMovementId(null);
+                      setMovType('IN');
+                      setMovAmount('');
+                      setMovDescription('');
+                      setShowMovementPopup(true);
+                    }}
+                    disabled={loading}
+                  >
                     ➕ Nuevo movimiento
                   </button>
                 </div>
@@ -939,14 +1021,14 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                   <div className="cash-modal-surface cash-modal-surface-movement">
                     <div className="cash-modal-head">
                       <div>
-                        <h4>Registrar Movimiento</h4>
-                        <p>{movType === 'IN' ? 'Registra un ingreso manual para la sesion activa.' : 'Registra un egreso manual para la sesion activa.'}</p>
+                        <h4>{editingMovementId ? 'Editar Movimiento' : 'Registrar Movimiento'}</h4>
+                        <p>{movType === 'IN' ? 'Registra o ajusta un ingreso manual para la sesion activa.' : 'Registra o ajusta un egreso manual para la sesion activa.'}</p>
                       </div>
-                      <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" onClick={() => setShowMovementPopup(false)}>
+                      <button className="cash-btn cash-btn-soft cash-btn-compact" type="button" onClick={closeMovementPopup}>
                         ✖ Cerrar
                       </button>
                     </div>
-                    <form onSubmit={(e) => void handleAddMovement(e)}>
+                    <form onSubmit={(e) => void handleSaveMovement(e)}>
                       <div className="cash-movement-type-switch" aria-label="Tipo de movimiento">
                         <button
                           type="button"
@@ -996,9 +1078,9 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                       </div>
                       <div className="cash-form-actions">
                         <button className="cash-btn cash-btn-primary" type="submit" disabled={submittingMov || loading}>
-                          {submittingMov ? '⏳ Procesando...' : 'Guardar movimiento'}
+                          {submittingMov ? '⏳ Procesando...' : (editingMovementId ? 'Guardar cambios' : 'Guardar movimiento')}
                         </button>
-                        <button className="cash-btn cash-btn-soft" type="button" onClick={() => setShowMovementPopup(false)}>
+                        <button className="cash-btn cash-btn-soft" type="button" onClick={closeMovementPopup}>
                           Cancelar
                         </button>
                       </div>
@@ -1024,11 +1106,12 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                           <th>Descripcion</th>
                           <th>Forma de pago</th>
                           <th>Referencia</th>
+                          <th>Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
                         {inMovements.length === 0 && (
-                          <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin ingresos</td></tr>
+                          <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin ingresos</td></tr>
                         )}
                         {inMovements.map((m) => (
                           <tr key={m.id}>
@@ -1038,6 +1121,13 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                             <td>{m.description}</td>
                             <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
                             <td>{formatReferenceValue(m)}</td>
+                            <td>
+                              {String(m.ref_type ?? '').trim().toUpperCase() === 'MANUAL' && (
+                                <button type="button" className="cash-btn cash-btn-soft cash-btn-compact" onClick={() => openEditMovement(m)}>
+                                  Editar
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1053,11 +1143,12 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                           <th>Descripcion</th>
                           <th>Forma de pago</th>
                           <th>Referencia</th>
+                          <th>Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
                         {outMovements.length === 0 && (
-                          <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin egresos</td></tr>
+                          <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin egresos</td></tr>
                         )}
                         {outMovements.map((m) => (
                           <tr key={m.id}>
@@ -1067,6 +1158,13 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                             <td>{m.description}</td>
                             <td>{m.payment_method_name?.trim() ? m.payment_method_name : '-'}</td>
                             <td>{formatReferenceValue(m)}</td>
+                            <td>
+                              {String(m.ref_type ?? '').trim().toUpperCase() === 'MANUAL' && (
+                                <button type="button" className="cash-btn cash-btn-soft cash-btn-compact" onClick={() => openEditMovement(m)}>
+                                  Editar
+                                </button>
+                              )}
+                            </td>
                           </tr>
                         ))}
                       </tbody>

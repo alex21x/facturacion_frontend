@@ -49,6 +49,34 @@ export async function fetchInventoryProducts(
   return response.data;
 }
 
+export async function createInventoryProduct(
+  accessToken: string,
+  payload: {
+    sku?: string | null;
+    barcode?: string | null;
+    name: string;
+    unit_id?: number | null;
+    product_nature?: 'PRODUCT' | 'SUPPLY';
+    sale_price?: number;
+    cost_price?: number;
+    is_stockable?: boolean;
+    lot_tracking?: boolean;
+    has_expiration?: boolean;
+    status?: number;
+    initial_qty?: number;
+    initial_cost?: number;
+    warehouse_id?: number | null;
+    warehouse_code?: string | null;
+    stock_note?: string | null;
+  }
+): Promise<{ message: string; id: number }> {
+  return apiClient.request('/api/inventory/products', {
+    method: 'POST',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchInventoryStock(
   accessToken: string,
   context?: { warehouseId?: number | null }
