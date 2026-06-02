@@ -1537,6 +1537,11 @@ function splitCashMovementsByOrigin(movements: CashReportMovement[]): { manual: 
   return { manual, sales };
 }
 
+function resolveCashMovementAmount(value: number | string | null | undefined): number {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
 function resolveCashMovementLabel(movement: CashReportMovement, origin: 'manual' | 'sales'): string {
   const base = movement.movement_type === 'IN' ? 'Ingreso' : 'Salida';
   return origin === 'sales' ? `${base} por venta` : `${base} manual`;
@@ -1759,10 +1764,10 @@ export function buildCashReportHtml80mm(
   const cashMovementsByOrigin = splitCashMovementsByOrigin(movements);
   const manualInTotal = cashMovementsByOrigin.manual
     .filter((m) => m.movement_type === 'IN')
-    .reduce((s, m) => s + m.amount, 0);
+    .reduce((s, m) => s + resolveCashMovementAmount(m.amount), 0);
   const manualOutTotal = cashMovementsByOrigin.manual
     .filter((m) => m.movement_type === 'OUT')
-    .reduce((s, m) => s + m.amount, 0);
+    .reduce((s, m) => s + resolveCashMovementAmount(m.amount), 0);
   const salesCashInTotal = data.paymentMethodBreakdown
     .filter((pm) => isCashPaymentMethodName(pm.payment_method_name))
     .reduce((sum, pm) => sum + Number(pm.total_amount || 0), 0);
@@ -1771,7 +1776,7 @@ export function buildCashReportHtml80mm(
     ? rows.map((m) => `
                 <tr>
                   <td>${resolveCashMovementLabel(m, origin)}</td>
-                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
+                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(resolveCashMovementAmount(m.amount))}</td>
                   <td>${escapeHtml(m.description || '-')}</td>
                 </tr>`).join('')
     : `<tr><td colspan="3" class="ta-c">Sin movimientos ${origin === 'sales' ? 'por ventas' : 'manuales'}</td></tr>`;
@@ -1860,6 +1865,7 @@ export function buildCashReportHtml80mm(
               <tbody>
                 ${paymentRows || '<tr><td colspan="3" class="ta-c">Sin ventas</td></tr>'}
                 <tr class="total-row"><td>TOTAL</td><td class="ta-c">${data.paymentMethodBreakdown.reduce((s, p) => s + p.document_count, 0)}</td><td class="ta-r">${formatMoney(data.paymentMethodBreakdown.reduce((s, p) => s + p.total_amount, 0))}</td></tr>
+                <tr class="total-row"><td colspan="2">TOTAL NETO EN EFECTIVO</td><td class="ta-r">S/ ${formatMoney(effectiveCashTotal)}</td></tr>
               </tbody>
             </table>
           </div>
@@ -1876,14 +1882,14 @@ export function buildCashReportHtml80mm(
             </table>
           </div>` : ''}
 
-          ${movements.length > 0 ? `
+          ${cashMovementsByOrigin.manual.length > 0 ? `
           <div class="section">
             <div class="section-title">MOVIMIENTOS MANUALES</div>
             <table>
               <thead><tr><th>Tipo</th><th class="ta-r">Monto</th><th>Descripción</th></tr></thead>
               <tbody>
                 ${renderMovementRows(cashMovementsByOrigin.manual, 'manual')}
-                <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+                <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? resolveCashMovementAmount(m.amount) : -resolveCashMovementAmount(m.amount)), 0))}</td><td></td></tr>
               </tbody>
             </table>
           </div>` : ''}
@@ -2006,10 +2012,10 @@ export function buildCashReportHtmlA4(
   const cashMovementsByOrigin = splitCashMovementsByOrigin(movements);
   const manualInTotal = cashMovementsByOrigin.manual
     .filter((m) => m.movement_type === 'IN')
-    .reduce((s, m) => s + m.amount, 0);
+    .reduce((s, m) => s + resolveCashMovementAmount(m.amount), 0);
   const manualOutTotal = cashMovementsByOrigin.manual
     .filter((m) => m.movement_type === 'OUT')
-    .reduce((s, m) => s + m.amount, 0);
+    .reduce((s, m) => s + resolveCashMovementAmount(m.amount), 0);
   const salesCashInTotal = data.paymentMethodBreakdown
     .filter((pm) => isCashPaymentMethodName(pm.payment_method_name))
     .reduce((sum, pm) => sum + Number(pm.total_amount || 0), 0);
@@ -2018,7 +2024,7 @@ export function buildCashReportHtmlA4(
     ? rows.map((m) => `
                 <tr>
                   <td>${resolveCashMovementLabel(m, origin)}</td>
-                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(m.amount)}</td>
+                  <td class="ta-r" style="color:${m.movement_type === 'IN' ? '#059669' : '#dc2626'};font-weight:700">S/ ${formatMoney(resolveCashMovementAmount(m.amount))}</td>
                   <td>${escapeHtml(m.description || '-')}</td>
                 </tr>`).join('')
     : `<tr><td colspan="3" class="ta-c">Sin movimientos ${origin === 'sales' ? 'por ventas' : 'manuales'}</td></tr>`;
@@ -2097,6 +2103,7 @@ export function buildCashReportHtmlA4(
               <tbody>
                 ${paymentRows || '<tr><td colspan="3" class="ta-c">Sin ventas registradas</td></tr>'}
                 <tr class="total-row"><td>TOTAL</td><td class="ta-c">${data.paymentMethodBreakdown.reduce((s, p) => s + p.document_count, 0)}</td><td class="ta-r">S/ ${formatMoney(data.paymentMethodBreakdown.reduce((s, p) => s + p.total_amount, 0))}</td></tr>
+                <tr class="total-row"><td colspan="2">TOTAL NETO EN EFECTIVO</td><td class="ta-r">S/ ${formatMoney(effectiveCashTotal)}</td></tr>
               </tbody>
             </table>
           </div>
@@ -2112,14 +2119,14 @@ export function buildCashReportHtmlA4(
             </table>
           </div>
 
-          ${movements.length > 0 ? `
+          ${cashMovementsByOrigin.manual.length > 0 ? `
           <div class="section">
             <div class="section-title">MOVIMIENTOS MANUALES</div>
             <table>
               <thead><tr><th style="width:15%">Tipo de movimiento</th><th class="ta-r" style="width:20%">Monto</th><th style="width:65%">Descripción</th></tr></thead>
               <tbody>
                 ${renderMovementRows(cashMovementsByOrigin.manual, 'manual')}
-                <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? m.amount : -m.amount), 0))}</td><td></td></tr>
+                <tr class="total-row"><td>TOTAL MANUALES</td><td class="ta-r">S/ ${formatMoney(cashMovementsByOrigin.manual.reduce((s, m) => s + (m.movement_type === 'IN' ? resolveCashMovementAmount(m.amount) : -resolveCashMovementAmount(m.amount)), 0))}</td><td></td></tr>
               </tbody>
             </table>
           </div>` : ''}

@@ -167,8 +167,14 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     () => movements.filter((m) => m.movement_type === 'OUT').reduce((a, m) => a + Number(m.amount), 0),
     [movements]
   );
-  const inMovements = useMemo(() => movements.filter((m) => m.movement_type === 'IN'), [movements]);
-  const outMovements = useMemo(() => movements.filter((m) => m.movement_type === 'OUT'), [movements]);
+  const inMovements = useMemo(
+    () => movements.filter((m) => !isSalesMovement(m.ref_type) && m.movement_type === 'IN'),
+    [movements]
+  );
+  const outMovements = useMemo(
+    () => movements.filter((m) => !isSalesMovement(m.ref_type) && m.movement_type === 'OUT'),
+    [movements]
+  );
   const manualInTotal = useMemo(
     () => movements
       .filter((m) => !isSalesMovement(m.ref_type) && m.movement_type === 'IN')
@@ -1092,9 +1098,9 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
               {/* Movimientos de la sesion */}
               <div className="table-wrap cash-table-wrap">
                 <h4>Movimientos de esta sesion</h4>
-                {movements.length === 0 && <p style={{ textAlign: 'center' }}>Sin movimientos</p>}
+                {inMovements.length === 0 && outMovements.length === 0 && <p style={{ textAlign: 'center' }}>Sin movimientos manuales</p>}
 
-                {movements.length > 0 && (
+                {(inMovements.length > 0 || outMovements.length > 0) && (
                   <>
                     <h5 style={{ marginTop: 0, marginBottom: '0.5rem', color: 'var(--color-ok)' }}>Ingresos</h5>
                     <table>
