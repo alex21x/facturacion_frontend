@@ -200,6 +200,7 @@ export type InventoryProLotExpiryResponse = {
 
 export type InventoryProReportType =
   | 'STOCK_SNAPSHOT'
+  | 'LOW_STOCK'
   | 'KARDEX_PHYSICAL'
   | 'KARDEX_VALUED'
   | 'LOT_EXPIRY'
@@ -209,6 +210,7 @@ export type InventoryProReportType =
 
 export type ReportsApiReportCode =
   | 'INVENTORY_STOCK_SNAPSHOT'
+  | 'INVENTORY_LOW_STOCK'
   | 'INVENTORY_KARDEX_PHYSICAL'
   | 'INVENTORY_KARDEX_VALUED'
   | 'INVENTORY_LOT_EXPIRY'

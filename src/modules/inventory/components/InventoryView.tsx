@@ -70,11 +70,13 @@ const DOCUMENT_KIND_NOTE_LABELS: Record<string, string> = {
 
 const REPORT_TYPE_LABELS: Record<string, string> = {
   INVENTORY_STOCK_SNAPSHOT: 'Foto de stock',
+  INVENTORY_LOW_STOCK: 'Stock minimo',
   INVENTORY_KARDEX_PHYSICAL: 'Kardex fisico',
   INVENTORY_KARDEX_VALUED: 'Kardex valorizado',
   INVENTORY_LOT_EXPIRY: 'Venc. de lotes',
   INVENTORY_CUT: 'Corte de inventario',
   STOCK_SNAPSHOT: 'Foto de stock',
+  LOW_STOCK: 'Stock minimo',
   KARDEX_PHYSICAL: 'Kardex fisico',
   KARDEX_VALUED: 'Kardex valorizado',
   LOT_EXPIRY: 'Venc. de lotes',
@@ -872,9 +874,24 @@ export function InventoryView({
     setLoadingReportRequestDetail(true);
 
     try {
-      const response = await fetchInventoryProReportRequest(accessToken, requestId);
+      let response = await fetchInventoryProReportRequest(accessToken, requestId);
+      const maxAttempts = 8;
+
+      for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
+        if (response.status !== 'PENDING' && response.status !== 'PROCESSING') {
+          break;
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+        response = await fetchInventoryProReportRequest(accessToken, requestId);
+      }
+
       setSelectedReportRequest(response);
       setSelectedReportRequestId(requestId);
+
+      if (response.status === 'PENDING' || response.status === 'PROCESSING') {
+        setMessage('La solicitud aun esta en proceso. Si persiste, pulsa Actualizar solicitudes para ver el estado mas reciente.');
+      }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Error al cargar detalle del reporte');
     } finally {
@@ -1034,6 +1051,7 @@ export function InventoryView({
       const response = await createInventoryProReportRequest(accessToken, {
         reportCode,
         filters,
+        runAsync: false,
       });
 
       await loadReportRequests();
@@ -1247,7 +1265,7 @@ export function InventoryView({
     setMessage('');
 
     try {
-      const rawRows = (selectedReportRequest?.result_json?.rows ?? []) as Array<Record<string, unknown>>;
+      const rawRows = selectedReportRows;
 
       if (rawRows.length === 0) {
         setMessage('La solicitud seleccionada no tiene filas para exportar.');
@@ -1360,6 +1378,20 @@ export function InventoryView({
     const start = (importBatchItemsPage - 1) * importBatchItemsPerPage;
     return importBatchItems.slice(start, start + importBatchItemsPerPage);
   }, [importBatchItems, importBatchItemsPage, importBatchItemsPerPage]);
+
+  const selectedReportRows = useMemo(() => {
+    const rows = selectedReportRequest?.result_json?.rows;
+    return Array.isArray(rows) ? (rows as Array<Record<string, unknown>>) : [];
+  }, [selectedReportRequest]);
+
+  const selectedReportPreviewColumns = useMemo(() => {
+    if (selectedReportRows.length === 0) return [] as string[];
+    return Object.keys(selectedReportRows[0]);
+  }, [selectedReportRows]);
+
+  const selectedReportPreviewRows = useMemo(() => {
+    return selectedReportRows.slice(0, 150);
+  }, [selectedReportRows]);
 
   useEffect(() => {
     if (importBatchesPage > importBatchesTotalPages) {
@@ -2370,6 +2402,7 @@ export function InventoryView({
                 Tipo de reporte
                 <select value={reportCode} onChange={(e) => setReportCode(e.target.value as ReportsApiReportCode)}>
                   <option value="INVENTORY_STOCK_SNAPSHOT">Stock Snapshot</option>
+                  <option value="INVENTORY_LOW_STOCK">Stock minimo</option>
                   <option value="INVENTORY_KARDEX_PHYSICAL">Kardex Fisico</option>
                   <option value="INVENTORY_KARDEX_VALUED">Kardex Valorizado</option>
                   <option value="INVENTORY_LOT_EXPIRY">Lotes por Vencimiento</option>
@@ -2448,20 +2481,39 @@ export function InventoryView({
               {selectedReportRequest.error_message && (
                 <p className="notice">{selectedReportRequest.error_message}</p>
               )}
+              {(selectedReportRequest.status === 'PENDING' || selectedReportRequest.status === 'PROCESSING') && (
+                <p className="notice">
+                  El reporte aun no termina de procesarse. Pulsa "Actualizar solicitudes" y vuelve a abrir "Ver" en unos segundos.
+                </p>
+              )}
+              {selectedReportRequest.status === 'COMPLETED'
+                && (!selectedReportRequest.result_json
+                  || !Array.isArray(selectedReportRequest.result_json.rows)
+                  || selectedReportRequest.result_json.rows.length === 0) && (
+                <p className="notice">El reporte se completo sin filas para los filtros seleccionados.</p>
+              )}
               {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result_json?.summary && (() => {
-                const s = selectedReportRequest.result_json.summary;
+                const rawSummary = selectedReportRequest.result_json.summary;
+                if (!rawSummary || typeof rawSummary !== 'object' || Array.isArray(rawSummary)) {
+                  return null;
+                }
+                const s = rawSummary as Record<string, unknown>;
                 const type = selectedReportRequest.report_type;
                 const items: Array<{ label: string; value: string }> = [];
-                if ('warehouses' in s)
+                if (s.warehouses !== undefined)
                   items.push({ label: 'Almacenes', value: String(s.warehouses) });
-                if ('total_rows' in s)
+                if (s.total_rows !== undefined)
                   items.push({ label: 'Registros generados', value: String(s.total_rows) });
-                if ('expired_rows' in s)
+                if (s.expired_rows !== undefined)
                   items.push({ label: 'Lotes vencidos', value: String(s.expired_rows) });
-                if ('total_qty' in s)
+                if (s.threshold !== undefined)
+                  items.push({ label: 'Umbral de stock minimo', value: Number(s.threshold).toFixed(0) });
+                if (s.total_qty !== undefined)
                   items.push({ label: type === 'KARDEX_PHYSICAL' || type === 'KARDEX_VALUED' ? 'Cantidad total movida' : 'Cantidad total en stock', value: Number(s.total_qty).toFixed(3) });
-                if ('total_value' in s)
+                if (s.total_value !== undefined)
                   items.push({ label: 'Valor total (S/.)', value: Number(s.total_value).toFixed(2) });
+                if (s.total_gap !== undefined)
+                  items.push({ label: 'Brecha total a minimo', value: Number(s.total_gap).toFixed(3) });
                 if (selectedReportRequest.result_json.generated_at)
                   items.push({ label: 'Generado el', value: fmtDateTime(String(selectedReportRequest.result_json.generated_at)) });
                 return (
@@ -2475,14 +2527,42 @@ export function InventoryView({
                   </div>
                 );
               })()}
-              {selectedReportRequest.status === 'COMPLETED' && selectedReportRequest.result_json?.rows && (
+              {selectedReportRequest.status === 'COMPLETED' && selectedReportRows.length > 0 && (
                 <div style={{ marginTop: '0.5rem' }}>
                   <p style={{ fontSize: '0.82rem', color: 'var(--color-muted)' }}>
-                    El reporte contiene {(selectedReportRequest.result_json.rows as unknown[]).length} fila(s).
+                    El reporte contiene {selectedReportRows.length} fila(s).
                   </p>
                   <button type="button" onClick={() => void handleExportSelectedRequestResult()} disabled={exportingRequestResult}>
                     {exportingRequestResult ? 'Exportando...' : 'Exportar solicitud XLSX'}
                   </button>
+                </div>
+              )}
+              {selectedReportRequest.status === 'COMPLETED' && selectedReportPreviewRows.length > 0 && selectedReportPreviewColumns.length > 0 && (
+                <div className="table-wrap" style={{ marginTop: '0.75rem' }}>
+                  <div className="inventory-table-head">
+                    <h4>Vista previa ({selectedReportPreviewRows.length} de {selectedReportRows.length})</h4>
+                  </div>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="inventory-table">
+                      <thead>
+                        <tr>
+                          {selectedReportPreviewColumns.map((key) => (
+                            <th key={key}>{EXPORT_KEY_LABELS[key] ?? key}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedReportPreviewRows.map((row, rowIdx) => (
+                          <tr key={`report-row-${rowIdx}`}>
+                            {selectedReportPreviewColumns.map((key) => {
+                              const formatted = formatExportCell(key, row[key]);
+                              return <td key={`report-cell-${rowIdx}-${key}`}>{String(formatted ?? '-')}</td>;
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>

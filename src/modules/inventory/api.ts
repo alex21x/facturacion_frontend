@@ -282,6 +282,7 @@ export async function createInventoryProReportRequest(
   payload: {
     reportCode: ReportsApiReportCode;
     filters?: Record<string, unknown>;
+    runAsync?: boolean;
   }
 ): Promise<InventoryProReportRequestCreateResponse> {
   return apiClient.request<InventoryProReportRequestCreateResponse>('/api/reports/requests', {
@@ -293,6 +294,7 @@ export async function createInventoryProReportRequest(
     body: JSON.stringify({
       report_code: payload.reportCode,
       filters: payload.filters ?? {},
+      run_async: payload.runAsync ?? false,
     }),
   });
 }
@@ -301,10 +303,16 @@ export async function fetchInventoryProReportRequest(
   accessToken: string,
   requestId: number
 ): Promise<InventoryProReportRequestDetailResponse> {
-  return apiClient.request<InventoryProReportRequestDetailResponse>(`/api/reports/requests/${requestId}`, {
+  const response = await apiClient.request<InventoryProReportRequestDetailResponse | { data: InventoryProReportRequestDetailResponse }>(`/api/reports/requests/${requestId}`, {
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+
+  if (response && typeof response === 'object' && 'data' in response && response.data) {
+    return response.data;
+  }
+
+  return response as InventoryProReportRequestDetailResponse;
 }
 
 export type InventoryBulkImportRow = {
