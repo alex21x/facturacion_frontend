@@ -82,6 +82,8 @@ const initialPagination: PurchasesPagination = {
   total_pages: 1,
 };
 
+const DOCUMENTARY_ENTRY_TYPES: StockEntryType[] = ['PURCHASE', 'PURCHASE_ORDER', 'NON_TAX_IN', 'NON_TAX_OUT'];
+
 const SUPPLIER_BULK_TEMPLATE_HEADERS = [
   'TIPO_DOCUMENTO',
   'NUMERO_DOCUMENTO',
@@ -90,6 +92,30 @@ const SUPPLIER_BULK_TEMPLATE_HEADERS = [
   'TELEFONO',
   'ORIGEN',
 ];
+
+const QUICK_SUPPLIER_DOC_TYPE_OPTIONS = [
+  { value: 'RUC', label: 'RUC (11 dígitos)' },
+  { value: 'DNI', label: 'DNI (8 dígitos)' },
+  { value: 'CE', label: 'Carnet extranjería' },
+  { value: 'PAS', label: 'Pasaporte' },
+  { value: 'OTRO', label: 'Otro documento' },
+];
+
+function sanitizeQuickSupplierDocNumber(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20);
+}
+
+function validateQuickSupplierDocNumber(docType: string, docNumber: string): string | null {
+  if (docType === 'RUC') {
+    return /^\d{11}$/.test(docNumber) ? null : 'El RUC debe tener 11 dígitos.';
+  }
+
+  if (docType === 'DNI') {
+    return /^\d{8}$/.test(docNumber) ? null : 'El DNI debe tener 8 dígitos.';
+  }
+
+  return docNumber.length >= 4 ? null : 'Ingrese un número de documento válido.';
+}
 
 function normalizeSupplierExcelHeader(value: string): string {
   return value
@@ -272,6 +298,13 @@ export function PurchasesView({
   const [resolvingSupplierDoc, setResolvingSupplierDoc] = useState(false);
   const [supplierImporting, setSupplierImporting] = useState(false);
   const [supplierExporting, setSupplierExporting] = useState(false);
+  const [showQuickSupplierPopup, setShowQuickSupplierPopup] = useState(false);
+  const [submittingQuickSupplier, setSubmittingQuickSupplier] = useState(false);
+  const [quickSupplierDocType, setQuickSupplierDocType] = useState('RUC');
+  const [quickSupplierDocNumber, setQuickSupplierDocNumber] = useState('');
+  const [quickSupplierName, setQuickSupplierName] = useState('');
+  const [quickSupplierAddress, setQuickSupplierAddress] = useState('');
+  const [quickSupplierPhone, setQuickSupplierPhone] = useState('');
   const [showQuickProductPopup, setShowQuickProductPopup] = useState(false);
   const [quickProductName, setQuickProductName] = useState('');
   const [quickProductSku, setQuickProductSku] = useState('');
@@ -1315,6 +1348,65 @@ export function PurchasesView({
     }
   }
 
+  async function handleQuickCreateSupplier() {
+    const legalName = quickSupplierName.trim();
+    const docNumber = sanitizeQuickSupplierDocNumber(quickSupplierDocNumber);
+
+    if (!legalName) {
+      setMessage('Ingrese nombre o razón social para crear proveedor rápido.');
+      return;
+    }
+
+    const docValidationError = validateQuickSupplierDocNumber(quickSupplierDocType, docNumber);
+    if (docValidationError) {
+      setMessage(docValidationError);
+      return;
+    }
+
+    setSubmittingQuickSupplier(true);
+    setMessage('');
+
+    try {
+      const response = await importSuppliersBulk(accessToken, [
+        {
+          doc_type: quickSupplierDocType,
+          doc_number: docNumber,
+          legal_name: legalName,
+          address: quickSupplierAddress.trim() || undefined,
+          phone: quickSupplierPhone.trim() || undefined,
+          source: 'quick',
+        },
+      ]);
+
+      if ((response.summary.errors ?? 0) > 0 && response.errors.length > 0) {
+        throw new Error(response.errors[0].message);
+      }
+
+      const rows = await fetchSupplierAutocomplete(accessToken, docNumber);
+      const picked = rows.find((row) => String(row.doc_number ?? '').trim().toUpperCase() === docNumber) ?? rows[0] ?? null;
+      if (picked) {
+        chooseSupplier(picked);
+      }
+
+      setQuickSupplierDocType('RUC');
+      setQuickSupplierDocNumber('');
+      setQuickSupplierName('');
+      setQuickSupplierAddress('');
+      setQuickSupplierPhone('');
+      setShowQuickSupplierPopup(false);
+
+      if ((response.summary.created ?? 0) > 0) {
+        setMessage('Proveedor rápido creado correctamente.');
+      } else {
+        setMessage('Proveedor ya existía. Se seleccionó en el formulario.');
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo crear proveedor rápido');
+    } finally {
+      setSubmittingQuickSupplier(false);
+    }
+  }
+
   function chooseSupplier(supplier: SupplierSuggestion) {
     setSupplierReference(`${supplier.doc_number} - ${supplier.name}`);
     setSupplierAddress(supplier.address ?? '');
@@ -1428,7 +1520,7 @@ export function PurchasesView({
       } else if (!Number.isFinite(Number(resolvedDraft.qty)) || Math.abs(Number(resolvedDraft.qty)) <= 0) {
         setMessage('Ingresa una cantidad valida (distinta de 0).');
       } else if (entryType !== 'ADJUSTMENT' && Number(resolvedDraft.qty) <= 0) {
-        setMessage('Para compras y ordenes de compra la cantidad debe ser mayor a 0.');
+        setMessage('Para este tipo de documento la cantidad debe ser mayor a 0.');
       } else if (!Number.isFinite(Number(resolvedDraft.unit_cost)) || Number(resolvedDraft.unit_cost) < 0) {
         setMessage('Ingresa un costo unitario valido (0 o mayor).');
       } else {
@@ -1558,21 +1650,17 @@ export function PurchasesView({
       return;
     }
 
-    if (entryType === 'PURCHASE' || entryType === 'PURCHASE_ORDER') {
+    if (DOCUMENTARY_ENTRY_TYPES.includes(entryType)) {
       const referenceValue = referenceNo.trim();
       const supplierValue = supplierReference.trim();
 
       if (!referenceValue) {
-        setMessage(entryType === 'PURCHASE'
-          ? 'La referencia de la compra es obligatoria.'
-          : 'La referencia de la orden de compra es obligatoria.');
+        setMessage('La referencia del documento es obligatoria.');
         return;
       }
 
       if (!supplierValue) {
-        setMessage(entryType === 'PURCHASE'
-          ? 'El proveedor es obligatorio para registrar la compra.'
-          : 'El proveedor es obligatorio para registrar la orden de compra.');
+        setMessage('El proveedor/origen es obligatorio para registrar el documento.');
         return;
       }
     }
@@ -1615,8 +1703,10 @@ export function PurchasesView({
 
     const supplierReferenceTrimmed = supplierReference.trim();
     const supplierAddressTrimmed = supplierAddress.trim();
-    const supplierPattern = supplierReferenceTrimmed.match(/^(\d{8}|\d{11})\s*[-:]\s*(.+)$/);
-    const supplierDocNumber = supplierPattern ? supplierPattern[1] : (supplierReferenceTrimmed.match(/^(\d{8}|\d{11})$/)?.[1] ?? null);
+    const supplierPattern = supplierReferenceTrimmed.match(/^([A-Za-z0-9-]{4,20})\s*[-:]\s*(.+)$/);
+    const supplierDocNumber = supplierPattern
+      ? supplierPattern[1].toUpperCase()
+      : (supplierReferenceTrimmed.match(/^([A-Za-z0-9-]{4,20})$/)?.[1]?.toUpperCase() ?? null);
     const supplierName = supplierPattern
       ? supplierPattern[2].trim()
       : (supplierReferenceTrimmed !== '' ? supplierReferenceTrimmed : null);
@@ -1681,7 +1771,11 @@ export function PurchasesView({
       resetEntryFormState();
       setMessage(editingEntryId
         ? 'Ingreso actualizado correctamente.'
-        : (entryType === 'PURCHASE_ORDER' ? 'Orden de compra registrada correctamente.' : 'Ingreso registrado correctamente.'));
+        : (entryType === 'PURCHASE_ORDER'
+            ? 'Orden de compra registrada correctamente.'
+            : (entryType === 'NON_TAX_IN'
+                ? 'Ingreso no tributario registrado correctamente.'
+                : (entryType === 'NON_TAX_OUT' ? 'Salida no tributaria registrada correctamente.' : 'Ingreso registrado correctamente.'))));
 
       setWorkspaceMode('REPORT');
       setReportFiltersDraft(initialReportFilters);
@@ -2031,6 +2125,8 @@ export function PurchasesView({
             <select value={entryType} onChange={(e) => setEntryType(e.target.value as StockEntryType)} disabled={editingEntryId !== null}>
               <option value="PURCHASE_ORDER">Orden de compra</option>
               <option value="PURCHASE">Compra (ingreso)</option>
+              <option value="NON_TAX_IN">Ingreso no tributario</option>
+              <option value="NON_TAX_OUT">Salida no tributaria</option>
               <option value="ADJUSTMENT">Ajuste (+/-)</option>
             </select>
           </label>
@@ -2057,20 +2153,13 @@ export function PurchasesView({
                 <button
                   type="button"
                   className="btn-mini"
-                  onClick={() => void resolveSupplierFromPadron()}
-                  disabled={resolvingSupplierDoc}
+                  onClick={() => setShowQuickSupplierPopup(true)}
+                  disabled={isSubmitting}
                 >
-                  {resolvingSupplierDoc ? 'Consultando...' : 'Consultar DNI/RUC'}
+                  Proveedor rápido
                 </button>
               </div>
             </div>
-            <input
-              ref={supplierImportFileInputRef}
-              type="file"
-              accept=".xlsx,.xls"
-              style={{ display: 'none' }}
-              onChange={(event) => void handleSupplierImportFileChange(event)}
-            />
             <input
               ref={supplierImportFileInputRef}
               type="file"
@@ -2813,6 +2902,8 @@ export function PurchasesView({
                 <option value="ALL">Todos</option>
                 <option value="PURCHASE_ORDER">Orden de compra</option>
                 <option value="PURCHASE">Compra</option>
+                <option value="NON_TAX_IN">Ingreso no tributario</option>
+                <option value="NON_TAX_OUT">Salida no tributaria</option>
                 <option value="ADJUSTMENT">Ajuste</option>
               </select>
             </label>
@@ -3113,6 +3204,92 @@ export function PurchasesView({
                 disabled={quickProductSaving || (warehouseId === null && Number(quickProductInitialQty || 0) > 0)}
               >
                 {quickProductSaving ? 'Guardando...' : 'Guardar producto'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showQuickSupplierPopup && typeof document !== 'undefined' && createPortal(
+        <div className="purchases-quick-product-modal-overlay" role="dialog" aria-modal="true" onClick={() => setShowQuickSupplierPopup(false)}>
+          <div className="purchases-quick-product-modal-card" onClick={(event) => event.stopPropagation()}>
+            <header className="purchases-quick-product-modal-head">
+              <div>
+                <h4>Crear proveedor rápido</h4>
+                <p className="purchases-quick-product-modal-copy">Registra proveedor manual cuando no aparece en la búsqueda.</p>
+              </div>
+              <button
+                type="button"
+                className="purchases-quick-product-modal-close"
+                onClick={() => setShowQuickSupplierPopup(false)}
+                aria-label="Cerrar"
+                disabled={submittingQuickSupplier}
+              >
+                ×
+              </button>
+            </header>
+
+            <label className="purchases-quick-product-field-control">
+              <span>Tipo documento</span>
+              <select value={quickSupplierDocType} onChange={(event) => setQuickSupplierDocType(event.target.value)}>
+                {QUICK_SUPPLIER_DOC_TYPE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="purchases-quick-product-field-control">
+              <span>Número documento *</span>
+              <input
+                type="text"
+                maxLength={20}
+                value={quickSupplierDocNumber}
+                onChange={(event) => setQuickSupplierDocNumber(sanitizeQuickSupplierDocNumber(event.target.value))}
+                placeholder="Ej. 20123456789"
+              />
+            </label>
+
+            <label className="purchases-quick-product-field-control">
+              <span>Nombre / Razón social *</span>
+              <input
+                type="text"
+                maxLength={180}
+                value={quickSupplierName}
+                onChange={(event) => setQuickSupplierName(event.target.value)}
+                placeholder="Ej. Proveedor SAC"
+              />
+            </label>
+
+            <div className="purchases-quick-product-modal-grid">
+              <label className="purchases-quick-product-field-control">
+                <span>Dirección</span>
+                <input
+                  type="text"
+                  maxLength={250}
+                  value={quickSupplierAddress}
+                  onChange={(event) => setQuickSupplierAddress(event.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+              <label className="purchases-quick-product-field-control">
+                <span>Teléfono</span>
+                <input
+                  type="text"
+                  maxLength={40}
+                  value={quickSupplierPhone}
+                  onChange={(event) => setQuickSupplierPhone(event.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+            </div>
+
+            <div className="purchases-quick-product-modal-actions">
+              <button type="button" onClick={() => setShowQuickSupplierPopup(false)} disabled={submittingQuickSupplier}>
+                Cancelar
+              </button>
+              <button type="button" onClick={() => void handleQuickCreateSupplier()} disabled={submittingQuickSupplier}>
+                {submittingQuickSupplier ? 'Guardando...' : 'Guardar proveedor'}
               </button>
             </div>
           </div>

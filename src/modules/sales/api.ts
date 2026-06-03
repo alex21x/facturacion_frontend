@@ -229,6 +229,21 @@ export async function createSalesCustomer(
   });
 }
 
+export async function updateSalesCustomer(
+  accessToken: string,
+  customerId: number,
+  payload: {
+    phone?: string | null;
+    address?: string | null;
+  }
+): Promise<{ message: string }> {
+  return apiClient.request(`/api/sales/customers/${customerId}`, {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function createCustomerVehicle(
   accessToken: string,
   customerId: number,
@@ -638,7 +653,16 @@ export async function createCommercialDocument(accessToken: string, form: Create
 
   const payments = isPreDocument
     ? []
-    : form.isCreditSale
+    : (form.documentKind === 'SALES_ORDER' && (form.splitPayments?.length ?? 0) > 0)
+      ? form.splitPayments!
+        .map((row) => ({
+          payment_method_id: Number(row.paymentMethodId),
+          amount: Number(Number(row.amount ?? 0).toFixed(2)),
+          status: 'PAID' as const,
+          paid_at: nowInLimaIso(),
+        }))
+        .filter((row) => row.payment_method_id > 0 && row.amount > 0)
+      : form.isCreditSale
       ? [
           ...(hasAdvance
             ? [{
@@ -693,6 +717,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
           ? ((form.receiptSendMode === 'SUMMARY') ? 'SUMMARY' : 'DIRECT')
           : null,
         customer_address: form.customerAddress?.trim() || null,
+        customer_phone: form.customerPhone?.trim() || null,
         source_document_id: form.noteAffectedDocumentId ?? null,
         note_reason_code: form.noteReasonCode?.trim() || null,
         has_detraccion: form.hasDetraccion ?? false,

@@ -362,7 +362,8 @@
   font-weight: 600;
 }
 
-.sales-vehicle-modal-field input {
+.sales-vehicle-modal-field input,
+.sales-vehicle-modal-field select {
   width: 100%;
   min-height: 2.35rem;
   border: 1px solid #cbd5e1;
@@ -373,10 +374,18 @@
   background: #fff;
 }
 
-.sales-vehicle-modal-field input:focus {
+.sales-vehicle-modal-field input:focus,
+.sales-vehicle-modal-field select:focus {
   outline: none;
   border-color: #7f9d91;
   box-shadow: 0 0 0 3px rgba(95, 127, 114, 0.18);
+}
+
+.sales-vehicle-modal-field input:disabled,
+.sales-vehicle-modal-field select:disabled {
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: not-allowed;
 }
 
 .sales-vehicle-modal-field--last {

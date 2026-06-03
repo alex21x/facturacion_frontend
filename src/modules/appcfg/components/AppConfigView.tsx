@@ -296,6 +296,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
         'SALES_FREE_ITEMS_ENABLED',
         'SALES_GLOBAL_DISCOUNT_ENABLED',
         'SALES_ITEM_DISCOUNT_ENABLED',
+        'SALES_ORDER_MULTI_PAYMENT_ENABLED',
         'SALES_PERCEPCION_ENABLED',
         'SALES_RETENCION_ENABLED',
         'SALES_SELLER_TO_CASHIER',

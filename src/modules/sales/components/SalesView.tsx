@@ -22,6 +22,7 @@ import {
   createCommercialDocument,
   createSalesCustomer,
   createCustomerVehicle,
+  updateSalesCustomer,
   fetchCommercialDocuments,
   exportCommercialDocumentsExcel,
   exportCommercialDocumentsJson,
@@ -336,6 +337,7 @@ const initialForm: CreateDocumentForm = {
   taxCategoryId: null,
   customerQuery: '',
   customerAddress: '',
+  customerPhone: '',
   notes: '',
   productQuery: '',
   manualDescription: '',
@@ -355,6 +357,7 @@ const initialForm: CreateDocumentForm = {
   sunatOperationTypeCode: '',
   isCreditSale: false,
   creditInstallments: [],
+  splitPayments: [],
   advanceAmount: 0,
   globalDiscountAmount: 0,
   draftLineDiscount: 0,
@@ -1369,6 +1372,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [quickCustomerPhone, setQuickCustomerPhone] = useState('');
   const [quickCustomerUseAutoDoc8, setQuickCustomerUseAutoDoc8] = useState(true);
   const [quickCustomerDoc8, setQuickCustomerDoc8] = useState('99999999');
+  const [quickCustomerTypeId, setQuickCustomerTypeId] = useState<number | null>(null);
+  const [quickCustomerDocManual, setQuickCustomerDocManual] = useState('');
   const [newVehiclePlate, setNewVehiclePlate] = useState('');
   const [newVehicleBrand, setNewVehicleBrand] = useState('');
   const [newVehicleModel, setNewVehicleModel] = useState('');
@@ -1592,6 +1597,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const salesItemDiscountEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ITEM_DISCOUNT_ENABLED', false);
   const salesFreeItemsEnabled = featureEnabled(lookups?.commerce_features, 'SALES_FREE_ITEMS_ENABLED', false);
   const workshopMultiVehicleEnabled = featureEnabled(lookups?.commerce_features, 'SALES_WORKSHOP_MULTI_VEHICLE', false);
+  const salesOrderMultiPaymentEnabled = featureEnabled(lookups?.commerce_features, 'SALES_ORDER_MULTI_PAYMENT_ENABLED', false);
   const taxBridgeEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE', false);
   const taxBridgeDebugEnabled = featureEnabled(lookups?.commerce_features, 'SALES_TAX_BRIDGE_DEBUG_VIEW', false);
   const taxBridgeDebugConfig = featureConfig(lookups?.commerce_features, 'SALES_TAX_BRIDGE_DEBUG_VIEW');
@@ -1995,6 +2001,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     );
   }, [form.globalDiscountAmount, itemDiscountTotal, salesGlobalDiscountEnabled, subtotal, taxTotal]);
   const grandTotal = useMemo(() => Math.max(subtotal + taxTotal - itemDiscountTotal - globalDiscountAmount, 0), [globalDiscountAmount, itemDiscountTotal, subtotal, taxTotal]);
+  const normalizedSplitPayments = useMemo(() => {
+    return (form.splitPayments ?? [])
+      .map((row) => ({
+        paymentMethodId: Number(row.paymentMethodId ?? 0),
+        amount: Number(row.amount ?? 0),
+      }))
+      .filter((row) => row.paymentMethodId > 0 && row.amount > 0);
+  }, [form.splitPayments]);
+  const splitPaymentsTotal = useMemo(
+    () => normalizedSplitPayments.reduce((acc, row) => acc + Number(row.amount), 0),
+    [normalizedSplitPayments]
+  );
   const creditInstallments = form.creditInstallments ?? [];
   const normalizedAdvanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
   const cappedAdvanceAmount = Math.min(normalizedAdvanceAmount, grandTotal);
@@ -2541,7 +2559,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         });
 
         if (requestSeq === documentsRequestSeqRef.current) {
-          setDocuments(sortDocumentsLatestFirst(docs.data ?? []));
+          const pendingRows = docs.data ?? [];
+          const visibleRows = isCashierPendingQueue
+            ? pendingRows.filter((row) => !toBooleanFlag(row.has_tributary_conversion) && !toBooleanFlag(row.has_order_conversion))
+            : pendingRows;
+
+          setDocuments(sortDocumentsLatestFirst(visibleRows));
           setDocumentsMeta(docs.meta ?? {
             page: documentsPage,
             per_page: documentsMeta.per_page,
@@ -3100,6 +3123,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       customerVehicleId: null,
       customerQuery: `${customer.doc_number ?? 'SIN-DOC'} - ${customer.name}`,
       customerAddress: customer.address ?? '',
+      customerPhone: customer.phone ?? '',
       noteAffectedDocumentId: null,
       noteReasonCode: '',
       hasDetraccion: false,
@@ -3136,6 +3160,42 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setAutoPriceTierId(auto.priceTierId);
       setAutoPriceDiscountPercent(auto.discountPercent);
       setForm((prev) => ({ ...prev, unitPrice: auto.price }));
+    }
+  }
+
+  async function persistSelectedCustomerPhone() {
+    if (!workshopMultiVehicleEnabled) {
+      return;
+    }
+
+    const customerId = Number(form.customerId ?? 0);
+    if (customerId <= 0) {
+      return;
+    }
+
+    const nextPhone = String(form.customerPhone ?? '').trim();
+    const currentPhone = String(selectedCustomer?.phone ?? '').trim();
+    if (nextPhone === currentPhone) {
+      return;
+    }
+
+    try {
+      await updateSalesCustomer(accessToken, customerId, {
+        phone: nextPhone === '' ? null : nextPhone,
+      });
+      setSelectedCustomer((prev) => {
+        if (!prev || Number(prev.id) !== customerId) {
+          return prev;
+        }
+
+        return {
+          ...prev,
+          phone: nextPhone === '' ? null : nextPhone,
+        };
+      });
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo actualizar el teléfono del cliente';
+      setMessage(text);
     }
   }
 
@@ -4302,6 +4362,34 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return active ? active.id : null;
   }
 
+  function resolveDocTypeFromSunatCode(sunatCode: number): string | null {
+    if (sunatCode === 1) return '1';
+    if (sunatCode === 6) return '6';
+    if (sunatCode === 4) return '4';
+    if (sunatCode === 7) return '7';
+    return null;
+  }
+
+  function validateQuickCustomerManualDoc(sunatCode: number | null, docNumber: string): string | null {
+    if (!docNumber) {
+      return 'Ingrese número de documento para cliente rápido manual.';
+    }
+
+    if (sunatCode === 1 && !/^\d{8}$/.test(docNumber)) {
+      return 'El DNI debe tener 8 dígitos.';
+    }
+
+    if (sunatCode === 6 && !/^\d{11}$/.test(docNumber)) {
+      return 'El RUC debe tener 11 dígitos.';
+    }
+
+    if (docNumber.length < 4) {
+      return 'Ingrese un número de documento válido.';
+    }
+
+    return null;
+  }
+
   async function handleQuickCreateCustomer() {
     const legalName = quickCustomerName.trim();
     if (!legalName) {
@@ -4333,7 +4421,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               doc_number: candidate,
               legal_name: legalName,
               address: quickCustomerAddress.trim() || null,
-              phone: quickCustomerPhone.trim() || null,
+              phone: workshopMultiVehicleEnabled ? (quickCustomerPhone.trim() || null) : null,
               status: 1,
             });
             createdDocNumber = candidate;
@@ -4353,18 +4441,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           throw new Error('No hay correlativos disponibles para documento automático de 8 dígitos.');
         }
       } else {
-        const customDoc = quickCustomerDoc8.trim();
-        if (!/^\d{8}$/.test(customDoc)) {
-          throw new Error('El documento rápido debe tener 8 dígitos.');
+        const manualTypeId = quickCustomerTypeId;
+        if (!manualTypeId) {
+          throw new Error('Seleccione el tipo de documento para cliente rápido manual.');
+        }
+
+        const selectedType = types.find((row) => row.id === manualTypeId) ?? null;
+        if (!selectedType) {
+          throw new Error('Tipo de cliente no válido para creación manual.');
+        }
+
+        const customDoc = quickCustomerDocManual.trim().toUpperCase().replace(/\s+/g, '');
+        const validationError = validateQuickCustomerManualDoc(selectedType.sunat_code ?? null, customDoc);
+        if (validationError) {
+          throw new Error(validationError);
         }
 
         await createSalesCustomer(accessToken, {
-          doc_type: '1',
-          customer_type_id: customerTypeId,
+          doc_type: resolveDocTypeFromSunatCode(Number(selectedType.sunat_code ?? 0)),
+          customer_type_id: manualTypeId,
           doc_number: customDoc,
           legal_name: legalName,
           address: quickCustomerAddress.trim() || null,
-          phone: quickCustomerPhone.trim() || null,
+          phone: workshopMultiVehicleEnabled ? (quickCustomerPhone.trim() || null) : null,
           status: 1,
         });
         createdDocNumber = customDoc;
@@ -4381,6 +4480,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setQuickCustomerName('');
       setQuickCustomerAddress('');
       setQuickCustomerPhone('');
+      setQuickCustomerDocManual('');
       setShowQuickCustomerPopup(false);
       setMessage('Cliente rápido creado correctamente.');
     } catch (error) {
@@ -4389,6 +4489,36 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setSubmittingQuickCustomer(false);
     }
   }
+
+  useEffect(() => {
+    if (!showQuickCustomerPopup) {
+      return;
+    }
+
+    if (customerTypesCatalog.length === 0 && !loadingCustomerTypesCatalog) {
+      void ensureCustomerTypesCatalog();
+    }
+
+    if (customerTypesCatalog.length > 0) {
+      if (quickCustomerUseAutoDoc8) {
+        const dniTypeId = resolveDniCustomerTypeId(customerTypesCatalog);
+        if (dniTypeId && quickCustomerTypeId !== dniTypeId) {
+          setQuickCustomerTypeId(dniTypeId);
+        }
+      } else if (quickCustomerTypeId === null) {
+        const active = customerTypesCatalog.find((row) => Boolean(row.is_active));
+        if (active) {
+          setQuickCustomerTypeId(active.id);
+        }
+      }
+    }
+  }, [
+    showQuickCustomerPopup,
+    quickCustomerUseAutoDoc8,
+    quickCustomerTypeId,
+    customerTypesCatalog,
+    loadingCustomerTypesCatalog,
+  ]);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -4497,6 +4627,24 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         }
       }
 
+      const targetStatus = effectiveDocumentKind === 'QUOTATION'
+        ? 'DRAFT'
+        : (effectiveDocumentKind === 'SALES_ORDER' && salesFlowMode === 'DIRECT_CASHIER' ? 'ISSUED' : (effectiveDocumentKind === 'SALES_ORDER' ? 'DRAFT' : 'ISSUED'));
+
+      if (
+        salesOrderMultiPaymentEnabled
+        && effectiveDocumentKind === 'SALES_ORDER'
+        && targetStatus === 'ISSUED'
+        && !form.isCreditSale
+        && normalizedSplitPayments.length > 0
+      ) {
+        if (Math.abs(splitPaymentsTotal - grandTotal) > 0.01) {
+          setMessage(`La suma de pagos debe ser ${grandTotal.toFixed(2)} para emitir la nota de pedido.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const payloadItems = cart.length > 0
         ? cart.map((item) => ({
             ...item,
@@ -4571,6 +4719,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       const normalizedDocumentMetadata = {
         customer_address: form.customerAddress?.trim() || null,
+        customer_phone: form.customerPhone?.trim() || null,
         discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
         has_detraccion: form.hasDetraccion ?? false,
         detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
@@ -4675,10 +4824,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
-      const targetStatus = effectiveDocumentKind === 'QUOTATION'
-        ? 'DRAFT'
-        : (effectiveDocumentKind === 'SALES_ORDER' && salesFlowMode === 'DIRECT_CASHIER' ? 'ISSUED' : (effectiveDocumentKind === 'SALES_ORDER' ? 'DRAFT' : 'ISSUED'));
-
       const selectedRestaurantTable = (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER')
         ? restaurantTables.find((row) => row.id === (form.restaurantTableId ?? 0))
         : null;
@@ -4692,6 +4837,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         status: targetStatus,
         noteAffectedDocumentId: form.noteAffectedDocumentId ?? null,
         noteReasonCode: form.noteReasonCode ?? '',
+        splitPayments: salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER'
+          ? normalizedSplitPayments
+          : [],
         items: payloadItems,
         branchId,
         warehouseId,
@@ -4770,6 +4918,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             percepcion_account_number: lookups?.percepcion_account?.account_number ?? null,
             percepcion_bank_name: lookups?.percepcion_account?.bank_name ?? null,
             payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
+            payment_breakdown: salesOrderMultiPaymentEnabled
+              ? normalizedSplitPayments.map((row) => ({
+                  payment_method_id: row.paymentMethodId,
+                  amount: Number(row.amount.toFixed(2)),
+                }))
+              : [],
             credit_installments: form.isCreditSale
               ? (form.creditInstallments ?? []).map((row, index) => ({
                   installment_no: index + 1,
@@ -4873,6 +5027,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         isCreditSale: false,
         creditInstallments: [],
         advanceAmount: 0,
+        splitPayments: [],
         qty: 1,
         unitPrice: 0,
       }));
@@ -4940,6 +5095,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         issue_at: nowIso,
         cash_register_id: cashRegisterId ?? undefined,
         payment_method_id: form.paymentMethodId ? Number(form.paymentMethodId) : undefined,
+        payments: (salesOrderMultiPaymentEnabled && targetDocumentKind === 'SALES_ORDER' && normalizedSplitPayments.length > 0)
+          ? normalizedSplitPayments.map((row) => ({
+              payment_method_id: row.paymentMethodId,
+              amount: Number(row.amount.toFixed(2)),
+              status: 'PAID' as const,
+              paid_at: nowIso,
+            }))
+          : undefined,
         defer_sunat_send: true,
       });
 
@@ -5371,6 +5534,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         notes?: string | null;
         customerDocNumber?: string;
         customerAddress?: string;
+        customerPhone?: string;
         items?: Array<{
           productId?: number | null;
           unitId?: number | null;
@@ -5428,6 +5592,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
         customerAddress: details.customerAddress ?? '',
+        customerPhone: details.customerPhone ?? '',
         notes: details.notes ?? '',
         issueDate: TODAY,
         series: '',
@@ -5476,6 +5641,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         currencyId?: number;
         paymentMethodId?: number | null;
         notes?: string | null;
+        customerPhone?: string;
         items?: Array<{
           productId?: number | null;
           unitId?: number | null;
@@ -5545,6 +5711,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
         customerAddress: details.customerAddress ?? '',
+        customerPhone: details.customerPhone ?? '',
         notes: details.notes ?? '',
         issueDate: details.issueDate ? String(details.issueDate).slice(0, 10) : prev.issueDate,
         dueDate: details.dueDate ? String(details.dueDate).slice(0, 10) : '',
@@ -5997,6 +6164,20 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             />
           </label>
 
+          {workshopMultiVehicleEnabled && (
+            <label className="sales-field-address">
+              Telefono
+              <input
+                value={form.customerPhone ?? ''}
+                onChange={(e) => setForm((prev) => ({ ...prev, customerPhone: e.target.value }))}
+                onBlur={() => {
+                  void persistSelectedCustomerPhone();
+                }}
+                placeholder="Telefono del cliente"
+              />
+            </label>
+          )}
+
           <label className="sales-field-address">
             Observaciones
             <input
@@ -6025,7 +6206,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
         </div>
 
-        <details className="sales-meta-collapse" open={isNoteDocument || form.isCreditSale || form.hasDetraccion || form.hasRetencion || form.hasPercepcion || (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER')}>
+        <details className="sales-meta-collapse" open={isNoteDocument || form.isCreditSale || form.hasDetraccion || form.hasRetencion || form.hasPercepcion || (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER') || (salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER')}>
           <summary className="sales-meta-collapse-summary">Datos adicionales</summary>
           <div className="sales-grid-meta sales-grid-meta-secondary">
             <div className="sales-igv-toggle-row">
@@ -6069,6 +6250,87 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     ))}
                 </select>
               </label>
+            )}
+
+            {salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER' && (
+              <div className="sales-field-address" style={{ display: 'grid', gap: 8 }}>
+                <strong>Pagos por método</strong>
+                {(form.splitPayments ?? []).map((row, index) => (
+                  <div key={`split-payment-${index}`} style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(160px, 1fr) 130px auto' }}>
+                    <select
+                      value={Number(row.paymentMethodId ?? 0)}
+                      onChange={(event) => {
+                        const nextMethodId = Number(event.target.value || 0);
+                        setForm((prev) => ({
+                          ...prev,
+                          splitPayments: (prev.splitPayments ?? []).map((entry, entryIndex) => (
+                            entryIndex === index
+                              ? { ...entry, paymentMethodId: nextMethodId }
+                              : entry
+                          )),
+                        }));
+                      }}
+                    >
+                      <option value={0}>Seleccionar método</option>
+                      {(lookups?.payment_methods ?? []).map((method) => (
+                        <option key={`split-method-${method.id}`} value={method.id}>{method.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={row.amount ?? 0}
+                      onChange={(event) => {
+                        const nextAmount = Number(event.target.value || 0);
+                        setForm((prev) => ({
+                          ...prev,
+                          splitPayments: (prev.splitPayments ?? []).map((entry, entryIndex) => (
+                            entryIndex === index
+                              ? { ...entry, amount: nextAmount }
+                              : entry
+                          )),
+                        }));
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      onClick={() => {
+                        setForm((prev) => ({
+                          ...prev,
+                          splitPayments: (prev.splitPayments ?? []).filter((_, entryIndex) => entryIndex !== index),
+                        }));
+                      }}
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    className="btn-mini"
+                    onClick={() => {
+                      setForm((prev) => ({
+                        ...prev,
+                        splitPayments: [
+                          ...(prev.splitPayments ?? []),
+                          {
+                            paymentMethodId: Number(form.paymentMethodId ?? 0),
+                            amount: 0,
+                          },
+                        ],
+                      }));
+                    }}
+                  >
+                    + Agregar pago
+                  </button>
+                  <small>
+                    Total pagos: {splitPaymentsTotal.toFixed(2)} / Total documento: {grandTotal.toFixed(2)}
+                  </small>
+                </div>
+              </div>
             )}
 
             {isTributaryDocument && (
@@ -6995,6 +7257,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <p className="sales-vehicle-modal-copy">Ideal para clientes eventuales (ej. colegios) con documento automático de 8 dígitos.</p>
             <div>
               <label className="sales-vehicle-modal-field">
+                <span>Tipo de documento *</span>
+                <select
+                  value={quickCustomerTypeId ?? ''}
+                  onChange={(e) => setQuickCustomerTypeId(e.target.value ? Number(e.target.value) : null)}
+                  disabled={loadingCustomerTypesCatalog}
+                >
+                  <option value="">Seleccione tipo</option>
+                  {customerTypesCatalog
+                    .map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.name} {row.sunat_abbr ? `(${row.sunat_abbr})` : ''}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label className="sales-vehicle-modal-field">
                 <span>Nombre / Razón social *</span>
                 <input type="text" maxLength={180} value={quickCustomerName} onChange={(e) => setQuickCustomerName(e.target.value)} placeholder="Ej. Colegio Santa Rosa" />
               </label>
@@ -7002,10 +7280,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 <span>Dirección</span>
                 <input type="text" maxLength={250} value={quickCustomerAddress} onChange={(e) => setQuickCustomerAddress(e.target.value)} placeholder="Opcional" />
               </label>
-              <label className="sales-vehicle-modal-field">
-                <span>Teléfono</span>
-                <input type="text" maxLength={40} value={quickCustomerPhone} onChange={(e) => setQuickCustomerPhone(e.target.value)} placeholder="Opcional" />
-              </label>
+              {workshopMultiVehicleEnabled && (
+                <label className="sales-vehicle-modal-field">
+                  <span>Teléfono</span>
+                  <input type="text" maxLength={40} value={quickCustomerPhone} onChange={(e) => setQuickCustomerPhone(e.target.value)} placeholder="Opcional" />
+                </label>
+              )}
               <label className="sales-vehicle-modal-field">
                 <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input
@@ -7017,15 +7297,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 </span>
               </label>
               <label className="sales-vehicle-modal-field sales-vehicle-modal-field--last">
-                <span>Documento 8 dígitos</span>
+                <span>{quickCustomerUseAutoDoc8 ? 'Documento 8 dígitos' : 'Número documento *'}</span>
                 <input
                   type="text"
-                  inputMode="numeric"
-                  maxLength={8}
-                  value={quickCustomerDoc8}
-                  onChange={(e) => setQuickCustomerDoc8(e.target.value.replace(/\D+/g, '').slice(0, 8))}
+                  inputMode={quickCustomerUseAutoDoc8 ? 'numeric' : 'text'}
+                  maxLength={quickCustomerUseAutoDoc8 ? 8 : 20}
+                  value={quickCustomerUseAutoDoc8 ? quickCustomerDoc8 : quickCustomerDocManual}
+                  onChange={(e) => {
+                    if (quickCustomerUseAutoDoc8) {
+                      setQuickCustomerDoc8(e.target.value.replace(/\D+/g, '').slice(0, 8));
+                    } else {
+                      setQuickCustomerDocManual(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 20));
+                    }
+                  }}
                   disabled={quickCustomerUseAutoDoc8}
-                  placeholder="99999999"
+                  placeholder={quickCustomerUseAutoDoc8 ? '99999999' : 'Ingrese documento'}
                 />
               </label>
               <div className="sales-vehicle-modal-actions">

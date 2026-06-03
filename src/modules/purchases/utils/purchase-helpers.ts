@@ -98,6 +98,12 @@ export function entryTypeLabel(entryType: StockEntryType): string {
   if (entryType === 'PURCHASE_ORDER') {
     return 'Orden de compra';
   }
+  if (entryType === 'NON_TAX_IN') {
+    return 'Ingreso no tributario';
+  }
+  if (entryType === 'NON_TAX_OUT') {
+    return 'Salida no tributaria';
+  }
   return 'Ajuste';
 }
 

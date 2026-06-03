@@ -224,6 +224,10 @@
   padding: 0 1rem;
 }
 
+.purchases-quick-product-modal-grid .purchases-quick-product-field-control {
+  margin: 0;
+}
+
 .purchases-quick-product-field-control {
   display: flex;
   flex-direction: column;
@@ -242,6 +246,7 @@
   border: 1px solid var(--quick-input-border);
   border-radius: 10px;
   min-height: 38px;
+  padding: 0.5rem 0.62rem;
   background: #fffefb;
   color: #382a1b;
   transition: border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;

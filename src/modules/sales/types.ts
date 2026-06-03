@@ -162,6 +162,14 @@ export type ConvertCommercialDocumentPayload = {
   due_at?: string;
   cash_register_id?: number | null;
   payment_method_id?: number | null;
+  payments?: Array<{
+    payment_method_id: number;
+    amount: number;
+    status?: 'PENDING' | 'PAID' | 'CANCELED';
+    paid_at?: string;
+    due_at?: string;
+    notes?: string | null;
+  }>;
   defer_sunat_send?: boolean;
 };
 
@@ -314,6 +322,7 @@ export type SalesCustomerSuggestion = {
   trade_name: string | null;
   plate: string | null;
   address: string | null;
+  phone?: string | null;
   default_tier_id: number | null;
   default_tier_code?: string | null;
   default_tier_name?: string | null;
@@ -418,6 +427,7 @@ export type CreateDocumentForm = {
   taxCategoryId: number | null;
   customerQuery: string;
   customerAddress: string;
+  customerPhone?: string;
   notes?: string;
   productQuery: string;
   manualDescription: string;
@@ -440,6 +450,10 @@ export type CreateDocumentForm = {
     amount: number;
     dueDate: string;
     observation?: string;
+  }>;
+  splitPayments?: Array<{
+    paymentMethodId: number;
+    amount: number;
   }>;
   advanceAmount?: number;
   globalDiscountAmount?: number;

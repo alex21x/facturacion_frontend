@@ -1,5 +1,6 @@
 import { apiClient } from '../../shared/api/client';
 import type { CreateStockEntryPayload, UpdateStockEntryPayload, StockEntryRow, PurchasesLookups, PaginatedStockEntries } from './types';
+import type { StockEntryType } from './types';
 
 function authHeaders(accessToken: string): HeadersInit {
   return {
@@ -10,7 +11,7 @@ function authHeaders(accessToken: string): HeadersInit {
 
 export async function fetchStockEntries(
   accessToken: string,
-  params?: { warehouseId?: number | null; entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null; limit?: number }
+  params?: { warehouseId?: number | null; entryType?: StockEntryType | null; limit?: number }
 ): Promise<StockEntryRow[]> {
   const query = new URLSearchParams();
 
@@ -98,7 +99,7 @@ export async function fetchPurchasesReport(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    entryType?: StockEntryType | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -146,7 +147,7 @@ async function exportPurchasesFile(
   format: 'csv' | 'xlsx',
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    entryType?: StockEntryType | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -196,7 +197,7 @@ export async function exportPurchasesExcel(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    entryType?: StockEntryType | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -209,7 +210,7 @@ export async function exportPurchasesCsv(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    entryType?: StockEntryType | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
@@ -222,7 +223,7 @@ export async function exportPurchasesJson(
   accessToken: string,
   params?: {
     warehouseId?: number | null;
-    entryType?: 'PURCHASE' | 'ADJUSTMENT' | 'PURCHASE_ORDER' | null;
+    entryType?: StockEntryType | null;
     reference?: string;
     dateFrom?: string;
     dateTo?: string;
