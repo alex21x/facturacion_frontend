@@ -184,6 +184,14 @@ export type UpdateCommercialDocumentPayload = {
   customer_vehicle_id?: number | null;
   currency_id?: number;
   payment_method_id?: number | null;
+  payments?: Array<{
+    payment_method_id: number;
+    amount: number;
+    status?: 'PENDING' | 'PAID' | 'CANCELED';
+    paid_at?: string;
+    due_at?: string;
+    notes?: string | null;
+  }>;
   notes?: string;
   metadata?: Record<string, unknown>;
   items?: Array<{

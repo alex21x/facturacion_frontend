@@ -4782,6 +4782,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         });
 
         await updateCommercialDocument(accessToken, editingDocumentId, {
+          payments: salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER' && !form.isCreditSale
+            ? ((normalizedSplitPayments.length > 0
+              ? normalizedSplitPayments
+              : [{ paymentMethodId: Number(form.paymentMethodId), amount: Number(grandTotal.toFixed(2)) }])
+              .map((row) => ({
+                payment_method_id: Number(row.paymentMethodId),
+                amount: Number(Number(row.amount ?? 0).toFixed(2)),
+                status: 'PAID' as const,
+                paid_at: nowLimaIso(),
+              }))
+              .filter((row) => row.payment_method_id > 0 && row.amount > 0))
+            : undefined,
           document_kind: effectiveDocumentKind,
           document_kind_id: selectedEffectiveDocumentKind?.id ?? null,
           branch_id: branchId,
@@ -5640,6 +5652,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         customerVehicleId?: number | null;
         currencyId?: number;
         paymentMethodId?: number | null;
+        payments?: Array<{
+          payment_method_id?: number | null;
+          amount?: number;
+          status?: string;
+        }>;
         notes?: string | null;
         customerPhone?: string;
         items?: Array<{
@@ -5701,6 +5718,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         unitPrice: Number(item.unitPrice),
       }));
 
+      const detailPayments = Array.isArray(details.payments) ? details.payments : [];
+      const metadataPaymentBreakdown = Array.isArray(details.metadata?.payment_breakdown)
+        ? (details.metadata?.payment_breakdown as Array<Record<string, unknown>>)
+        : [];
+
+      const splitPaymentsFromDetails = detailPayments
+        .filter((row) => String(row?.status ?? 'PAID').toUpperCase() !== 'CANCELED')
+        .map((row) => ({
+          paymentMethodId: Number(row.payment_method_id ?? 0),
+          amount: Number(Number(row.amount ?? 0).toFixed(2)),
+        }))
+        .filter((row) => row.paymentMethodId > 0 && row.amount > 0);
+
+      const splitPaymentsFromMetadata = metadataPaymentBreakdown
+        .filter((row) => String(row?.status ?? 'PAID').toUpperCase() !== 'CANCELED')
+        .map((row) => ({
+          paymentMethodId: Number(row.payment_method_id ?? 0),
+          amount: Number(Number(row.amount ?? 0).toFixed(2)),
+        }))
+        .filter((row) => row.paymentMethodId > 0 && row.amount > 0);
+
+      const resolvedSplitPayments = splitPaymentsFromDetails.length > 0
+        ? splitPaymentsFromDetails
+        : splitPaymentsFromMetadata;
+
       setCart(editableItems);
       setForm((prev) => ({
         ...prev,
@@ -5724,6 +5766,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         isManualItem: false,
         draftIsFreeOperation: false,
         draftLineDiscount: 0,
+        splitPayments: resolvedSplitPayments,
         qty: 1,
       }));
 
