@@ -99,6 +99,47 @@ Use this skill to design, audit, and implement a performance plan for Laravel AP
 5. Worker/cron coverage is confirmed for async flows.
 6. Railway memory and CPU remain within safe limits.
 
+## Recurring Errors To Avoid (Project Guardrails)
+Use this section as a hard gate before merging performance-related changes.
+
+1. Never run runtime DDL in request paths.
+- Forbidden in controllers/services/repositories handling API requests: `ALTER TABLE ...`, schema bootstrap, or migration-like fixes.
+- Move schema fixes to migrations.
+
+2. Never run repeated `information_schema` checks per request.
+- If table/column existence must be validated, cache the result (short TTL + request-local memoization).
+- Do not call existence checks inside loops.
+
+3. Avoid N+1 feature-toggle resolution.
+- Do not query `company_feature_toggles`, `branch_feature_toggles`, `vertical_feature_templates`, or `company_vertical_feature_overrides` one feature at a time.
+- Always prewarm in bulk and resolve from in-memory maps.
+
+4. Do not count paginated lists with the heavy joined query.
+- Build a lightweight count query with only required joins/filters.
+- Keep expensive select joins only for the page rows.
+
+5. Do not perform no-op UPDATEs in hot GET endpoints.
+- Before updating computed fields (example: `expected_balance`), compare current vs computed value and skip update when unchanged.
+
+6. Do not force full recalculation/sync on every read.
+- For read endpoints that perform sync steps, track whether sync produced real changes.
+- Recalculate only if changes occurred.
+
+7. Do not normalize or repair master data at runtime.
+- One-time data normalization belongs in guarded migrations, not in request handlers.
+
+8. Cache lookups with short TTL and explicit invalidation points.
+- Good candidates: bootstrap lookups, catalogs, product commercial config, and feature context bundles.
+- Invalidate cache explicitly after writes that modify those payloads.
+
+## Prevention Checklist Before Closing Any Performance Fix
+1. Search diff for forbidden runtime DDL or data-fix statements.
+2. Verify no new `information_schema` calls were added in hot paths without cache.
+3. Verify toggle resolution uses bulk prewarm, not per-feature SQL.
+4. Verify list endpoint pagination uses lightweight count.
+5. Verify hot GET flows do not execute unconditional UPDATEs.
+6. Validate syntax/errors and confirm with production slow-SQL logs after deploy.
+
 ## Deliverables
 1. Bottleneck summary.
 2. Index plan.
