@@ -1674,6 +1674,7 @@ export function InventoryView({
             <table className="inventory-table inventory-stock-table">
               <thead>
                 <tr>
+                  <th>N°</th>
                   <th>Producto</th>
                   <th>SKU</th>
                   <th>Almacen</th>
@@ -1684,10 +1685,11 @@ export function InventoryView({
               </thead>
               <tbody>
                 {filteredStock.length === 0 && (
-                  <tr><td colSpan={6} style={{ textAlign: 'center' }}>Sin datos</td></tr>
+                  <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin datos</td></tr>
                 )}
-                {paginatedStock.map((row) => (
+                {paginatedStock.map((row, index) => (
                   <tr key={`${row.product_id}-${row.warehouse_id}`}>
+                    <td>{(stockPage - 1) * stockPerPage + index + 1}</td>
                     <td className="inventory-cell-product" title={row.product_name}>{row.product_name}</td>
                     <td>{row.sku ?? '-'}</td>
                     <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
@@ -1708,7 +1710,7 @@ export function InventoryView({
             </table>
 
             {filteredStock.length > 0 && (
-              <div className="module-header" style={{ marginTop: '0.65rem' }}>
+              <div className="inventory-pagination">
                 <button
                   type="button"
                   onClick={() => setStockPage(1)}
@@ -1723,9 +1725,9 @@ export function InventoryView({
                 >
                   Anterior
                 </button>
-                <p style={{ margin: 0 }}>
+                <span className="pagination-info">
                   Página {stockPage} de {stockTotalPages} — {filteredStock.length} registros
-                </p>
+                </span>
                 <button
                   type="button"
                   onClick={() => setStockPage((p) => Math.min(stockTotalPages, p + 1))}
@@ -2043,7 +2045,7 @@ export function InventoryView({
               El kardex valorizado muestra costo neto real. Si la compra se registró con "Incluye IGV en costos", ese valor ya fue normalizado antes de entrar al inventario.
             </p>
 
-            <div className="module-header" style={{ marginTop: '0.8rem' }}>
+            <div className="inventory-pagination">
               <button
                 type="button"
                 onClick={() => { const p = 1; setKardexPage(p); void loadKardex(p); }}
@@ -2058,9 +2060,9 @@ export function InventoryView({
               >
                 Anterior
               </button>
-              <p style={{ margin: 0 }}>
+              <span className="pagination-info">
                 Página {kardexMeta.current_page} de {Math.max(1, kardexMeta.total_pages)} — {kardexMeta.total} registros
-              </p>
+              </span>
               <button
                 type="button"
                 onClick={() => { const p = Math.min(kardexMeta.total_pages || 1, kardexPage + 1); setKardexPage(p); void loadKardex(p); }}
@@ -2195,7 +2197,7 @@ export function InventoryView({
             </table>
 
             {!importBatchesLoading && importBatches.length > 0 && (
-              <div className="module-header" style={{ marginTop: '0.65rem' }}>
+              <div className="inventory-pagination">
                 <button
                   type="button"
                   onClick={() => setImportBatchesPage(1)}
@@ -2210,9 +2212,9 @@ export function InventoryView({
                 >
                   Anterior
                 </button>
-                <p style={{ margin: 0 }}>
+                <span className="pagination-info">
                   Página {importBatchesPage} de {importBatchesTotalPages} — {importBatches.length} lotes
-                </p>
+                </span>
                 <button
                   type="button"
                   onClick={() => setImportBatchesPage((p) => Math.min(importBatchesTotalPages, p + 1))}
@@ -2270,7 +2272,7 @@ export function InventoryView({
               </table>
 
               {importBatchItems.length > 0 && (
-                <div className="module-header" style={{ marginTop: '0.65rem' }}>
+                <div className="inventory-pagination">
                   <button
                     type="button"
                     onClick={() => setImportBatchItemsPage(1)}
@@ -2285,9 +2287,9 @@ export function InventoryView({
                   >
                     Anterior
                   </button>
-                  <p style={{ margin: 0 }}>
+                  <span className="pagination-info">
                     Página {importBatchItemsPage} de {importBatchItemsTotalPages} — {importBatchItems.length} filas
-                  </p>
+                  </span>
                   <button
                     type="button"
                     onClick={() => setImportBatchItemsPage((p) => Math.min(importBatchItemsTotalPages, p + 1))}

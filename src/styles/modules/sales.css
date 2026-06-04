@@ -128,25 +128,43 @@
   grid-column: span 4;
 }
 
-@media (min-width: 900px) and (max-width: 1280px) {
+@media (min-width: 900px) and (max-width: 1366px) {
+  .sales-grid-row-item.has-line-tools.tax-on .sales-field-qty,
+  .sales-grid-row-item.has-line-tools.tax-on .sales-field-price,
+  .sales-grid-row-item.has-line-tools.tax-off .sales-field-qty,
+  .sales-grid-row-item.has-line-tools.tax-off .sales-field-price {
+    grid-column: span 3;
+  }
+
+  .sales-grid-row-item.has-line-tools.tax-on .sales-field-igv {
+    grid-column: span 2;
+  }
+
+  .sales-grid-row-item.has-line-tools.tax-on .sales-field-action,
+  .sales-grid-row-item.has-line-tools.tax-off .sales-field-action {
+    grid-column: span 2;
+  }
+
   .sales-grid-row-item .sales-field-qty input,
   .sales-grid-row-item .sales-field-price input {
-    min-width: 7.2rem;
-    font-size: 0.96rem;
-    padding-left: 0.58rem;
-    padding-right: 0.58rem;
+    min-width: 7.6rem;
+    min-height: 2.25rem;
+    font-size: 0.98rem;
+    padding-left: 0.6rem;
+    padding-right: 0.6rem;
   }
 
   .sales-cart-table-scroll .sales-col-qty,
   .sales-cart-table-scroll .sales-col-price {
-    width: 118px;
-    max-width: 118px;
+    width: 124px;
+    max-width: 124px;
   }
 
   .sales-cart-cell-input--qty,
   .sales-cart-cell-input--price {
-    min-width: 88px;
-    font-size: 0.94rem;
+    min-width: 96px;
+    min-height: 2.15rem;
+    font-size: 0.96rem;
   }
 }
 
