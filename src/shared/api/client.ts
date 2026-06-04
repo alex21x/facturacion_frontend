@@ -102,6 +102,10 @@ function resolveGetResponseCacheTtlMs(path: string): number {
     return 10000;
   }
 
+  if (path.startsWith('/api/purchases/lookups')) {
+    return 10000;
+  }
+
   if (path.startsWith('/api/sales/bootstrap') && /(^|[?&])include_documents=0(&|$)/.test(path)) {
     return 5000;
   }
