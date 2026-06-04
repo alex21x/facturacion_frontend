@@ -1344,9 +1344,11 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
           </div>
 
           <div className="ds-pagination">
+            <button className="ds-btn-secondary" type="button" disabled={page <= 1} onClick={() => setPage(1)}>Inicio</button>
             <button className="ds-btn-secondary" type="button" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Anterior</button>
             <span>Pagina {page} de {lastPage}</span>
             <button className="ds-btn-secondary" type="button" disabled={page >= lastPage} onClick={() => setPage((p) => Math.min(lastPage, p + 1))}>Siguiente</button>
+            <button className="ds-btn-secondary" type="button" disabled={page >= lastPage} onClick={() => setPage(lastPage)}>Última</button>
           </div>
         </section>
       )}

@@ -1342,13 +1342,20 @@ export function ProductsView({
               <div className="inventory-pagination">
                 <button
                   type="button"
+                  onClick={() => setProductsPage(1)}
+                  disabled={productsPage === 1}
+                >
+                  « Inicio
+                </button>
+                <button
+                  type="button"
                   onClick={() => setProductsPage((p) => Math.max(1, p - 1))}
                   disabled={productsPage === 1}
                 >
                   ← Anterior
                 </button>
                 <span className="pagination-info">
-                  Página {productsPage} de {totalProductsPages}
+                  Página {productsPage} de {totalProductsPages} — {filteredRows.length} registros
                 </span>
                 <button
                   type="button"
@@ -1356,6 +1363,13 @@ export function ProductsView({
                   disabled={productsPage === totalProductsPages}
                 >
                   Siguiente →
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProductsPage(totalProductsPages)}
+                  disabled={productsPage === totalProductsPages}
+                >
+                  Última »
                 </button>
               </div>
             )}

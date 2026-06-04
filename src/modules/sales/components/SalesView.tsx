@@ -7520,6 +7520,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <button
                 type="button"
                 disabled={loadingDocuments || documentsMeta.page <= 1}
+                onClick={() => setDocumentsPage(1)}
+              >
+                Inicio
+              </button>
+              <button
+                type="button"
+                disabled={loadingDocuments || documentsMeta.page <= 1}
                 onClick={() => setDocumentsPage((prev) => Math.max(1, prev - 1))}
               >
                 Anterior
@@ -7530,6 +7537,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 onClick={() => setDocumentsPage((prev) => Math.min(documentsMeta.last_page, prev + 1))}
               >
                 Siguiente
+              </button>
+              <button
+                type="button"
+                disabled={loadingDocuments || documentsMeta.page >= documentsMeta.last_page}
+                onClick={() => setDocumentsPage(documentsMeta.last_page)}
+              >
+                Última
               </button>
             </div>
           </div>
@@ -8253,6 +8267,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <button
               type="button"
               disabled={loading || documentsMeta.page <= 1}
+              onClick={() => setDocumentsPage(1)}
+            >
+              Inicio
+            </button>
+            <button
+              type="button"
+              disabled={loading || documentsMeta.page <= 1}
               onClick={() => setDocumentsPage((prev) => Math.max(1, prev - 1))}
             >
               Anterior
@@ -8263,6 +8284,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               onClick={() => setDocumentsPage((prev) => Math.min(documentsMeta.last_page, prev + 1))}
             >
               Siguiente
+            </button>
+            <button
+              type="button"
+              disabled={loading || documentsMeta.page >= documentsMeta.last_page}
+              onClick={() => setDocumentsPage(documentsMeta.last_page)}
+            >
+              Última
             </button>
           </div>
         </div>

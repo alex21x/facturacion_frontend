@@ -341,8 +341,10 @@ export function SummaryExceptionsPanel({ accessToken }: Props) {
           Pagina {list.meta.page} de {list.meta.last_page} · Total {list.meta.total}
         </small>
         <div className="sunat-exceptions__pager">
+          <button type="button" className="btn-mini" disabled={loading || page <= 1} onClick={() => setPage(1)}>Inicio</button>
           <button type="button" className="btn-mini" disabled={loading || page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Anterior</button>
           <button type="button" className="btn-mini" disabled={loading || page >= list.meta.last_page} onClick={() => setPage((current) => current + 1)}>Siguiente</button>
+          <button type="button" className="btn-mini" disabled={loading || page >= list.meta.last_page} onClick={() => setPage(list.meta.last_page)}>Última</button>
         </div>
       </div>
     </section>

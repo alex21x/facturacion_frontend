@@ -1334,6 +1334,14 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
               className="adm-btn adm-btn-secondary"
               type="button"
               disabled={backupHistoryLoading || backupHistoryPage <= 1}
+              onClick={() => setBackupHistoryPage(1)}
+            >
+              Inicio
+            </button>
+            <button
+              className="adm-btn adm-btn-secondary"
+              type="button"
+              disabled={backupHistoryLoading || backupHistoryPage <= 1}
               onClick={() => setBackupHistoryPage((prev) => Math.max(1, prev - 1))}
             >
               Anterior
@@ -1348,6 +1356,14 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
               onClick={() => setBackupHistoryPage((prev) => Math.min(backupHistoryLastPage, prev + 1))}
             >
               Siguiente
+            </button>
+            <button
+              className="adm-btn adm-btn-secondary"
+              type="button"
+              disabled={backupHistoryLoading || backupHistoryPage >= backupHistoryLastPage}
+              onClick={() => setBackupHistoryPage(backupHistoryLastPage)}
+            >
+              Última
             </button>
           </div>
         </div>
@@ -1673,6 +1689,14 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                 className="adm-btn adm-btn-secondary"
                 type="button"
                 disabled={currentCompanyPage <= 1}
+                onClick={() => setCurrentCompanyPage(1)}
+              >
+                Inicio
+              </button>
+              <button
+                className="adm-btn adm-btn-secondary"
+                type="button"
+                disabled={currentCompanyPage <= 1}
                 onClick={() => setCurrentCompanyPage((prev) => Math.max(1, prev - 1))}
               >
                 Anterior
@@ -1685,6 +1709,14 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                 onClick={() => setCurrentCompanyPage((prev) => Math.min(totalCompanyPages, prev + 1))}
               >
                 Siguiente
+              </button>
+              <button
+                className="adm-btn adm-btn-secondary"
+                type="button"
+                disabled={currentCompanyPage >= totalCompanyPages}
+                onClick={() => setCurrentCompanyPage(totalCompanyPages)}
+              >
+                Última
               </button>
             </div>
           )}

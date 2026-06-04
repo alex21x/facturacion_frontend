@@ -128,6 +128,28 @@
   grid-column: span 4;
 }
 
+@media (min-width: 900px) and (max-width: 1280px) {
+  .sales-grid-row-item .sales-field-qty input,
+  .sales-grid-row-item .sales-field-price input {
+    min-width: 7.2rem;
+    font-size: 0.96rem;
+    padding-left: 0.58rem;
+    padding-right: 0.58rem;
+  }
+
+  .sales-cart-table-scroll .sales-col-qty,
+  .sales-cart-table-scroll .sales-col-price {
+    width: 118px;
+    max-width: 118px;
+  }
+
+  .sales-cart-cell-input--qty,
+  .sales-cart-cell-input--price {
+    min-width: 88px;
+    font-size: 0.94rem;
+  }
+}
+
 .sales-concepts-shell {
   grid-template-columns: minmax(0, 2.45fr) minmax(220px, 0.6fr);
 }

@@ -3062,6 +3062,13 @@ export function PurchasesView({
         </table>
 
         <div className="module-header" style={{ marginTop: '0.8rem' }}>
+          <button
+            type="button"
+            onClick={() => setReportPage(1)}
+            disabled={reportPage <= 1 || isLoadingReport}
+          >
+            Inicio
+          </button>
           <button type="button" onClick={() => setReportPage((prev) => Math.max(1, prev - 1))} disabled={reportPage <= 1 || isLoadingReport}>
             Anterior
           </button>
@@ -3074,6 +3081,13 @@ export function PurchasesView({
             disabled={reportPage >= (reportPagination.total_pages || 1) || isLoadingReport}
           >
             Siguiente
+          </button>
+          <button
+            type="button"
+            onClick={() => setReportPage(Math.max(1, reportPagination.total_pages || 1))}
+            disabled={reportPage >= (reportPagination.total_pages || 1) || isLoadingReport}
+          >
+            Última
           </button>
         </div>
       </div>

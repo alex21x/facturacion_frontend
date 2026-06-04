@@ -1711,6 +1711,13 @@ export function InventoryView({
               <div className="module-header" style={{ marginTop: '0.65rem' }}>
                 <button
                   type="button"
+                  onClick={() => setStockPage(1)}
+                  disabled={stockPage <= 1}
+                >
+                  Inicio
+                </button>
+                <button
+                  type="button"
                   onClick={() => setStockPage((p) => Math.max(1, p - 1))}
                   disabled={stockPage <= 1}
                 >
@@ -1725,6 +1732,13 @@ export function InventoryView({
                   disabled={stockPage >= stockTotalPages}
                 >
                   Siguiente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStockPage(stockTotalPages)}
+                  disabled={stockPage >= stockTotalPages}
+                >
+                  Última
                 </button>
               </div>
             )}
@@ -2032,6 +2046,13 @@ export function InventoryView({
             <div className="module-header" style={{ marginTop: '0.8rem' }}>
               <button
                 type="button"
+                onClick={() => { const p = 1; setKardexPage(p); void loadKardex(p); }}
+                disabled={kardexPage <= 1 || kardexLoading}
+              >
+                Inicio
+              </button>
+              <button
+                type="button"
                 onClick={() => { const p = Math.max(1, kardexPage - 1); setKardexPage(p); void loadKardex(p); }}
                 disabled={kardexPage <= 1 || kardexLoading}
               >
@@ -2046,6 +2067,17 @@ export function InventoryView({
                 disabled={kardexPage >= (kardexMeta.total_pages || 1) || kardexLoading}
               >
                 Siguiente
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const p = Math.max(1, kardexMeta.total_pages || 1);
+                  setKardexPage(p);
+                  void loadKardex(p);
+                }}
+                disabled={kardexPage >= (kardexMeta.total_pages || 1) || kardexLoading}
+              >
+                Última
               </button>
             </div>
           </div>
@@ -2166,6 +2198,13 @@ export function InventoryView({
               <div className="module-header" style={{ marginTop: '0.65rem' }}>
                 <button
                   type="button"
+                  onClick={() => setImportBatchesPage(1)}
+                  disabled={importBatchesPage <= 1}
+                >
+                  Inicio
+                </button>
+                <button
+                  type="button"
                   onClick={() => setImportBatchesPage((p) => Math.max(1, p - 1))}
                   disabled={importBatchesPage <= 1}
                 >
@@ -2180,6 +2219,13 @@ export function InventoryView({
                   disabled={importBatchesPage >= importBatchesTotalPages}
                 >
                   Siguiente
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImportBatchesPage(importBatchesTotalPages)}
+                  disabled={importBatchesPage >= importBatchesTotalPages}
+                >
+                  Última
                 </button>
               </div>
             )}
@@ -2227,6 +2273,13 @@ export function InventoryView({
                 <div className="module-header" style={{ marginTop: '0.65rem' }}>
                   <button
                     type="button"
+                    onClick={() => setImportBatchItemsPage(1)}
+                    disabled={importBatchItemsPage <= 1}
+                  >
+                    Inicio
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setImportBatchItemsPage((p) => Math.max(1, p - 1))}
                     disabled={importBatchItemsPage <= 1}
                   >
@@ -2241,6 +2294,13 @@ export function InventoryView({
                     disabled={importBatchItemsPage >= importBatchItemsTotalPages}
                   >
                     Siguiente
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setImportBatchItemsPage(importBatchItemsTotalPages)}
+                    disabled={importBatchItemsPage >= importBatchItemsTotalPages}
+                  >
+                    Última
                   </button>
                 </div>
               )}

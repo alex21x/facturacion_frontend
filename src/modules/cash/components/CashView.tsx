@@ -1607,6 +1607,14 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                   className="cash-btn cash-btn-soft"
                   type="button"
                   disabled={loading || sessionsMeta.page <= 1}
+                  onClick={() => setSessionsPage(1)}
+                >
+                  « Inicio
+                </button>
+                <button
+                  className="cash-btn cash-btn-soft"
+                  type="button"
+                  disabled={loading || sessionsMeta.page <= 1}
                   onClick={() => setSessionsPage((prev) => Math.max(1, prev - 1))}
                 >
                   ← Anterior
@@ -1618,6 +1626,14 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                   onClick={() => setSessionsPage((prev) => Math.min(sessionsMeta.last_page, prev + 1))}
                 >
                   Siguiente →
+                </button>
+                <button
+                  className="cash-btn cash-btn-soft"
+                  type="button"
+                  disabled={loading || sessionsMeta.page >= sessionsMeta.last_page}
+                  onClick={() => setSessionsPage(sessionsMeta.last_page)}
+                >
+                  Última »
                 </button>
               </div>
             </div>

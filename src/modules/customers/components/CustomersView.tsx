@@ -1179,12 +1179,18 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
 
         {rows.length > 0 && (
           <div className="ds-pagination customers-pagination">
+            <button type="button" className="ds-btn-secondary" onClick={() => setPage(1)} disabled={page <= 1}>
+              Inicio
+            </button>
             <button type="button" className="ds-btn-secondary" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={page <= 1}>
               Anterior
             </button>
             <span className="ds-hint">Pagina {page} de {totalPages}</span>
             <button type="button" className="ds-btn-secondary" onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} disabled={page >= totalPages}>
               Siguiente
+            </button>
+            <button type="button" className="ds-btn-secondary" onClick={() => setPage(totalPages)} disabled={page >= totalPages}>
+              Última
             </button>
           </div>
         )}
