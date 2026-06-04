@@ -163,6 +163,16 @@ const UI_LABELS = {
 };
 
 function humanizeFeatureCode(code: string): string {
+  const normalized = String(code).trim().toUpperCase();
+
+  const explicitLabels: Record<string, string> = {
+    SALES_ALLOW_RECEIPT_WITH_RUC: 'Boleta con RUC',
+  };
+
+  if (explicitLabels[normalized]) {
+    return explicitLabels[normalized];
+  }
+
   return code
     .replace(/_+/g, ' ')
     .trim()
@@ -290,6 +300,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
       new Set([
         // Ventas — todos gestionados desde Admin
         'SALES_ALLOW_ISSUED_EDIT_BEFORE_SUNAT_FINAL',
+        'SALES_ALLOW_RECEIPT_WITH_RUC',
         'SALES_ANTICIPO_ENABLED',
         'SALES_CUSTOMER_PRICE_PROFILE',
         'SALES_DETRACCION_ENABLED',

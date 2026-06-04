@@ -34,6 +34,10 @@ import type {
   CompanyVerticalAdminMatrixResponse,
 } from '../../appcfg/types';
 
+const ADMIN_COMMERCE_FEATURE_BASELINE = [
+  'SALES_ALLOW_RECEIPT_WITH_RUC',
+];
+
 function buildCommerceFeatureCodes(matrix: CompanyCommerceAdminMatrixResponse | null): string[] {
   const apiCodes = matrix?.feature_codes ?? [];
   const companyCodes = new Set<string>();
@@ -44,6 +48,7 @@ function buildCommerceFeatureCodes(matrix: CompanyCommerceAdminMatrixResponse | 
   }
 
   const merged = new Set<string>([
+    ...ADMIN_COMMERCE_FEATURE_BASELINE,
     ...apiCodes,
     ...Array.from(companyCodes),
   ]);
