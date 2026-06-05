@@ -70,6 +70,12 @@
   white-space: nowrap;
 }
 
+.sales-cart-table-scroll .sales-col-unit {
+  width: 108px;
+  max-width: 108px;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .sales-table-line-meta {
     min-width: 7.5rem;
@@ -155,7 +161,8 @@
   }
 
   .sales-cart-table-scroll .sales-col-qty,
-  .sales-cart-table-scroll .sales-col-price {
+  .sales-cart-table-scroll .sales-col-price,
+  .sales-cart-table-scroll .sales-col-unit {
     width: 124px;
     max-width: 124px;
   }

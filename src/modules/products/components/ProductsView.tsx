@@ -555,6 +555,40 @@ export function ProductsView({
     });
   }
 
+  async function loadCommercialConfigForProduct(row: InventoryProduct, openInPanel: boolean) {
+    setEditingId(row.id);
+    setCommercialLoading(true);
+    setMessage('');
+
+    if (openInPanel) {
+      setShowFormModal(false);
+    }
+
+    try {
+      const config = await fetchProductCommercialConfig(accessToken, row.id);
+      setCommercialConfig(config);
+      setCommercialUnits(config.product_units ?? []);
+      setCommercialConversions(
+        (config.conversions ?? []).map((item) => ({
+          ...item,
+          conversion_factor: Number(item.conversion_factor),
+          status: Number(item.status ?? 1),
+        }))
+      );
+      setCommercialWholesale(
+        (config.wholesale_prices ?? []).map((item) => ({
+          ...item,
+          unit_price: Number(item.unit_price),
+          status: Number(item.status ?? 1),
+        }))
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo cargar configuracion comercial');
+    } finally {
+      setCommercialLoading(false);
+    }
+  }
+
   function openNewProductForm() {
     setShowFormModal(true);
     setFormStep(1);
@@ -572,6 +606,7 @@ export function ProductsView({
     setShowFormModal(true);
     setFormStep(1);
     setEditingId(row.id);
+    setUiTab('catalogo');
     setForm({
       sku: row.sku ?? '',
       barcode: row.barcode ?? '',
@@ -599,31 +634,41 @@ export function ProductsView({
       warehouse_code: '',
       note: '',
     });
+    void loadCommercialConfigForProduct(row, false);
+  }
 
-    setCommercialLoading(true);
-    try {
-      const config = await fetchProductCommercialConfig(accessToken, row.id);
-      setCommercialConfig(config);
-      setCommercialUnits(config.product_units ?? []);
-      setCommercialConversions(
-        (config.conversions ?? []).map((item) => ({
-          ...item,
-          conversion_factor: Number(item.conversion_factor),
-          status: Number(item.status ?? 1),
-        }))
-      );
-      setCommercialWholesale(
-        (config.wholesale_prices ?? []).map((item) => ({
-          ...item,
-          unit_price: Number(item.unit_price),
-          status: Number(item.status ?? 1),
-        }))
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'No se pudo cargar configuracion comercial');
-    } finally {
-      setCommercialLoading(false);
-    }
+  async function openCommercialConfig(row: InventoryProduct) {
+    setUiTab('comercial');
+    setFormStep(1);
+    setShowFormModal(false);
+    setForm({
+      sku: row.sku ?? '',
+      barcode: row.barcode ?? '',
+      name: row.name,
+      unit_id: row.unit_id,
+      category_id: null,
+      line_id: row.line_id ?? null,
+      brand_id: row.brand_id ?? null,
+      location_id: row.location_id ?? null,
+      warranty_id: row.warranty_id ?? null,
+      product_nature: row.product_nature ?? 'PRODUCT',
+      sunat_code: row.sunat_code ?? '',
+      image_url: row.image_url ?? '',
+      seller_commission_percent: Number(row.seller_commission_percent ?? 0),
+      sale_price: Number(row.sale_price ?? 0),
+      cost_price: Number(row.cost_price ?? 0),
+      is_stockable: Boolean(row.is_stockable),
+      lot_tracking: Boolean(row.lot_tracking),
+      has_expiration: Boolean(row.has_expiration),
+      status: Number(row.status) === 1 ? 1 : 0,
+    });
+    setStockTraceability({
+      qty: '0',
+      cost: String(Number(row.cost_price ?? 0)),
+      warehouse_code: '',
+      note: '',
+    });
+    await loadCommercialConfigForProduct(row, true);
   }
 
   function addCommercialUnit() {
@@ -1162,7 +1207,7 @@ export function ProductsView({
           className={uiTab === 'comercial' ? 'active' : ''}
           onClick={() => setUiTab('comercial')}
           title={editingId ? 'Configuración comercial del producto en edición' : 'Selecciona un producto para editar'}
-          disabled={!editingId || !canManageProducts}
+          disabled={!canManageProducts}
         >
           <span className="products-tab-icon">💰</span>
           <span className="products-tab-label">Comercial</span>
@@ -1309,24 +1354,30 @@ export function ProductsView({
                     <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
                     <td>
                       <div className="products-catalog-actions">
-                      <button type="button" className="products-row-action products-row-action-edit" onClick={() => void startEdit(row)} title="Editar" aria-label="Editar producto">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M12 20h9"></path>
-                          <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"></path>
-                        </svg>
-                      </button>{' '}
-                      <button type="button" className={Number(row.status) === 1 ? 'products-row-action products-row-action-toggle is-danger' : 'products-row-action products-row-action-toggle is-ok'} onClick={() => void toggleProduct(row)} title={Number(row.status) === 1 ? 'Desactivar' : 'Activar'} aria-label={Number(row.status) === 1 ? 'Desactivar producto' : 'Activar producto'}>
-                        {Number(row.status) === 1 ? (
+                        <button type="button" className="products-row-action products-row-action-edit" onClick={() => void startEdit(row)} title="Editar" aria-label="Editar producto">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M6 6l12 12"></path>
-                            <path d="M18 6L6 18"></path>
+                            <path d="M12 20h9"></path>
+                            <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"></path>
                           </svg>
-                        ) : (
+                        </button>
+                        <button type="button" className="products-row-action" onClick={() => void openCommercialConfig(row)} title="Conversión y unidades" aria-label="Abrir configuracion comercial">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="20 6 9 17 4 12"></polyline>
+                            <path d="M3 12h18"></path>
+                            <path d="M12 3l9 9-9 9"></path>
                           </svg>
-                        )}
-                      </button>
+                        </button>
+                        <button type="button" className={Number(row.status) === 1 ? 'products-row-action products-row-action-toggle is-danger' : 'products-row-action products-row-action-toggle is-ok'} onClick={() => void toggleProduct(row)} title={Number(row.status) === 1 ? 'Desactivar' : 'Activar'} aria-label={Number(row.status) === 1 ? 'Desactivar producto' : 'Activar producto'}>
+                          {Number(row.status) === 1 ? (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M6 6l12 12"></path>
+                              <path d="M18 6L6 18"></path>
+                            </svg>
+                          ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12"></polyline>
+                            </svg>
+                          )}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1853,6 +1904,10 @@ export function ProductsView({
           <p className="commerce-hint">
             Define unidades de venta, conversiones y precios mayoristas para este producto.
           </p>
+          <p className="commerce-hint">
+            Producto seleccionado: <strong>{form.name || `Producto #${editingId}`}</strong>
+            {form.sku ? ` · SKU ${form.sku}` : ''}
+          </p>
 
           <div className="commerce-flags">
             <span className={commercialConfig.features.PRODUCT_MULTI_UOM ? 'flag-on' : 'flag-off'}>
@@ -2160,10 +2215,27 @@ export function ProductsView({
         </section>
       )}
 
+      {uiTab === 'comercial' && commercialLoading && editingId && (
+        <section className="entity-editor product-commerce-panel">
+          <h4>Cargando configuracion comercial...</h4>
+          <p className="commerce-hint">Estamos trayendo las unidades y conversiones del producto seleccionado.</p>
+          <p className="commerce-hint">
+            Producto seleccionado: <strong>{form.name || `Producto #${editingId}`}</strong>
+            {form.sku ? ` · SKU ${form.sku}` : ''}
+          </p>
+        </section>
+      )}
+
       {uiTab === 'comercial' && (!editingId || !commercialConfig) && (
         <section className="entity-editor product-commerce-panel">
           <h4>Configuración comercial avanzada</h4>
-          <p className="commerce-hint">Selecciona un producto desde Catálogo y pulsa Editar para habilitar esta sección.</p>
+          <p className="commerce-hint">Selecciona un producto desde Catálogo y pulsa Conversión para abrir esta sección sin pasar por el popup de edición.</p>
+          {editingId && (
+            <p className="commerce-hint">
+              Producto seleccionado: <strong>{form.name || `Producto #${editingId}`}</strong>
+              {form.sku ? ` · SKU ${form.sku}` : ''}
+            </p>
+          )}
           <div className="entity-actions">
             <button type="button" onClick={() => setUiTab('catalogo')}>Ir al catálogo</button>
           </div>

@@ -1966,13 +1966,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }).discountTotal;
   }, [draftTaxRate, form.draftIsFreeOperation, form.draftLineDiscount, form.isManualItem, form.productId, form.qty, form.taxCategoryId, form.unitId, form.unitPrice, isDraftPriceTaxInclusive, isTributaryDocument, resolvedDraftLotId, salesFreeItemsEnabled, salesItemDiscountEnabled, selectedTaxCategory]);
   const draftGrandTotal = useMemo(() => Math.max(draftLineTotals.total - draftLineDiscountTotal, 0), [draftLineDiscountTotal, draftLineTotals.total]);
+  const isDraftConversionEnabled = useMemo(() => {
+    return Boolean(selectedProductCommercialConfig?.features?.PRODUCT_MULTI_UOM)
+      && Boolean(selectedProductCommercialConfig?.features?.PRODUCT_UOM_CONVERSIONS);
+  }, [selectedProductCommercialConfig]);
   const draftConversionFactor = useMemo(() => {
-    if (form.isManualItem) {
+    if (form.isManualItem || !isDraftConversionEnabled) {
       return 1;
     }
 
     return resolveConversionFactor(selectedProductCommercialConfig, form.unitId);
-  }, [form.isManualItem, form.unitId, selectedProductCommercialConfig]);
+  }, [form.isManualItem, form.unitId, isDraftConversionEnabled, selectedProductCommercialConfig]);
   const draftQtyBase = useMemo(() => Number(form.qty || 0) * Number(draftConversionFactor || 1), [form.qty, draftConversionFactor]);
 
   const subtotal = useMemo(() => {
@@ -3245,7 +3249,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setSelectedProductCommercialConfig(config);
 
       const productUnitsActive = (config.product_units ?? []).filter((row) => Number(row.status) === 1);
-      const shouldUseProductUnits = config.features.PRODUCT_MULTI_UOM && productUnitsActive.length > 0;
+      const shouldUseProductUnits = config.features.PRODUCT_MULTI_UOM
+        && config.features.PRODUCT_UOM_CONVERSIONS
+        && productUnitsActive.length > 0;
 
       if (shouldUseProductUnits) {
         const mappedUnits = productUnitsActive.map((row) => ({
@@ -7035,7 +7041,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   <p className="sales-price-hint">{autoPriceHint}</p>
                 )}
 
-                {!form.isManualItem && selectedProductCommercialConfig?.product?.unit_id && form.unitId && (
+                {!form.isManualItem && isDraftConversionEnabled && selectedProductCommercialConfig?.product?.unit_id && form.unitId && (
                   <p className="sales-price-hint">
                     Equivalencia base: {Number(form.qty || 0).toFixed(3)} x factor {Number(draftConversionFactor || 1).toFixed(6)} = {Number(draftQtyBase || 0).toFixed(6)} en unidad base.
                   </p>
@@ -7053,6 +7059,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         <th>#</th>
                         <th>Descripcion</th>
                         <th>Stock</th>
+                        <th className="sales-col-unit">Unidad</th>
                         <th>Tipo IGV</th>
                         <th className="sales-col-qty">Cantidad</th>
                         <th className="sales-col-price">Precio</th>
@@ -7080,6 +7087,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                     return <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>;
                                   })()}
                             </td>
+                            <td className="sales-col-unit">{unitLabelForPrint(lookups?.units ?? null, item.unitId ?? null)}</td>
                             <td>{item.taxLabel}</td>
                             <td className="sales-col-qty">
                               <input

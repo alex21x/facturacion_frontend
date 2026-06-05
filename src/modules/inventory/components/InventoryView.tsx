@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   createInventoryStockEntry,
@@ -15,6 +15,8 @@ import {
   createInventoryProReportRequest,
   fetchInventoryProReportRequest,
   fetchInventoryProReportRequests,
+  fetchInventoryProductCommercialConfig,
+  type InventoryProductCommercialConfig,
 } from '../api';
 import type {
   InventoryBulkStockUpdateMode,
@@ -326,6 +328,7 @@ export function InventoryView({
   const [adjustmentProductSuggestOpen, setAdjustmentProductSuggestOpen] = useState(false);
   const [adjustmentActiveProductIndex, setAdjustmentActiveProductIndex] = useState(-1);
   const [adjustmentLotId, setAdjustmentLotId] = useState<number | null>(null);
+  const [adjustmentSourceStockQty, setAdjustmentSourceStockQty] = useState<number | null>(null);
   const [adjustmentQty, setAdjustmentQty] = useState('');
   const [adjustmentUnitCost, setAdjustmentUnitCost] = useState('');
   const [adjustmentNotes, setAdjustmentNotes] = useState('');
@@ -367,6 +370,9 @@ export function InventoryView({
   const [stockUpdateParseErrors, setStockUpdateParseErrors] = useState<Array<{ row: number; message: string }>>([]);
   const [stockUpdateSubmitting, setStockUpdateSubmitting] = useState(false);
   const [stockUpdateResult, setStockUpdateResult] = useState<InventoryBulkStockUpdateResponse | null>(null);
+  const [commercialConfigByProductId, setCommercialConfigByProductId] = useState<Record<number, InventoryProductCommercialConfig | null>>({});
+  const [expandedPresentationByProductId, setExpandedPresentationByProductId] = useState<Record<number, boolean>>({});
+  const loadingCommercialConfigIdsRef = useRef(new Set<number>());
 
   const normalizedLocation = (locationRaw: string | null | undefined): string => {
     const location = (locationRaw ?? '').trim();
@@ -395,6 +401,56 @@ export function InventoryView({
     });
     return map;
   }, [products]);
+
+  const resolveCommercialFactor = (config: InventoryProductCommercialConfig, selectedUnitId: number): number => {
+    const baseUnitId = config.product?.unit_id ?? null;
+    if (!baseUnitId || selectedUnitId === baseUnitId) {
+      return 1;
+    }
+
+    const active = (config.conversions ?? []).filter((row) => Number(row.status) === 1);
+    const direct = active.find((row) => row.from_unit_id === selectedUnitId && row.to_unit_id === baseUnitId);
+    if (direct && Number(direct.conversion_factor) > 0) {
+      return Number(direct.conversion_factor);
+    }
+
+    const inverse = active.find((row) => row.from_unit_id === baseUnitId && row.to_unit_id === selectedUnitId);
+    if (inverse && Number(inverse.conversion_factor) > 0) {
+      return 1 / Number(inverse.conversion_factor);
+    }
+
+    return 1;
+  };
+
+  const buildPresentationRows = (productId: number, stockBaseRaw: string): Array<{ key: string; label: string; hint: string }> => {
+    const config = commercialConfigByProductId[productId];
+    if (!config) {
+      return [];
+    }
+
+    const stockBase = Number(stockBaseRaw || 0);
+    if (!Number.isFinite(stockBase)) {
+      return [];
+    }
+
+    const units = (config.product_units ?? [])
+      .filter((row) => Number(row.status) === 1)
+      .sort((a, b) => Number(b.is_base) - Number(a.is_base));
+
+    return units.map((unit) => {
+      const factor = resolveCommercialFactor(config, unit.unit_id);
+      const qtyInUnit = factor > 0 ? stockBase / factor : 0;
+      const baseLabel = unit.is_base
+        ? `${unit.code} base`
+        : `${unit.code} = ${factor.toFixed(6)} base`;
+
+      return {
+        key: `${unit.unit_id}`,
+        label: `${unit.code} · ${qtyInUnit.toFixed(3)}`,
+        hint: `${unit.name} · ${baseLabel} · Stock base ${stockBase.toFixed(3)}`,
+      };
+    });
+  };
 
   const filteredStock = useMemo(() => {
     const query = stockQuickSearch.trim().toLowerCase();
@@ -528,6 +584,56 @@ export function InventoryView({
     const start = (stockPage - 1) * stockPerPage;
     return filteredStock.slice(start, start + stockPerPage);
   }, [filteredStock, stockPage, stockPerPage]);
+
+  useEffect(() => {
+    if (activeTab !== 'stock' || paginatedStock.length === 0) {
+      return;
+    }
+
+    const productIds = Array.from(new Set(paginatedStock.map((row) => Number(row.product_id))))
+      .filter((id) => Number.isFinite(id) && id > 0)
+      .filter((id) => commercialConfigByProductId[id] === undefined && !loadingCommercialConfigIdsRef.current.has(id));
+
+    if (productIds.length === 0) {
+      return;
+    }
+
+    productIds.forEach((id) => loadingCommercialConfigIdsRef.current.add(id));
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const results = await Promise.all(
+          productIds.map(async (id) => {
+            try {
+              const config = await fetchInventoryProductCommercialConfig(accessToken, id);
+              return [id, config] as const;
+            } catch {
+              return [id, null] as const;
+            }
+          })
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setCommercialConfigByProductId((prev) => {
+          const next = { ...prev };
+          results.forEach(([id, config]) => {
+            next[id] = config;
+          });
+          return next;
+        });
+      } finally {
+        productIds.forEach((id) => loadingCommercialConfigIdsRef.current.delete(id));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, accessToken, paginatedStock, commercialConfigByProductId]);
 
   const adjustmentProduct = useMemo(
     () => products.find((row) => row.id === adjustmentProductId) ?? null,
@@ -1679,13 +1785,14 @@ export function InventoryView({
                   <th>SKU</th>
                   <th>Almacen</th>
                   <th>Ubicacion</th>
+                  <th>Presentaciones</th>
                   <th>Stock</th>
                   <th>Accion</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredStock.length === 0 && (
-                  <tr><td colSpan={7} style={{ textAlign: 'center' }}>Sin datos</td></tr>
+                  <tr><td colSpan={8} style={{ textAlign: 'center' }}>Sin datos</td></tr>
                 )}
                 {paginatedStock.map((row, index) => (
                   <tr key={`${row.product_id}-${row.warehouse_id}`}>
@@ -1694,6 +1801,48 @@ export function InventoryView({
                     <td>{row.sku ?? '-'}</td>
                     <td>{row.warehouse_name ?? row.warehouse_code ?? row.warehouse_id}</td>
                     <td>{productLocationById.get(row.product_id) ?? '-'}</td>
+                    <td>
+                      {(() => {
+                        const rows = buildPresentationRows(row.product_id, row.stock);
+                        if (rows.length <= 1) {
+                          return <span className="inventory-presentation-empty">-</span>;
+                        }
+
+                        const expanded = Boolean(expandedPresentationByProductId[row.product_id]);
+                        const visibleRows = expanded ? rows : rows.slice(0, 2);
+                        const hiddenCount = Math.max(0, rows.length - visibleRows.length);
+
+                        return (
+                          <div className="inventory-presentation-list">
+                            {visibleRows.map((unitRow) => (
+                              <span key={unitRow.key} className="inventory-presentation-chip" title={unitRow.hint}>
+                                {unitRow.label}
+                              </span>
+                            ))}
+                            {hiddenCount > 0 && (
+                              <button
+                                type="button"
+                                className="inventory-presentation-more"
+                                onClick={() => setExpandedPresentationByProductId((prev) => ({ ...prev, [row.product_id]: true }))}
+                                title="Ver todas las presentaciones"
+                              >
+                                +{hiddenCount} más
+                              </button>
+                            )}
+                            {expanded && rows.length > 2 && (
+                              <button
+                                type="button"
+                                className="inventory-presentation-more"
+                                onClick={() => setExpandedPresentationByProductId((prev) => ({ ...prev, [row.product_id]: false }))}
+                                title="Contraer lista"
+                              >
+                                Ver menos
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td>{row.stock}</td>
                     <td>
                       <button

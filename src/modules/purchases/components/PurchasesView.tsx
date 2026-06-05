@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import '../../../styles/modules/purchases.css';
-import { createInventoryProduct, fetchInventoryLots, fetchInventoryProducts, fetchInventoryStock } from '../../inventory/api';
+import {
+  createInventoryProduct,
+  fetchInventoryLots,
+  fetchInventoryProductCommercialConfig,
+  fetchInventoryProducts,
+  type InventoryProductCommercialConfig,
+  fetchInventoryStock,
+} from '../../inventory/api';
 import type { InventoryLotRow, InventoryProduct, InventoryStockRow } from '../../inventory/types';
 import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, fetchSuppliersCatalog, importSuppliersBulk, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry, type SupplierBulkImportRow } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
@@ -60,6 +67,14 @@ type SupplierSuggestion = {
 
 type PurchasesWorkspaceMode = 'ENTRY' | 'REPORT';
 const INTERNAL_UNIT_COST_DECIMALS = 6;
+
+type PurchaseUnitOption = {
+  id: number;
+  code: string;
+  name: string;
+  is_base: boolean;
+  conversion_factor: number;
+};
 
 type PurchasesReportFilters = {
   entryType: StockEntryType | 'ALL';
@@ -180,6 +195,11 @@ function buildEmptyRow(seed: number, priceTaxMode: PriceTaxMode = 'INCLUSIVE'): 
   return {
     key: `row-${seed}-${Date.now()}`,
     product_id: null,
+    unit_id: null,
+    unit_code: null,
+    unit_name: null,
+    conversion_factor: 1,
+    qty_base: null,
     lot_id: null,
     product_query: '',
     qty: '1',
@@ -197,6 +217,33 @@ function buildEmptyRow(seed: number, priceTaxMode: PriceTaxMode = 'INCLUSIVE'): 
 
 function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
+}
+
+function resolvePurchaseConversionFactor(
+  config: InventoryProductCommercialConfig | null,
+  selectedUnitId: number | null,
+): number {
+  if (!selectedUnitId) {
+    return 1;
+  }
+
+  const baseUnitId = config?.product?.unit_id ?? null;
+  if (!baseUnitId || selectedUnitId === baseUnitId) {
+    return 1;
+  }
+
+  const active = (config?.conversions ?? []).filter((row) => Number(row.status) === 1);
+  const direct = active.find((row) => row.from_unit_id === selectedUnitId && row.to_unit_id === baseUnitId);
+  if (direct && Number(direct.conversion_factor) > 0) {
+    return Number(direct.conversion_factor);
+  }
+
+  const inverse = active.find((row) => row.from_unit_id === baseUnitId && row.to_unit_id === selectedUnitId);
+  if (inverse && Number(inverse.conversion_factor) > 0) {
+    return 1 / Number(inverse.conversion_factor);
+  }
+
+  return 1;
 }
 
 function resolveReportEntryGrandTotal(entry: StockEntryRow): number {
@@ -286,6 +333,7 @@ export function PurchasesView({
   const [notes, setNotes] = useState('');
   const [rows, setRows] = useState<EntryRowDraft[]>([]);
   const [draftItem, setDraftItem] = useState<EntryRowDraft>(buildEmptyRow(1));
+  const [draftUnitOptions, setDraftUnitOptions] = useState<PurchaseUnitOption[]>([]);
   const [draftProductLots, setDraftProductLots] = useState<InventoryLotRow[]>([]);
   const [hasDetraccion, setHasDetraccion] = useState(false);
   const [detraccionServiceCode, setDetraccionServiceCode] = useState('');
@@ -417,6 +465,8 @@ export function PurchasesView({
     () => availableDraftLots.find((lot) => String(lot.lot_code ?? '').trim().toUpperCase() === normalizedDraftLotCode) ?? null,
     [availableDraftLots, normalizedDraftLotCode]
   );
+  const draftHasMultiUom = draftUnitOptions.length > 1;
+  const showUnitsColumn = true;
 
   useEffect(() => {
     if (activeProductSuggestions.length === 0) {
@@ -972,7 +1022,7 @@ export function PurchasesView({
 
     const picked = stockable.find((row) => row.id === productId) ?? null;
     if (picked) {
-      chooseProductForDraft(picked);
+      void chooseProductForDraft(picked);
     }
   }
 
@@ -1164,6 +1214,7 @@ export function PurchasesView({
     setRows([]);
     setPriceTaxMode('INCLUSIVE');
     setDraftItem(buildEmptyRow(1, 'INCLUSIVE'));
+    setDraftUnitOptions([]);
     setReferenceNo('');
     setSupplierReference('');
     setSupplierAddress('');
@@ -1212,11 +1263,16 @@ export function PurchasesView({
     setPercepcionTypeCode(String(metadata.percepcion_type_code ?? ''));
     setSunatOperationTypeCode(String(metadata.sunat_operation_type_code ?? ''));
     setPriceTaxMode(defaultRowPriceTaxMode);
+    setDraftUnitOptions([]);
     setRows(items.map((item, idx) => {
       const itemMetadata = (item.metadata ?? {}) as Record<string, unknown>;
       const taxRate = Number(item.tax_rate ?? 0);
       const storedNetUnitCost = Number(item.unit_cost ?? 0);
       const storedInputUnitCost = Number(itemMetadata.unit_cost_input ?? Number.NaN);
+      const storedQtyInput = Number(itemMetadata.input_qty ?? Number.NaN);
+      const qtyDisplay = Number.isFinite(storedQtyInput) ? storedQtyInput : Number(item.qty ?? 0);
+      const unitIdMeta = Number(itemMetadata.unit_id ?? Number.NaN);
+      const conversionMeta = Number(itemMetadata.conversion_factor ?? Number.NaN);
       const visibleUnitCost = Number.isFinite(storedInputUnitCost)
         ? storedInputUnitCost
         : (defaultRowPriceTaxMode === 'INCLUSIVE'
@@ -1226,9 +1282,14 @@ export function PurchasesView({
       return {
         key: `edit-${entry.id}-${idx + 1}`,
         product_id: Number(item.product_id),
+        unit_id: Number.isFinite(unitIdMeta) ? unitIdMeta : null,
+        unit_code: String(itemMetadata.unit_code ?? ''),
+        unit_name: String(itemMetadata.unit_name ?? ''),
+        conversion_factor: Number.isFinite(conversionMeta) && conversionMeta > 0 ? conversionMeta : 1,
+        qty_base: Number(item.qty ?? 0),
         lot_id: item.lot_id ?? null,
         product_query: item.product_name,
-        qty: String(Number(item.qty ?? 0)),
+        qty: String(qtyDisplay),
         unit_cost: visibleUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS),
         discount_total: Number(item.discount_total ?? itemMetadata.discount_total ?? 0).toFixed(2),
         is_free_operation: Boolean(itemMetadata.is_free_operation),
@@ -1252,17 +1313,70 @@ export function PurchasesView({
     setMessage('Edicion cancelada.');
   }
 
-  function chooseProductForDraft(product: InventoryProduct) {
+  async function chooseProductForDraft(product: InventoryProduct) {
+    const fallbackOption: PurchaseUnitOption | null = product.unit_id
+      ? {
+          id: product.unit_id,
+          code: product.unit_code ?? 'UND',
+          name: product.unit_name ?? product.unit_code ?? 'Unidad',
+          is_base: true,
+          conversion_factor: 1,
+        }
+      : null;
+
     updateDraftItem({
       product_id: product.id,
       lot_id: null,
       product_query: `${product.sku ?? 'SIN-SKU'} - ${product.name}`,
+      unit_id: fallbackOption?.id ?? null,
+      unit_code: fallbackOption?.code ?? null,
+      unit_name: fallbackOption?.name ?? null,
+      conversion_factor: fallbackOption?.conversion_factor ?? 1,
+      qty_base: Number(draftItem.qty || 0) * (fallbackOption?.conversion_factor ?? 1),
       lot_code: product.lot_tracking && lotTrackingEnabled ? draftItem.lot_code : '',
       manufacture_at: product.has_expiration && expiryTrackingEnabled ? draftItem.manufacture_at : '',
       expires_at: product.has_expiration && expiryTrackingEnabled ? draftItem.expires_at : '',
     });
+
+    setDraftUnitOptions(fallbackOption ? [fallbackOption] : []);
     setIsProductSuggestOpen(false);
     setActiveProductIndex(-1);
+
+    try {
+      const response = await fetchInventoryProductCommercialConfig(accessToken, product.id);
+      const unitRows = (response.product_units ?? []).filter((row) => Number(row.status) === 1);
+      const allowMulti = Boolean(response.features?.PRODUCT_MULTI_UOM)
+        && Boolean(response.features?.PRODUCT_UOM_CONVERSIONS)
+        && unitRows.length > 0;
+
+      if (!allowMulti) {
+        return;
+      }
+
+      const options: PurchaseUnitOption[] = unitRows.map((unit) => ({
+        id: Number(unit.unit_id),
+        code: unit.code,
+        name: unit.name,
+        is_base: Boolean(unit.is_base),
+        conversion_factor: resolvePurchaseConversionFactor(response, Number(unit.unit_id)),
+      }));
+
+      const preferred = options.find((opt) => opt.is_base) ?? options[0] ?? null;
+      if (!preferred) {
+        return;
+      }
+
+      setDraftUnitOptions(options);
+      updateDraftItem({
+        unit_id: preferred.id,
+        unit_code: preferred.code,
+        unit_name: preferred.name,
+        conversion_factor: preferred.conversion_factor,
+        qty_base: Number(draftItem.qty || 0) * preferred.conversion_factor,
+      });
+    } catch {
+      // Keep fallback base unit when commercial config is unavailable.
+    }
   }
 
   function handleDraftLotCodeChange(value: string) {
@@ -1477,6 +1591,11 @@ export function PurchasesView({
       return {
         ...row,
         product_id: exact.id,
+        unit_id: exact.unit_id ?? null,
+        unit_code: exact.unit_code ?? null,
+        unit_name: exact.unit_name ?? null,
+        conversion_factor: 1,
+        qty_base: Number(row.qty || 0),
         lot_id: null,
         product_query: `${exact.sku ?? 'SIN-SKU'} - ${exact.name}`,
       };
@@ -1493,6 +1612,11 @@ export function PurchasesView({
       return {
         ...row,
         product_id: only.id,
+        unit_id: only.unit_id ?? null,
+        unit_code: only.unit_code ?? null,
+        unit_name: only.unit_name ?? null,
+        conversion_factor: 1,
+        qty_base: Number(row.qty || 0),
         lot_id: null,
         product_query: `${only.sku ?? 'SIN-SKU'} - ${only.name}`,
       };
@@ -1503,6 +1627,11 @@ export function PurchasesView({
       return {
         ...row,
         product_id: first.id,
+        unit_id: first.unit_id ?? null,
+        unit_code: first.unit_code ?? null,
+        unit_name: first.unit_name ?? null,
+        conversion_factor: 1,
+        qty_base: Number(row.qty || 0),
         lot_id: null,
         product_query: `${first.sku ?? 'SIN-SKU'} - ${first.name}`,
       };
@@ -1532,11 +1661,17 @@ export function PurchasesView({
     setMessage('');
 
     const resolvedUnitCost = Number(resolvedDraft.unit_cost ?? 0);
+    const resolvedFactor = Number(resolvedDraft.conversion_factor ?? 1);
+    const normalizedFactor = Number.isFinite(resolvedFactor) && resolvedFactor > 0 ? resolvedFactor : 1;
+    const inputQty = Number(resolvedDraft.qty ?? 0);
+    const qtyBase = Number.isFinite(inputQty) ? inputQty * normalizedFactor : 0;
 
     setRows((prev) => [
       ...prev,
       {
         ...resolvedDraft,
+        conversion_factor: normalizedFactor,
+        qty_base: qtyBase,
         unit_cost: resolvedUnitCost.toFixed(INTERNAL_UNIT_COST_DECIMALS),
         price_tax_mode: priceTaxMode,
         key: `item-${Date.now()}-${prev.length + 1}`,
@@ -1592,7 +1727,7 @@ export function PurchasesView({
       event.preventDefault();
       const selected = activeProductSuggestions[activeProductIndex >= 0 ? activeProductIndex : 0];
       if (selected) {
-        chooseProductForDraft(selected);
+        void chooseProductForDraft(selected);
       }
       return;
     }
@@ -1620,10 +1755,15 @@ export function PurchasesView({
         const resolvedUnitCostNet = resolvePurchaseUnitCostNet(resolvedInputUnitCost, resolvedTaxRate, resolvedPriceTaxMode);
         const resolvedUnitCostGross = resolvePurchaseUnitCostGross(resolvedUnitCostNet, resolvedTaxRate);
         const lineAmounts = computePurchaseLineAmounts({ ...row, price_tax_mode: resolvedPriceTaxMode });
+        const inputQty = Number(row.qty ?? 0);
+        const conversionFactor = Number(row.conversion_factor ?? 1);
+        const normalizedFactor = Number.isFinite(conversionFactor) && conversionFactor > 0 ? conversionFactor : 1;
+        const qtyBaseStored = Number(row.qty_base ?? Number.NaN);
+        const qtyBase = Number.isFinite(qtyBaseStored) ? qtyBaseStored : inputQty * normalizedFactor;
 
         return {
           product_id: Number(row.product_id ?? 0),
-          qty: Number(row.qty),
+          qty: qtyBase,
           unit_cost: Number.isFinite(resolvedUnitCostNet) ? resolvedUnitCostNet : undefined,
           lot_id: lotTrackingEnabled && row.lot_id ? Number(row.lot_id) : undefined,
           lot_code: lotTrackingEnabled && row.lot_code.trim() !== '' ? row.lot_code.trim() : undefined,
@@ -1640,6 +1780,12 @@ export function PurchasesView({
             unit_cost_net: Number(resolvedUnitCostNet.toFixed(INTERNAL_UNIT_COST_DECIMALS)),
             unit_cost_gross: Number(resolvedUnitCostGross.toFixed(INTERNAL_UNIT_COST_DECIMALS)),
             tax_rate_snapshot: Number(resolvedTaxRate.toFixed(2)),
+            input_qty: Number(inputQty.toFixed(6)),
+            qty_base: Number(qtyBase.toFixed(6)),
+            unit_id: row.unit_id ? Number(row.unit_id) : null,
+            unit_code: row.unit_code ?? null,
+            unit_name: row.unit_name ?? null,
+            conversion_factor: Number(normalizedFactor.toFixed(8)),
           },
         };
       })
@@ -2490,7 +2636,7 @@ export function PurchasesView({
                           type="button"
                           className={`suggest-item ${index === activeProductIndex ? 'active' : ''}`}
                           key={product.id}
-                          onClick={() => chooseProductForDraft(product)}
+                          onClick={() => void chooseProductForDraft(product)}
                         >
                           {(() => {
                             const stock = stockByProductId.get(product.id) ?? 0;
@@ -2510,13 +2656,49 @@ export function PurchasesView({
                   )}
                 </label>
 
+                {draftHasMultiUom && (
+                  <label className="purchases-field-unit">
+                    Unidad
+                    <select
+                      value={draftItem.unit_id ?? ''}
+                      onChange={(e) => {
+                        const unitId = e.target.value ? Number(e.target.value) : null;
+                        const selectedUnit = draftUnitOptions.find((opt) => opt.id === unitId) ?? null;
+                        const factor = selectedUnit?.conversion_factor ?? 1;
+                        updateDraftItem({
+                          unit_id: selectedUnit?.id ?? null,
+                          unit_code: selectedUnit?.code ?? null,
+                          unit_name: selectedUnit?.name ?? null,
+                          conversion_factor: factor,
+                          qty_base: Number(draftItem.qty || 0) * factor,
+                        });
+                      }}
+                      disabled={!draftItem.product_id || draftUnitOptions.length === 0}
+                    >
+                      <option value="">Selecciona</option>
+                      {draftUnitOptions.map((unit) => (
+                        <option key={unit.id} value={unit.id}>
+                          {unit.code} - {unit.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+
                 <label className="sales-field-qty">
                   Cantidad
                   <input
                     type="number"
                     step="0.001"
                     value={draftItem.qty}
-                    onChange={(e) => updateDraftItem({ qty: e.target.value })}
+                    onChange={(e) => {
+                      const qty = e.target.value;
+                      const factor = Number(draftItem.conversion_factor ?? 1);
+                      updateDraftItem({
+                        qty,
+                        qty_base: Number(qty || 0) * (Number.isFinite(factor) && factor > 0 ? factor : 1),
+                      });
+                    }}
                     onKeyDown={handleQuickAppendRow}
                     placeholder={entryType === 'ADJUSTMENT' ? 'Ej: -2 o 5' : 'Ej: 10'}
                   />
@@ -2677,6 +2859,7 @@ export function PurchasesView({
                     <tr>
                       <th>Producto</th>
                       <th>Stock actual</th>
+                      {showUnitsColumn && <th>Unidad</th>}
                       <th>Cantidad</th>
                       <th>Costo unitario</th>
                       {lotTrackingEnabled && <th>Lote</th>}
@@ -2695,7 +2878,7 @@ export function PurchasesView({
                   <tbody>
                     {rows.length === 0 && (
                       <tr>
-                        <td colSpan={9 + (lotTrackingEnabled ? 1 : 0) + (expiryTrackingEnabled ? 2 : 0)}>Aun no agregaste items.</td>
+                        <td colSpan={9 + (showUnitsColumn ? 1 : 0) + (lotTrackingEnabled ? 1 : 0) + (expiryTrackingEnabled ? 2 : 0) + ((purchaseItemDiscountEnabled || purchaseFreeOperationEnabled) ? 1 : 0)}>Aun no agregaste items.</td>
                       </tr>
                     )}
                     {rows.map((row) => {
@@ -2710,15 +2893,28 @@ export function PurchasesView({
                           <td>
                             <span className={`stock-chip ${stockToneClass(productStock)}`}>{productStock.toFixed(3)}</span>
                           </td>
+                          {showUnitsColumn && <td>{row.unit_code || row.unit_name || '-'}</td>}
                           <td>
                             <input
                               className="cell-input"
                               type="number"
                               step="0.001"
                               value={row.qty}
-                              onChange={(e) => updateRow(row.key, { qty: e.target.value })}
+                              onChange={(e) => {
+                                const qty = e.target.value;
+                                const factor = Number(row.conversion_factor ?? 1);
+                                updateRow(row.key, {
+                                  qty,
+                                  qty_base: Number(qty || 0) * (Number.isFinite(factor) && factor > 0 ? factor : 1),
+                                });
+                              }}
                               placeholder={entryType === 'ADJUSTMENT' ? 'Ej: -2 o 5' : 'Ej: 10'}
                             />
+                            {showUnitsColumn && (
+                              <small>
+                                Base: {((Number(row.qty || 0) || 0) * (Number(row.conversion_factor ?? 1) || 1)).toFixed(3)}
+                              </small>
+                            )}
                           </td>
                           <td>
                             <input

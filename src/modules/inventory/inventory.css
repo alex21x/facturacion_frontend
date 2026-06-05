@@ -157,37 +157,74 @@
 
 .inventory-stock-table th:nth-child(1),
 .inventory-stock-table td:nth-child(1) {
-  width: 6%;
+  width: 5%;
 }
 
 .inventory-stock-table th:nth-child(2),
 .inventory-stock-table td:nth-child(2) {
-  width: 30%;
+  width: 22%;
 }
 
 .inventory-stock-table th:nth-child(3),
 .inventory-stock-table td:nth-child(3) {
-  width: 12%;
+  width: 10%;
 }
 
 .inventory-stock-table th:nth-child(4),
 .inventory-stock-table td:nth-child(4) {
-  width: 20%;
+  width: 16%;
 }
 
 .inventory-stock-table th:nth-child(5),
 .inventory-stock-table td:nth-child(5) {
-  width: 18%;
+  width: 14%;
 }
 
 .inventory-stock-table th:nth-child(6),
 .inventory-stock-table td:nth-child(6) {
-  width: 7%;
+  width: 20%;
 }
 
 .inventory-stock-table th:nth-child(7),
 .inventory-stock-table td:nth-child(7) {
+  width: 6%;
+}
+
+.inventory-stock-table th:nth-child(8),
+.inventory-stock-table td:nth-child(8) {
   width: 7%;
+}
+
+.inventory-presentation-empty {
+  color: #8f8576;
+}
+
+.inventory-presentation-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.inventory-presentation-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #d9ceb7;
+  background: #f7f2e7;
+  color: #655843;
+  font-size: 0.7rem;
+  line-height: 1;
+  padding: 0.25rem 0.45rem;
+  white-space: nowrap;
+}
+
+.inventory-presentation-more {
+  border-radius: 999px;
+  border: 1px dashed #b9ad93;
+  background: #fff8eb;
+  color: #6f614c;
+  font-size: 0.68rem;
+  padding: 0.2rem 0.45rem;
 }
 
 .inventory-kardex-table th:nth-child(1),

@@ -121,6 +121,50 @@ export async function fetchInventoryLots(
   return response.data;
 }
 
+export type InventoryProductCommercialConfig = {
+  product: {
+    id: number;
+    name: string;
+    unit_id: number | null;
+    sale_price: number;
+  };
+  features?: {
+    PRODUCT_MULTI_UOM?: boolean;
+    PRODUCT_UOM_CONVERSIONS?: boolean;
+    PRODUCT_WHOLESALE_PRICING?: boolean;
+  };
+  product_units: Array<{
+    unit_id: number;
+    is_base: boolean;
+    status: number;
+    code: string;
+    name: string;
+  }>;
+  conversions: Array<{
+    from_unit_id: number;
+    to_unit_id: number;
+    conversion_factor: number;
+    status: number;
+  }>;
+  wholesale_prices: Array<{
+    unit_id: number | null;
+    min_qty: string;
+    max_qty: string | null;
+    unit_price: number;
+    status: number;
+  }>;
+};
+
+export async function fetchInventoryProductCommercialConfig(
+  accessToken: string,
+  productId: number,
+): Promise<InventoryProductCommercialConfig> {
+  return apiClient.request<InventoryProductCommercialConfig>(`/api/inventory/products/${productId}/commercial-config`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
 export async function fetchKardex(
   accessToken: string,
   params?: {
