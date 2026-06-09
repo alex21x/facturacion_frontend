@@ -4169,8 +4169,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           EstadoBajaSunat: String(row.sunat_void_status ?? ''),
           DescuentoItem: Number(row.item_discount_total ?? 0),
           DescuentoGlobal: Number(row.global_discount_total ?? 0),
+          Subtotal: Number(row.subtotal ?? 0),
+          IGV: Number(row.tax_total ?? 0),
           Total: Number(row.total ?? 0),
-          Saldo: Number(row.balance_due ?? 0),
+          Saldo: Number(row.balance_due ?? 0),          
         };
       });
 

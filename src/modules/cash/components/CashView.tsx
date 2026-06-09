@@ -138,6 +138,12 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
   const [editingMovementId, setEditingMovementId] = useState<number | null>(null);
   const [exportingCashReport, setExportingCashReport] = useState(false);
 
+  function parseMovementAmount(value: string): number {
+    const normalized = value.trim().replace(',', '.');
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+
   function isSalesMovement(refType: string | null): boolean {
     const normalized = String(refType ?? '').trim().toUpperCase();
     return [
@@ -827,20 +833,38 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     setSubmittingMov(true);
     setMessage('');
     setIsError(false);
+
+    const amount = parseMovementAmount(movAmount);
+    const description = movDescription.trim();
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setIsError(true);
+      setMessage('Ingrese un monto valido mayor a 0.');
+      setSubmittingMov(false);
+      return;
+    }
+
+    if (description === '') {
+      setIsError(true);
+      setMessage('Ingrese una descripcion para el movimiento.');
+      setSubmittingMov(false);
+      return;
+    }
+
     try {
       if (editingMovementId) {
         await updateCashMovement(accessToken, editingMovementId, {
           movement_type: movType,
-          amount: parseFloat(movAmount),
-          description: movDescription,
+          amount,
+          description,
         });
       } else {
         await createCashMovement(accessToken, {
           cash_register_id: cashRegisterId,
           cash_session_id: currentSession?.id,
           movement_type: movType,
-          amount: parseFloat(movAmount),
-          description: movDescription,
+          amount,
+          description,
         });
       }
       closeMovementPopup();

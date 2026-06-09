@@ -96,6 +96,40 @@ const DEFAULT_LOOKUPS: GreLookups = {
   runtime_features: [],
 };
 
+function extractDriverLicense(driver: Record<string, unknown> | null | undefined): string {
+  return String(driver?.license ?? driver?.licencia ?? '').trim();
+}
+
+function extractVehiclePlate(vehicle: Record<string, unknown> | null | undefined): string {
+  return String(
+    vehicle?.placa
+    ?? vehicle?.plate
+    ?? vehicle?.vehiculo_placa
+    ?? vehicle?.placa_rodaje
+    ?? ''
+  ).trim();
+}
+
+function extractVehicleBrand(vehicle: Record<string, unknown> | null | undefined): string {
+  return String(
+    vehicle?.marca
+    ?? vehicle?.brand
+    ?? vehicle?.vehicle_brand
+    ?? vehicle?.marca_vehiculo
+    ?? ''
+  ).trim();
+}
+
+function extractVehicleLicense(vehicle: Record<string, unknown> | null | undefined): string {
+  return String(
+    vehicle?.license
+    ?? vehicle?.licencia
+    ?? vehicle?.vehiculo_licencia
+    ?? vehicle?.licencia_vehiculo
+    ?? ''
+  ).trim();
+}
+
 function featureSourceLabel(source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICAL_TEMPLATE' | null): string {
   if (source === 'COMPANY_VERTICAL_OVERRIDE') {
     return 'Override empresa/rubro';
@@ -121,6 +155,9 @@ function featureSourceBadgeClass(source?: 'COMPANY_VERTICAL_OVERRIDE' | 'VERTICA
 }
 
 function toPayload(detail: GreGuide): GreGuidePayload {
+  const vehicle = ((detail.vehicle ?? {}) as Record<string, unknown>);
+  const driver = ((detail.driver ?? {}) as Record<string, unknown>);
+
   return {
     branch_id: detail.branch_id,
     guide_type: detail.guide_type,
@@ -139,8 +176,16 @@ function toPayload(detail: GreGuide): GreGuidePayload {
     notes: detail.notes ?? undefined,
     destinatario: detail.destinatario ?? {},
     transporter: detail.transporter ?? {},
-    vehicle: detail.vehicle ?? {},
-    driver: detail.driver ?? {},
+    vehicle: {
+      ...vehicle,
+      placa: extractVehiclePlate(vehicle),
+      marca: extractVehicleBrand(vehicle),
+      license: extractVehicleLicense(vehicle),
+    },
+    driver: {
+      ...driver,
+      license: extractDriverLicense(driver),
+    },
     items: (detail.items ?? []).map((item) => ({
       code: item.code ?? '',
       description: item.description,
@@ -230,10 +275,18 @@ function buildBridgePayloadPreview(detail: GreGuide, lookups: GreLookups): Recor
   };
 
   if (modalidad === '02') {
-    cabecera.vehiculo_placa = String(vehicle.placa ?? '');
+    cabecera.vehiculo_placa = extractVehiclePlate(vehicle);
+    const vehicleBrand = extractVehicleBrand(vehicle);
+    const vehicleLicense = extractVehicleLicense(vehicle);
+    if (vehicleBrand !== '') {
+      cabecera.vehiculo_marca = vehicleBrand;
+    }
+    if (vehicleLicense !== '') {
+      cabecera.vehiculo_licencia = vehicleLicense;
+    }
     cabecera.conductor_codigo = String(driver.doc_type ?? '');
     cabecera.conductor_ruc = String(driver.doc_number ?? '');
-    cabecera.conductor_licencia = String(driver.license ?? driver.licencia ?? '');
+    cabecera.conductor_licencia = extractDriverLicense(driver);
     cabecera.conductor_razon_social = String(driver.name ?? '');
   } else {
     cabecera.transporte_codigo = String(transporter.doc_type ?? '6');
@@ -687,11 +740,11 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
       }
     }
     if (candidate.transport_mode_code === '02') {
-      const plate = String((candidate.vehicle as Record<string, unknown> | undefined)?.placa ?? '').trim();
+      const plate = extractVehiclePlate((candidate.vehicle as Record<string, unknown> | undefined) ?? null);
       const driverDocType = String((candidate.driver as Record<string, unknown> | undefined)?.doc_type ?? '').trim();
       const driverDoc = String((candidate.driver as Record<string, unknown> | undefined)?.doc_number ?? '').trim();
       const driverName = String((candidate.driver as Record<string, unknown> | undefined)?.name ?? '').trim();
-      const driverLicense = String((candidate.driver as Record<string, unknown> | undefined)?.license ?? '').trim();
+      const driverLicense = extractDriverLicense((candidate.driver as Record<string, unknown> | undefined) ?? null);
       if (plate === '') {
         return 'Transporte privado requiere placa de vehiculo.';
       }
@@ -1581,8 +1634,34 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
                 <div className="gre-grid-2">
                   <label className="ds-field">
                     <span>Vehiculo placa</span>
-                    <input className="ds-input" value={String((payload.vehicle?.placa as string) ?? '')} onChange={(e) => setPayload((p) => ({ ...p, vehicle: { ...(p.vehicle ?? {}), placa: e.target.value } }))} />
+                    <input
+                      className="ds-input"
+                      value={extractVehiclePlate((payload.vehicle as Record<string, unknown> | undefined) ?? null)}
+                      onChange={(e) => setPayload((p) => ({ ...p, vehicle: { ...(p.vehicle ?? {}), placa: e.target.value } }))}
+                    />
                   </label>
+                  <label className="ds-field">
+                    <span>Vehiculo marca</span>
+                    <input
+                      className="ds-input"
+                      value={extractVehicleBrand((payload.vehicle as Record<string, unknown> | undefined) ?? null)}
+                      onChange={(e) => setPayload((p) => ({ ...p, vehicle: { ...(p.vehicle ?? {}), marca: e.target.value } }))}
+                    />
+                  </label>
+                </div>
+
+                <div className="gre-grid-2">
+                  <label className="ds-field">
+                    <span>Licencia vehiculo</span>
+                    <input
+                      className="ds-input"
+                      value={extractVehicleLicense((payload.vehicle as Record<string, unknown> | undefined) ?? null)}
+                      onChange={(e) => setPayload((p) => ({ ...p, vehicle: { ...(p.vehicle ?? {}), license: e.target.value } }))}
+                    />
+                  </label>
+                </div>
+
+                <div className="gre-grid-2">
                   <label className="ds-field">
                     <span>Tipo documento conductor</span>
                     <select
@@ -1611,7 +1690,11 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
                 <div className="gre-grid-2">
                   <label className="ds-field">
                     <span>Licencia conductor</span>
-                    <input className="ds-input" value={String((payload.driver?.license as string) ?? '')} onChange={(e) => setPayload((p) => ({ ...p, driver: { ...(p.driver ?? {}), license: e.target.value } }))} />
+                    <input
+                      className="ds-input"
+                      value={extractDriverLicense((payload.driver as Record<string, unknown> | undefined) ?? null)}
+                      onChange={(e) => setPayload((p) => ({ ...p, driver: { ...(p.driver ?? {}), license: e.target.value } }))}
+                    />
                   </label>
                 </div>
 

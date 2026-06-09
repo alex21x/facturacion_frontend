@@ -35,6 +35,8 @@ export type CommercialDocumentListItem = {
   sunat_void_summary_id?: number | string | null;
   declaration_summary_status?: string | null;
   cancellation_summary_status?: string | null;
+  subtotal?: number | string | null;
+  tax_total?: number | string | null;
   total: string;
   balance_due: string;
   item_discount_total?: number | string | null;
