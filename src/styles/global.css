@@ -8070,6 +8070,13 @@ th {
   background: #f3f6f3;
 }
 
+.gre-product-suggest-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.72rem;
+  color: #6b665d;
+}
+
 .gre-section {
   border: 1px dashed #d5d1c7;
   border-radius: 10px;

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
 import { fmtDateTimeFullLima } from '../../../shared/utils/lima';
+import { fetchSalesInventoryProducts, type InventoryProduct } from '../api/facade';
 import {
   cancelGreGuide,
   createGreGuide,
@@ -218,6 +219,30 @@ function isGreStatusBridgeMethod(method: string | null | undefined): boolean {
   return /(send_statusTicketGRE|send_statusTicketGuiaRemisionGRE)/i.test(String(method ?? '').trim());
 }
 
+function normalizeDocumentReference(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
+}
+
+function parseDocumentReference(reference: string): { series: string; number: number; documentKind: 'INVOICE' | 'RECEIPT' } | null {
+  const normalized = normalizeDocumentReference(reference).trim();
+  const match = normalized.match(/^([A-Z0-9]{1,4})-(\d{1,8})$/);
+  if (!match) {
+    return null;
+  }
+
+  const series = match[1];
+  const number = Number(match[2]);
+  if (!Number.isFinite(number) || number <= 0) {
+    return null;
+  }
+
+  return {
+    series,
+    number,
+    documentKind: series.startsWith('B') ? 'RECEIPT' : 'INVOICE',
+  };
+}
+
 function buildBridgePayloadPreview(detail: GreGuide, lookups: GreLookups): Record<string, unknown> {
   if (isGreStatusBridgeMethod(detail.bridge_method)) {
     return {
@@ -432,10 +457,14 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
   const [printPreview, setPrintPreview] = useState<{ title: string; subtitle: string; html: string; variant: 'compact' | 'wide' } | null>(null);
 
   const [prefillReference, setPrefillReference] = useState('');
+  const [relatedDocumentReference, setRelatedDocumentReference] = useState('');
   const [ubigeoSearchPartida, setUbigeoSearchPartida] = useState('');
   const [ubigeoSearchLlegada, setUbigeoSearchLlegada] = useState('');
   const [ubigeoResultsPartida, setUbigeoResultsPartida] = useState<GreUbigeoOption[]>([]);
   const [ubigeoResultsLlegada, setUbigeoResultsLlegada] = useState<GreUbigeoOption[]>([]);
+  const [focusedItemIndex, setFocusedItemIndex] = useState<number | null>(null);
+  const [itemProductSuggestions, setItemProductSuggestions] = useState<InventoryProduct[]>([]);
+  const itemProductRequestSeqRef = useRef(0);
 
   const isPublicTransport = payload.transport_mode_code === '01';
   const isPrivateTransport = payload.transport_mode_code === '02';
@@ -679,6 +708,73 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
     };
   }, [accessToken, ubigeoSearchLlegada]);
 
+  useEffect(() => {
+    if (focusedItemIndex === null) {
+      setItemProductSuggestions([]);
+      return;
+    }
+
+    const query = String(payload.items[focusedItemIndex]?.description ?? '').trim();
+    if (query.length < 1) {
+      setItemProductSuggestions([]);
+      return;
+    }
+
+    let active = true;
+    const requestSeq = itemProductRequestSeqRef.current + 1;
+    itemProductRequestSeqRef.current = requestSeq;
+
+    const timer = window.setTimeout(() => {
+      fetchSalesInventoryProducts(accessToken, {
+        search: query,
+        limit: 12,
+        autocomplete: true,
+      })
+        .then((rows) => {
+          if (!active || requestSeq !== itemProductRequestSeqRef.current) return;
+          setItemProductSuggestions(rows.slice(0, 12));
+        })
+        .catch(() => {
+          if (!active || requestSeq !== itemProductRequestSeqRef.current) return;
+          setItemProductSuggestions([]);
+        });
+    }, 220);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [accessToken, focusedItemIndex, payload.items]);
+
+  useEffect(() => {
+    if (focusedItemIndex !== null && focusedItemIndex >= payload.items.length) {
+      setFocusedItemIndex(null);
+      setItemProductSuggestions([]);
+    }
+  }, [focusedItemIndex, payload.items.length]);
+
+  useEffect(() => {
+    const relatedId = payload.related_document_id;
+    if (!(relatedId && relatedId > 0) || relatedDocumentReference.trim() !== '') {
+      return;
+    }
+
+    let active = true;
+    prefillGreFromDocument(accessToken, { documentId: relatedId })
+      .then((res) => {
+        if (!active) return;
+        setRelatedDocumentReference(`${res.related_document.series}-${res.related_document.number}`);
+      })
+      .catch(() => {
+        if (!active) return;
+        setRelatedDocumentReference('');
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [accessToken, payload.related_document_id, relatedDocumentReference]);
+
   const onCreateNew = () => {
     setActiveTab('editor');
     setMode('create');
@@ -687,6 +783,9 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
     setPayload({ ...EMPTY_PAYLOAD, branch_id: branchId });
     setActionMessage('');
     setError('');
+    setRelatedDocumentReference('');
+    setFocusedItemIndex(null);
+    setItemProductSuggestions([]);
   };
 
   const onEditSelected = () => {
@@ -696,6 +795,32 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
     setPayload(toPayload(detail));
     setActionMessage('');
     setError('');
+    setRelatedDocumentReference('');
+    setFocusedItemIndex(null);
+    setItemProductSuggestions([]);
+  };
+
+  const chooseGreItemProduct = (index: number, product: InventoryProduct) => {
+    setPayload((prev) => {
+      const nextItems = prev.items.map((row, idx) => {
+        if (idx !== index) return row;
+
+        return {
+          ...row,
+          code: String(product.sku ?? '').trim(),
+          description: String(product.name ?? '').trim(),
+          unit: String(product.unit_code ?? row.unit ?? 'NIU').trim() || 'NIU',
+        };
+      });
+
+      return {
+        ...prev,
+        items: nextItems,
+      };
+    });
+
+    setFocusedItemIndex(null);
+    setItemProductSuggestions([]);
   };
 
   const setItem = (index: number, key: 'code' | 'description' | 'qty' | 'unit', value: string) => {
@@ -727,9 +852,6 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
     }
     if (!candidate.destinatario?.doc_type || !candidate.destinatario?.doc_number || !candidate.destinatario?.name) {
       return 'Completa tipo doc, numero y nombre del destinatario.';
-    }
-    if (['01', '02', '14'].includes(candidate.motivo_traslado) && !(candidate.related_document_id && candidate.related_document_id > 0)) {
-      return 'Para este motivo debes indicar comprobante relacionado.';
     }
     if (candidate.transport_mode_code === '01') {
       const transporterDocType = String((candidate.transporter as Record<string, unknown> | undefined)?.doc_type ?? '').trim();
@@ -765,23 +887,18 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
   };
 
   const doPrefillFromDocument = () => {
-    const normalized = prefillReference.trim().toUpperCase();
-    const match = normalized.match(/^([A-Z0-9]{1,4})-(\d{1,8})$/);
-    if (!match) {
+    const parsedReference = parseDocumentReference(prefillReference);
+    if (!parsedReference) {
       setError('Ingresa el comprobante como Serie-Numero. Ejemplo: F001-15');
       return;
     }
 
-    const series = match[1];
-    const number = Number(match[2]);
-    const documentKind: 'INVOICE' | 'RECEIPT' = series.startsWith('B') ? 'RECEIPT' : 'INVOICE';
-
     setSaving(true);
     setError('');
     prefillGreFromDocument(accessToken, {
-      series,
-      number,
-      documentKind,
+      series: parsedReference.series,
+      number: parsedReference.number,
+      documentKind: parsedReference.documentKind,
     })
       .then((res) => {
         setPayload((prev) => ({
@@ -795,6 +912,7 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
           vehicle: { ...prev.vehicle, ...(res.draft.vehicle ?? {}) },
           driver: { ...prev.driver, ...(res.draft.driver ?? {}) },
         }));
+        setRelatedDocumentReference(`${res.related_document.series}-${res.related_document.number}`);
         setActionMessage(`Datos precargados desde ${res.related_document.series}-${res.related_document.number}.`);
         setPrefillOpen(false);
       })
@@ -816,15 +934,45 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
     setUbigeoResultsLlegada([]);
   };
 
-  const saveForm = () => {
+  const saveForm = async () => {
     const body: GreGuidePayload = {
       ...payload,
       branch_id: branchId,
       items: payload.items.filter((row) => row.description.trim() !== '' && row.qty > 0),
     };
 
+    const referenceValue = normalizeDocumentReference(relatedDocumentReference).trim();
+    if (referenceValue === '') {
+      body.related_document_id = null;
+    } else {
+      const parsedReference = parseDocumentReference(referenceValue);
+      if (!parsedReference) {
+        setError('Comprobante relacionado invalido. Usa formato Serie-Numero (ej: F001-10).');
+        return;
+      }
+
+      setSaving(true);
+      setError('');
+      setActionMessage('');
+
+      try {
+        const resolved = await prefillGreFromDocument(accessToken, {
+          series: parsedReference.series,
+          number: parsedReference.number,
+          documentKind: parsedReference.documentKind,
+        });
+        body.related_document_id = resolved.related_document.id;
+        setRelatedDocumentReference(`${resolved.related_document.series}-${resolved.related_document.number}`);
+      } catch (err) {
+        setSaving(false);
+        setError(err instanceof Error ? err.message : 'No se pudo validar comprobante relacionado.');
+        return;
+      }
+    }
+
     const validationMessage = validatePayload(body);
     if (validationMessage) {
+      setSaving(false);
       setError(validationMessage);
       return;
     }
@@ -1700,8 +1848,17 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
 
                 <div className="gre-grid-2">
                   <label className="ds-field">
-                    <span>Comprobante relacionado</span>
-                    <input className="ds-input" value={payload.related_document_id ?? ''} onChange={(e) => setPayload((p) => ({ ...p, related_document_id: e.target.value ? Number(e.target.value) : null }))} />
+                    <span>Comprobante relacionado (opcional)</span>
+                    <input
+                      className="ds-input"
+                      placeholder="Serie-Numero (ej: F001-10)"
+                      value={relatedDocumentReference}
+                      onChange={(e) => {
+                        const nextValue = normalizeDocumentReference(e.target.value);
+                        setRelatedDocumentReference(nextValue);
+                        setPayload((p) => ({ ...p, related_document_id: null }));
+                      }}
+                    />
                   </label>
                 </div>
               </>
@@ -1709,8 +1866,17 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
 
             {!isPrivateTransport && (
               <label className="ds-field">
-                <span>Comprobante relacionado</span>
-                <input className="ds-input" value={payload.related_document_id ?? ''} onChange={(e) => setPayload((p) => ({ ...p, related_document_id: e.target.value ? Number(e.target.value) : null }))} />
+                <span>Comprobante relacionado (opcional)</span>
+                <input
+                  className="ds-input"
+                  placeholder="Serie-Numero (ej: F001-10)"
+                  value={relatedDocumentReference}
+                  onChange={(e) => {
+                    const nextValue = normalizeDocumentReference(e.target.value);
+                    setRelatedDocumentReference(nextValue);
+                    setPayload((p) => ({ ...p, related_document_id: null }));
+                  }}
+                />
               </label>
             )}
           </div>
@@ -1726,7 +1892,39 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
             {payload.items.map((item, idx) => (
               <div key={idx} className="gre-item-row">
                 <input className="ds-input" placeholder="Codigo" value={item.code ?? ''} onChange={(e) => setItem(idx, 'code', e.target.value)} />
-                <input className="ds-input" placeholder="Descripcion" value={item.description} onChange={(e) => setItem(idx, 'description', e.target.value)} />
+                <div className="gre-autocomplete gre-product-autocomplete">
+                  <input
+                    className="ds-input"
+                    placeholder="Descripcion o buscar producto"
+                    value={item.description}
+                    onChange={(e) => setItem(idx, 'description', e.target.value)}
+                    onFocus={() => setFocusedItemIndex(idx)}
+                    onBlur={() => {
+                      window.setTimeout(() => {
+                        setFocusedItemIndex((current) => (current === idx ? null : current));
+                      }, 120);
+                    }}
+                  />
+                  {focusedItemIndex === idx && itemProductSuggestions.length > 0 && (
+                    <div className="gre-autocomplete-list">
+                      {itemProductSuggestions.map((product) => (
+                        <button
+                          key={`gre-item-product-${idx}-${product.id}`}
+                          type="button"
+                          className="gre-autocomplete-item"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }}
+                          onClick={() => chooseGreItemProduct(idx, product)}
+                        >
+                          <strong>{product.name}</strong>
+                          <span className="gre-product-suggest-meta">{product.sku ?? 'SIN-SKU'} | {product.unit_code ?? 'NIU'}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 <input className="ds-input" type="number" step="0.01" placeholder="Cantidad" value={item.qty} onChange={(e) => setItem(idx, 'qty', e.target.value)} />
                 <button className="ds-btn-secondary" type="button" onClick={() => setPayload((p) => ({ ...p, items: p.items.filter((_, i) => i !== idx) }))}>Quitar</button>
               </div>
