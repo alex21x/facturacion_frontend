@@ -29,6 +29,10 @@
   grid-column: span 3;
 }
 
+.purchases-entry-row.has-line-tools .purchases-field-unit {
+  grid-column: span 3;
+}
+
 .purchases-entry-row.has-line-tools .sales-field-lot {
   grid-column: span 2;
 }
@@ -48,6 +52,10 @@
 /* Prevent two-line label wrap in unit-cost field to keep input row aligned. */
 .purchases-entry-row .sales-field-price {
   grid-column: span 3;
+}
+
+.purchases-entry-row .purchases-field-unit {
+  grid-column: span 2;
 }
 
 .purchases-entry-row .sales-field-lot {
@@ -352,6 +360,7 @@
   }
 
   .purchases-entry-row .sales-field-product,
+  .purchases-entry-row .purchases-field-unit,
   .purchases-entry-row .sales-field-qty,
   .purchases-entry-row .sales-field-price,
   .purchases-entry-row .sales-field-lot,

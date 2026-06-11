@@ -20,6 +20,11 @@ type PurchaseDetailCompany = Pick<CompanyProfile, 'tax_id' | 'legal_name' | 'tra
 export type PurchaseEntryDraft = {
   key: string;
   product_id: number | null;
+  unit_id?: number | null;
+  unit_code?: string | null;
+  unit_name?: string | null;
+  conversion_factor?: number;
+  qty_base?: number | null;
   lot_id?: number | null;
   product_query: string;
   qty: string;
