@@ -18,6 +18,35 @@ import type {
   VoidCommercialDocumentPayload,
 } from './types';
 
+export type TopProductRow = {
+  id: number;
+  unit_id: number | null;
+  sku: string | null;
+  barcode: string | null;
+  name: string;
+  sale_price: string;
+  cost_price: string;
+  is_stockable: boolean;
+  lot_tracking: boolean;
+  has_expiration: boolean;
+  status: number;
+  category_name: string | null;
+  unit_code: string | null;
+  unit_name: string | null;
+  sunat_code: string | null;
+  image_url: string | null;
+  seller_commission_percent: string;
+  product_nature: string;
+  line_id: number | null;
+  brand_id: number | null;
+  location_id: number | null;
+  warranty_id: number | null;
+  line_name: string | null;
+  brand_name: string | null;
+  location_name: string | null;
+  warranty_name: string | null;
+};
+
 export type SalesBootstrapResponse = {
   lookups: SalesLookups;
   documents: PaginatedCommercialDocuments | null;
@@ -162,6 +191,20 @@ export async function fetchSalesBootstrap(
     method: 'GET',
     headers: authHeaders(accessToken),
   });
+}
+
+export async function fetchTopProducts(
+  accessToken: string,
+  params?: { limit?: number; days?: number }
+): Promise<TopProductRow[]> {
+  const q = new URLSearchParams();
+  if (params?.limit) q.set('limit', String(params.limit));
+  if (params?.days) q.set('days', String(params.days));
+  const response = await apiClient.request<{ data: TopProductRow[] }>(
+    `/api/sales/top-products?${q.toString()}`,
+    { method: 'GET', headers: authHeaders(accessToken) }
+  );
+  return response.data;
 }
 
 export async function fetchCustomerAutocomplete(

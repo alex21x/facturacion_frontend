@@ -1358,6 +1358,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [documentViewFilter, setDocumentViewFilter] = useState<DocumentViewFilter>('ALL');
   const [customerSuggestions, setCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [productSuggestions, setProductSuggestions] = useState<InventoryProduct[]>([]);
+  const [quickProductCards, setQuickProductCards] = useState<InventoryProduct[]>([]);
   const [stockRows, setStockRows] = useState<InventoryStockRow[]>([]);
   const [lots, setLots] = useState<InventoryLotRow[]>([]);
   const [restaurantTables, setRestaurantTables] = useState<RestaurantTableRow[]>([]);
@@ -2648,6 +2649,36 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     window.localStorage.setItem(SALES_REPORT_FILTERS_STORAGE_KEY, JSON.stringify(documentFiltersApplied));
   }, [documentFiltersApplied]);
+
+  // Quick-sale cards: lightweight, frontend-only source to keep UI stable.
+  useEffect(() => {
+    if (!accessToken) {
+      setQuickProductCards([]);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchSalesInventoryProducts(accessToken, {
+      limit: 4,
+      status: 1,
+      warehouseId,
+    })
+      .then((rows) => {
+        if (!cancelled) {
+          setQuickProductCards(Array.isArray(rows) ? rows.slice(0, 4) : []);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setQuickProductCards([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, warehouseId]);
+
 
   useEffect(() => {
     if (salesWorkspaceMode !== 'REPORT') {
@@ -6293,9 +6324,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         </p>
       )}
 
-      <div style={{ marginTop: '0.35rem', marginBottom: '0.45rem', border: '1px solid #fde68a', background: '#fffbeb', borderRadius: '10px', padding: '0.55rem 0.75rem', color: '#78350f', fontSize: '0.86rem', lineHeight: 1.35 }}>
-        <strong>Recordatorio SUNAT:</strong> Estado final correcto del comprobante: <strong style={{ color: '#166534' }}>Aceptado</strong>. Si se anula: <strong style={{ color: '#4b5563' }}>Anulado</strong>. En boletas, la anulación termina al enviar/consultar ticket en Resumen Diario. Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
-      </div>
+      {salesWorkspaceMode === 'SELL' && (
+        <aside className="sales-sunat-reminder-fixed" role="note" aria-live="polite">
+          <strong className="sales-sunat-reminder-fixed__title">Recordatorio SUNAT</strong>
+          <span>
+            Estado final correcto: <strong className="sales-sunat-status sales-sunat-status--accepted">Aceptado</strong>.
+            Si se anula: <strong className="sales-sunat-status sales-sunat-status--cancelled">Anulado</strong>.
+            En boletas, la anulación termina al enviar/consultar ticket en Resumen Diario.
+            Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
+          </span>
+        </aside>
+      )}
 
       {message && <p className="notice">{message}</p>}
       {sunatToast && createPortal(
@@ -7105,10 +7144,35 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </header>
 
             <div className="sales-grid-main">
+              {!form.isManualItem && quickProductCards.length > 0 && (
+                <div className="sales-quick-top-row barra-colgante" role="list" aria-label="Productos más vendidos">
+                  <span className="sales-quick-top-label">Productos más vendidos</span>
+                  <div className="sales-quick-top-list">
+                    {quickProductCards.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className="sales-quick-top-chip"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => {
+                          void chooseProduct(row);
+                          setTimeout(() => addDraftItem(), 90);
+                        }}
+                        title={`${row.name} - ${selectedCurrency?.symbol ?? 'S/'} ${Number(row.sale_price || 0).toFixed(2)}`}
+                      >
+                        <span className="sales-quick-top-chip__name">{row.name}</span>
+                        <span className="sales-quick-top-chip__price">{selectedCurrency?.symbol ?? 'S/'} {Number(row.sale_price || 0).toFixed(2)}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               <div className={`sales-grid-row sales-grid-row-item ${isTributaryDocument ? 'tax-on' : 'tax-off'} ${(salesItemDiscountEnabled || salesFreeItemsEnabled) ? 'has-line-tools' : ''}`}>
                 <div className="with-suggest sales-field-product sales-field-shell">
                   <div className="sales-field-product-head">
                     <span>{form.isManualItem ? 'Descripcion manual' : 'Producto'}</span>
+
                     <label className="sales-stock-toggle sales-stock-toggle-inline">
                       <input
                         type="checkbox"
@@ -7118,6 +7182,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       Agregar sin stock
                     </label>
                   </div>
+
                   {form.isManualItem ? (
                     <input
                       value={form.manualDescription}

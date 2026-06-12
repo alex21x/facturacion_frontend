@@ -8500,7 +8500,12 @@ th {
 .gre-status-badge--accepted  { background: #f0fdf4; color: #16a34a; border-color: #bbf7d0; }
 .gre-status-badge--rejected  { background: #fff1f2; color: #be123c; border-color: #fecdd3; }
 .gre-status-badge--error     { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
-.gre-status-badge--cancelled { background: #f9fafb; color: #9ca3af; border-color: #e5e7eb; }
+.gre-status-badge--cancelled {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+  font-weight: 700;
+}
 
 /* -- GRE auto-send checkbox ---------------------------- */
 .gre-autosend-check {
