@@ -90,6 +90,58 @@ function buildSuggestedAdminUsername(taxId: string, legalName: string): string {
   return slugBase ? `admin_${slugBase}` : 'admin_empresa';
 }
 
+function formatLastIssuedAtLabel(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (raw === '') {
+    return 'Sin emision';
+  }
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return 'Sin emision';
+  }
+
+  return new Intl.DateTimeFormat('es-PE', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'America/Lima',
+  }).format(date);
+}
+
+function formatLastIssuedAgoLabel(value: string | null | undefined): string {
+  const raw = String(value ?? '').trim();
+  if (raw === '') {
+    return '';
+  }
+
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0) {
+    return 'hace instantes';
+  }
+
+  const minuteMs = 60 * 1000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (diffMs < hourMs) {
+    const minutes = Math.max(1, Math.floor(diffMs / minuteMs));
+    return `hace ${minutes} min`;
+  }
+
+  if (diffMs < dayMs) {
+    const hours = Math.max(1, Math.floor(diffMs / hourMs));
+    return `hace ${hours} h`;
+  }
+
+  const days = Math.max(1, Math.floor(diffMs / dayMs));
+  return `hace ${days} dia${days === 1 ? '' : 's'}`;
+}
+
 type Props = { accessToken: string; onUnauthorized?: () => void };
 
 type AdminPanelKey = 'companies' | 'operational' | 'rate' | 'commerce' | 'sunat' | 'inventory';
@@ -1673,6 +1725,12 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                   </span>
                   <span className="adm-row-issued" title="Comprobantes emitidos">
                     {Number(company.issued_documents_count ?? 0).toLocaleString('es-PE')} comp.
+                  </span>
+                  <span className="adm-row-last-issued" title="Ultima emision de comprobante (Lima)">
+                    <span>{formatLastIssuedAtLabel(company.issued_last_at)}</span>
+                    {company.issued_last_at ? (
+                      <small>{formatLastIssuedAgoLabel(company.issued_last_at)}</small>
+                    ) : null}
                   </span>
                   <span className="adm-row-admin">
                     {company.admin_username

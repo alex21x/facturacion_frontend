@@ -922,6 +922,32 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
   font-weight: 700;
 }
 
+.adm-row-last-issued {
+  flex-shrink: 0;
+  min-width: 132px;
+  text-align: center;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.1;
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.74rem;
+  color: #0f172a;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.2rem 0.45rem;
+  font-weight: 700;
+}
+
+.adm-row-last-issued small {
+  font-size: 0.66rem;
+  color: #64748b;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
 /* Admin username */
 .adm-row-admin {
   flex-shrink: 0;
