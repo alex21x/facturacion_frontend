@@ -299,6 +299,52 @@ export async function fetchGrePrintHtml(
   return res.text();
 }
 
+function resolveGrePdfNameFromDisposition(contentDisposition: string | null, fallback: string): string {
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1].trim());
+    } catch {
+      return utf8Match[1].trim();
+    }
+  }
+
+  const simpleMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  if (simpleMatch?.[1]) {
+    return simpleMatch[1].trim();
+  }
+
+  return fallback;
+}
+
+export async function fetchGrePrintPdf(
+  accessToken: string,
+  id: number,
+  format: 'ticket' | 'a4' = 'a4'
+): Promise<{ blob: Blob; fileName: string }> {
+  const fallbackName = `gre-${id}-${format}.pdf`;
+  const res = await fetch(`${apiClient.baseUrl}/api/sales/gre-guides/${id}/print-pdf?format=${format}`, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/pdf',
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`API ${res.status}: ${text}`);
+  }
+
+  const blob = await res.blob();
+  const fileName = resolveGrePdfNameFromDisposition(res.headers.get('Content-Disposition'), fallbackName);
+  return { blob, fileName };
+}
+
 export type TaxBridgeAuditAttempt = {
   id: number;
   document: string;

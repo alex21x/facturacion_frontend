@@ -43,6 +43,15 @@ const STATUS_LABELS: Record<DailySummaryStatus, string> = {
 
 const SUNAT_SENDING_STALE_MINUTES = 10;
 
+type SummaryToastTone = 'ok' | 'warn' | 'bad';
+
+function toneFromSummaryStatus(status: string | null | undefined): SummaryToastTone {
+  const normalized = String(status ?? '').trim().toUpperCase();
+  if (normalized === 'ACCEPTED') return 'ok';
+  if (normalized === 'REJECTED' || normalized === 'ERROR') return 'bad';
+  return 'warn';
+}
+
 
 function fmtDate(dateStr: string | null): string {
   if (!dateStr) return '—';
@@ -168,6 +177,7 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
   const [sendingId, setSendingId] = useState<number | null>(null);
   const [sendResult, setSendResult] = useState<string>('');
   const [queryingTicketId, setQueryingTicketId] = useState<number | null>(null);
+  const [summaryToast, setSummaryToast] = useState<{ tone: SummaryToastTone; title: string; detail: string } | null>(null);
 
   // ── Delete state ─────────────────────────────────────────────────────────────
   const [deletingId, setDeletingId] = useState<number | null>(null);
@@ -349,12 +359,20 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
       branch_id: branchId,
       notes: wizardNotes || undefined,
     })
-      .then(() => {
+      .then((res) => {
+        setSummaryToast({
+          tone: 'ok',
+          title: 'Resumen creado',
+          detail: String(res.message ?? 'Resumen diario generado correctamente.'),
+        });
         setShowWizard(false);
         setWizardNotes('');
         loadList();
       })
-      .catch((err: Error) => setWizardError(err.message))
+      .catch((err: Error) => {
+        setWizardError(err.message);
+        setSummaryToast({ tone: 'bad', title: 'Error al crear resumen', detail: err.message });
+      })
       .finally(() => setWizardSaving(false));
   };
 
@@ -370,7 +388,13 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
         const codePart = res.sunat_error_code ? `Codigo SUNAT: ${res.sunat_error_code}` : '';
         const messagePart = res.sunat_error_message ? `Detalle: ${res.sunat_error_message}` : '';
         const detailPart = [codePart, messagePart].filter((value) => value !== '').join(' | ');
-        setSendResult(detailPart ? `${res.label ?? res.message ?? 'Procesado'} | ${detailPart}` : (res.label ?? res.message ?? 'Procesado'));
+        const baseMessage = detailPart ? `${res.label ?? res.message ?? 'Procesado'} | ${detailPart}` : (res.label ?? res.message ?? 'Procesado');
+        setSendResult(baseMessage);
+        setSummaryToast({
+          tone: toneFromSummaryStatus(res.status),
+          title: `SUNAT resumen: ${res.label ?? 'Procesado'}`,
+          detail: baseMessage,
+        });
         loadList();
         if (selectedId === id) {
           fetchDailySummaryDetail(accessToken, id)
@@ -378,7 +402,10 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
             .catch(() => null);
         }
       })
-      .catch((err: Error) => setActionError(err.message))
+      .catch((err: Error) => {
+        setActionError(err.message);
+        setSummaryToast({ tone: 'bad', title: 'Error al enviar resumen', detail: err.message });
+      })
       .finally(() => setSendingId(null));
   };
 
@@ -392,7 +419,13 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
         const codePart = res.sunat_error_code ? `Codigo SUNAT: ${res.sunat_error_code}` : '';
         const messagePart = res.sunat_error_message ? `Detalle: ${res.sunat_error_message}` : '';
         const detailPart = [codePart, messagePart].filter((value) => value !== '').join(' | ');
-        setSendResult(detailPart ? `${res.label ?? res.message ?? 'Ticket procesado'} | ${detailPart}` : (res.label ?? res.message ?? 'Ticket procesado'));
+        const baseMessage = detailPart ? `${res.label ?? res.message ?? 'Ticket procesado'} | ${detailPart}` : (res.label ?? res.message ?? 'Ticket procesado');
+        setSendResult(baseMessage);
+        setSummaryToast({
+          tone: toneFromSummaryStatus(res.status),
+          title: `Ticket resumen: ${res.label ?? 'Procesado'}`,
+          detail: baseMessage,
+        });
         loadList();
         if (selectedId === id) {
           fetchDailySummaryDetail(accessToken, id)
@@ -400,7 +433,10 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
             .catch(() => null);
         }
       })
-      .catch((err: Error) => setActionError(err.message))
+      .catch((err: Error) => {
+        setActionError(err.message);
+        setSummaryToast({ tone: 'bad', title: 'Error al consultar ticket', detail: err.message });
+      })
       .finally(() => setQueryingTicketId(null));
   };
 
@@ -414,9 +450,13 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
     deleteDailySummary(accessToken, id)
       .then(() => {
         if (selectedId === id) setSelectedId(null);
+        setSummaryToast({ tone: 'ok', title: 'Resumen eliminado', detail: 'El resumen diario fue eliminado correctamente.' });
         loadList();
       })
-      .catch((err: Error) => setActionError(err.message))
+      .catch((err: Error) => {
+        setActionError(err.message);
+        setSummaryToast({ tone: 'bad', title: 'Error al eliminar resumen', detail: err.message });
+      })
       .finally(() => setDeletingId(null));
   };
 
@@ -429,6 +469,7 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
     removeDailySummaryDocument(accessToken, summaryId, documentId)
       .then((res) => {
         setSendResult(res.message);
+        setSummaryToast({ tone: 'ok', title: 'Comprobante retirado', detail: res.message });
         loadList();
         if (res.deleted) {
           setSelectedId(null);
@@ -442,7 +483,10 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
             .catch(() => setDetail(null));
         }
       })
-      .catch((err: Error) => setActionError(err.message))
+      .catch((err: Error) => {
+        setActionError(err.message);
+        setSummaryToast({ tone: 'bad', title: 'Error al retirar comprobante', detail: err.message });
+      })
       .finally(() => setRemovingDocumentId(null));
   };
 
@@ -458,6 +502,10 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
         <button className="ds-btn-primary" onClick={() => { setShowWizard(true); setWizardDate(todayIso()); }}>
           + Nuevo {typeLabel}
         </button>
+      </div>
+
+      <div style={{ marginBottom: '0.65rem', border: '1px solid #facc15', background: '#fffbeb', borderRadius: '10px', padding: '0.55rem 0.75rem', color: '#713f12', fontSize: '0.86rem', lineHeight: 1.35 }}>
+        <strong>Recordatorio SUNAT:</strong> Final correcto: <strong style={{ color: '#166534' }}>Aceptado</strong> o <strong style={{ color: '#4b5563' }}>Anulado</strong>. En boletas, la anulación termina al enviar/consultar ticket del Resumen Diario. Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
       </div>
 
       {/* ── Tabs ──────────────────────────────────────────────────────────── */}
@@ -505,6 +553,13 @@ export function DailySummaryView({ accessToken, branchId, traceabilityEnabled = 
       {/* ── Feedback messages ─────────────────────────────────────────────── */}
       {sendResult && <div className="ds-msg ds-msg--success">{sendResult}</div>}
       {actionError && <div className="ds-msg ds-msg--error">{actionError}</div>}
+      {summaryToast && (
+        <div className={`ds-msg ${summaryToast.tone === 'ok' ? 'ds-msg--success' : summaryToast.tone === 'bad' ? 'ds-msg--error' : ''}`} style={summaryToast.tone === 'warn' ? { background: '#fffbeb', border: '1px solid #facc15', color: '#854d0e' } : undefined} role="status" aria-live="polite">
+          <strong style={{ marginRight: '0.35rem' }}>{summaryToast.title}:</strong>
+          <span>{summaryToast.detail}</span>
+          <button type="button" className="ds-btn-secondary btn-mini" style={{ marginLeft: '0.6rem' }} onClick={() => setSummaryToast(null)}>Cerrar</button>
+        </div>
+      )}
 
       {/* ── Main content: list + detail panel ─────────────────────────────── */}
       <div className="ds-main">

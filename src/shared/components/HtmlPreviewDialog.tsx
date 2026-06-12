@@ -248,14 +248,8 @@ export function HtmlPreviewDialog({
     setDownloading(true);
     try {
       if (onDownloadPdf) {
-        try {
-          await onDownloadPdf();
-          return;
-        } catch (directError) {
-          // Fallback to built-in export when API-side download fails.
-          await downloadAsPdf(iframeRef.current, fileNameSource, variant);
-          return;
-        }
+        await onDownloadPdf();
+        return;
       }
 
       await downloadAsPdf(iframeRef.current, fileNameSource, variant);
@@ -318,7 +312,7 @@ export function HtmlPreviewDialog({
             gap: '8px',
             justifyContent: 'space-between',
             alignItems: 'center',
-            padding: '10px 12px',
+            padding: '10px 16px',
             borderBottom: '1px solid #e5e7eb',
             background: '#f8fafc',
           }}
@@ -326,14 +320,25 @@ export function HtmlPreviewDialog({
           <small style={{ color: 'var(--color-muted)' }}>
             {variant === 'compact' ? 'Vista de ticket 80mm' : 'Vista previa A4 en pantalla'}
           </small>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <button
               type="button"
               onClick={() => {
                 void handleDownloadPdf();
               }}
               disabled={downloading}
-              style={{ background: '#16a34a', color: '#fff', border: 'none', borderRadius: '8px', padding: '6px 14px', fontWeight: 700, cursor: 'pointer', fontSize: '0.88rem' }}
+              style={{
+                background: 'linear-gradient(120deg, #16a34a 0%, #15803d 100%)',
+                color: '#fff',
+                border: '1px solid #15803d',
+                borderRadius: '10px',
+                padding: '7px 16px',
+                fontWeight: 700,
+                cursor: 'pointer',
+                fontSize: '0.88rem',
+                minWidth: '138px',
+                boxShadow: '0 6px 14px rgba(21, 128, 61, 0.25)',
+              }}
             >
               {downloading ? 'Generando...' : 'Descargar PDF'}
             </button>
@@ -343,10 +348,31 @@ export function HtmlPreviewDialog({
                 iframeRef.current?.contentWindow?.focus();
                 iframeRef.current?.contentWindow?.print();
               }}
+              style={{
+                background: '#ffffff',
+                color: '#0f172a',
+                border: '1px solid #cbd5e1',
+                borderRadius: '10px',
+                padding: '7px 14px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
             >
               Imprimir
             </button>
-            <button type="button" onClick={onClose}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                background: '#ffffff',
+                color: '#0f172a',
+                border: '1px solid #cbd5e1',
+                borderRadius: '10px',
+                padding: '7px 14px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
               Cerrar
             </button>
           </div>

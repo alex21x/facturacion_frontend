@@ -11,6 +11,7 @@ import {
   fetchGreGuides,
   fetchGreLookups,
   fetchGrePrintHtml,
+  fetchGrePrintPdf,
   prefillGreFromDocument,
   queryGreTicketStatus,
   searchGreUbigeos,
@@ -454,7 +455,13 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
   const [sunatBridgeDebugState, setSunatBridgeDebugState] = useState<SunatBridgeDebugState | null>(null);
   const [rowActionLoading, setRowActionLoading] = useState<number | null>(null);
   const [autoSend, setAutoSend] = useState(false);
-  const [printPreview, setPrintPreview] = useState<{ title: string; subtitle: string; html: string; variant: 'compact' | 'wide' } | null>(null);
+  const [printPreview, setPrintPreview] = useState<{
+    title: string;
+    subtitle: string;
+    html: string;
+    variant: 'compact' | 'wide';
+    directPdf?: { guideId: number; format: 'ticket' | 'a4' };
+  } | null>(null);
 
   const [prefillReference, setPrefillReference] = useState('');
   const [relatedDocumentReference, setRelatedDocumentReference] = useState('');
@@ -931,9 +938,13 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
         }));
         setRelatedDocumentReference(`${res.related_document.series}-${res.related_document.number}`);
         setActionMessage(`Datos precargados desde ${res.related_document.series}-${res.related_document.number}.`);
+        setSunatToast({ tone: 'ok', title: 'GRE: Precarga completada', detail: `Datos cargados desde ${res.related_document.series}-${res.related_document.number}.` });
         setPrefillOpen(false);
       })
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) => {
+        setError(err.message);
+        setSunatToast({ tone: 'bad', title: 'GRE: Error en precarga', detail: err.message });
+      })
       .finally(() => setSaving(false));
   };
 
@@ -1005,6 +1016,11 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
     operation
       .then((res) => {
         setActionMessage(res.message);
+        setSunatToast({
+          tone: 'ok',
+          title: mode === 'create' || !selectedId ? 'GRE: Guía creada' : 'GRE: Guía actualizada',
+          detail: res.message,
+        });
         const id = res.data.id;
         setSelectedId(id);
         setDetail(res.data);
@@ -1021,7 +1037,10 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
           loadEmittedDefaults();
         }
       })
-      .catch((err: Error) => setError(err.message))
+      .catch((err: Error) => {
+        setError(err.message);
+        setSunatToast({ tone: 'bad', title: 'GRE: Error al guardar', detail: err.message });
+      })
       .finally(() => { if (!autoSend) setSaving(false); });
   };
 
@@ -1226,6 +1245,7 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
           subtitle: format === 'ticket' ? 'Vista de ticket 80mm' : 'Vista previa A4',
           html,
           variant: format === 'ticket' ? 'compact' : 'wide',
+          directPdf: { guideId: id, format },
         })
       )
       .catch((err: Error) => setError(err.message));
@@ -1274,6 +1294,10 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
               </button>
               <button className="ds-btn-secondary" type="button" onClick={loadList}>Recargar</button>
             </div>
+          </div>
+
+          <div style={{ marginBottom: '0.6rem', border: '1px solid #fde68a', background: '#fffbeb', borderRadius: '10px', padding: '0.55rem 0.75rem', color: '#78350f', fontSize: '0.86rem', lineHeight: 1.35 }}>
+            <strong>Recordatorio SUNAT:</strong> Estado final correcto: <strong style={{ color: '#166534' }}>Aceptado</strong> o <strong style={{ color: '#4b5563' }}>Anulado</strong>. Si SUNAT no responde varias veces, verifica en la consulta SUNAT y usa SUNAT Excepciones para forzar estado con sustento.
           </div>
 
           {kpisOpen && (
@@ -2165,6 +2189,47 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
           subtitle={printPreview.subtitle}
           html={printPreview.html}
           variant={printPreview.variant}
+          onDownloadPdf={printPreview.directPdf
+            ? async () => {
+                const directPdf = printPreview.directPdf;
+                if (!directPdf) return;
+
+                const result = await fetchGrePrintPdf(accessToken, directPdf.guideId, directPdf.format);
+                if (result.blob.size <= 0) {
+                  throw new Error('El servidor devolvio un PDF vacio.');
+                }
+
+                const normalizedBlob = result.blob.type === 'application/pdf'
+                  ? result.blob
+                  : new Blob([await result.blob.arrayBuffer()], { type: 'application/pdf' });
+
+                const safeFileName = (result.fileName || `gre-${directPdf.guideId}-${directPdf.format}.pdf`).trim();
+                const picker = (window as any).showSaveFilePicker;
+                if (typeof picker === 'function') {
+                  try {
+                    const handle = await picker({
+                      suggestedName: safeFileName,
+                      types: [{ description: 'PDF', accept: { 'application/pdf': ['.pdf'] } }],
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(normalizedBlob);
+                    await writable.close();
+                    return;
+                  } catch (pickerError) {
+                    if ((pickerError as { name?: string } | null)?.name === 'AbortError') return;
+                  }
+                }
+
+                const blobUrl = URL.createObjectURL(normalizedBlob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = safeFileName;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(blobUrl);
+              }
+            : undefined}
           onClose={() => setPrintPreview(null)}
         />
       )}

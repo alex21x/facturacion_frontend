@@ -5110,6 +5110,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         cashRegisterId: salesFlowMode === 'SELLER_TO_CASHIER' && isSellerUser ? null : cashRegisterId,
       });
 
+      setSunatToast({
+        tone: targetStatus === 'ISSUED' ? 'ok' : 'warn',
+        title: targetStatus === 'ISSUED' ? 'Comprobante emitido' : 'Comprobante guardado',
+        detail: String((response as { message?: string })?.message ?? 'Operacion completada correctamente.'),
+      });
+
       const issued = (response as { data?: unknown }).data as
         | {
             id: number;
@@ -5321,6 +5327,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         });
       } else {
         setMessage(text);
+        setSunatToast({
+          tone: 'bad',
+          title: 'Operacion de venta',
+          detail: text,
+        });
       }
     } finally {
       setLoading(false);
@@ -6281,6 +6292,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <strong>Perfil activo:</strong> {activeProfileLabel}. {activeProfileHint}
         </p>
       )}
+
+      <div style={{ marginTop: '0.35rem', marginBottom: '0.45rem', border: '1px solid #fde68a', background: '#fffbeb', borderRadius: '10px', padding: '0.55rem 0.75rem', color: '#78350f', fontSize: '0.86rem', lineHeight: 1.35 }}>
+        <strong>Recordatorio SUNAT:</strong> Estado final correcto del comprobante: <strong style={{ color: '#166534' }}>Aceptado</strong>. Si se anula: <strong style={{ color: '#4b5563' }}>Anulado</strong>. En boletas, la anulación termina al enviar/consultar ticket en Resumen Diario. Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
+      </div>
 
       {message && <p className="notice">{message}</p>}
       {sunatToast && createPortal(
