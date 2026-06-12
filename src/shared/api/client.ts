@@ -13,6 +13,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
 const AUTH_REQUEST_TIMEOUT_MS = 12000;
 const EXPORT_REQUEST_TIMEOUT_MS = 45000;
 const SLOW_LOOKUP_REQUEST_TIMEOUT_MS = 30000;
+const BULK_IMPORT_REQUEST_TIMEOUT_MS = 120000;
 const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
 
 function sleep(ms: number): Promise<void> {
@@ -22,6 +23,10 @@ function sleep(ms: number): Promise<void> {
 function resolveRequestTimeoutMs(path: string, method: string): number {
   if (isAuthRoute(path)) {
     return AUTH_REQUEST_TIMEOUT_MS;
+  }
+
+  if (path.includes('/bulk-import')) {
+    return BULK_IMPORT_REQUEST_TIMEOUT_MS;
   }
 
   if (path.includes('/export') || path.includes('/print-pdf') || path.includes('/print')) {
