@@ -629,7 +629,7 @@ button.danger {
 
 .sales-sunat-toast-floating-anchor {
   position: fixed;
-  top: 18px;
+  top: 92px;
   left: 50%;
   transform: translateX(-50%);
   width: min(700px, calc(100% - 24px));

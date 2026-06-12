@@ -276,7 +276,7 @@ export function HtmlPreviewDialog({
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 3300,
+        zIndex: 13140,
         padding: '20px',
       }}
     >
