@@ -35,7 +35,7 @@ type Mode = 'create' | 'edit';
 
 const EMPTY_PAYLOAD: GreGuidePayload = {
   guide_type: 'REMITENTE',
-  series: 'T001',
+  series: '',
   issue_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
   transfer_date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
   motivo_traslado: '01',
@@ -93,7 +93,7 @@ const DEFAULT_LOOKUPS: GreLookups = {
     { code: '6', name: 'RUC' },
     { code: '7', name: 'Pasaporte' },
   ],
-  series: [{ id: 0, series: 'T001', name: 'Serie por defecto' }],
+  series: [],
   runtime_features: [],
 };
 
@@ -533,19 +533,31 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
   const loadLookups = () => {
     fetchGreLookups(accessToken, { branchId })
       .then((res) => {
+        const resolvedSeries = res.series;
         setLookups({
           guide_types: res.guide_types.length > 0 ? res.guide_types : DEFAULT_LOOKUPS.guide_types,
           transfer_reasons: res.transfer_reasons.length > 0 ? res.transfer_reasons : DEFAULT_LOOKUPS.transfer_reasons,
           transport_modes: res.transport_modes.length > 0 ? res.transport_modes : DEFAULT_LOOKUPS.transport_modes,
           document_types: res.document_types.length > 0 ? res.document_types : DEFAULT_LOOKUPS.document_types,
-          series: res.series.length > 0 ? res.series : DEFAULT_LOOKUPS.series,
+          series: resolvedSeries,
           runtime_features: res.runtime_features ?? [],
         });
-        const firstSeries = res.series[0]?.series;
-        setPayload((prev) => ({ ...prev, series: firstSeries ?? prev.series }));
+        const firstSeries = resolvedSeries[0]?.series ?? '';
+        setPayload((prev) => {
+          const currentSeries = String(prev.series ?? '').trim().toUpperCase();
+          const hasCurrentSeries = resolvedSeries.some(
+            (row) => String(row.series ?? '').trim().toUpperCase() === currentSeries
+          );
+
+          return {
+            ...prev,
+            series: hasCurrentSeries ? prev.series : firstSeries,
+          };
+        });
       })
       .catch(() => {
         setLookups(DEFAULT_LOOKUPS);
+        setPayload((prev) => ({ ...prev, series: '' }));
       });
   };
 
@@ -776,11 +788,12 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
   }, [accessToken, payload.related_document_id, relatedDocumentReference]);
 
   const onCreateNew = () => {
+    const firstSeries = lookups.series[0]?.series ?? '';
     setActiveTab('editor');
     setMode('create');
     setSelectedId(null);
     setDetail(null);
-    setPayload({ ...EMPTY_PAYLOAD, branch_id: branchId });
+    setPayload({ ...EMPTY_PAYLOAD, branch_id: branchId, series: firstSeries });
     setActionMessage('');
     setError('');
     setRelatedDocumentReference('');
@@ -838,6 +851,10 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
   };
 
   const validatePayload = (candidate: GreGuidePayload): string | null => {
+    if (String(candidate.series ?? '').trim() === '') {
+      return 'Selecciona una serie GRE. Configurala en Maestros > Series.';
+    }
+
     if (!/^\d{6}$/.test(String(candidate.partida_ubigeo ?? ''))) {
       return 'Ubigeo de partida invalido (6 digitos).';
     }
@@ -1379,7 +1396,11 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
                     sunatStatus === 'RECHAZADO'         ? 'Rechazado' :
                     sunatStatus === 'PENDIENTE_TICKET'  ? 'Ticket pendiente' :
                     sunatStatus === 'SIN_ENVIO'         ? 'Sin envio' : sunatStatus;
+                  const normalizedTicket = String(row.sunat_ticket ?? '').trim().toUpperCase();
+                  const hasTicket = normalizedTicket !== ''
+                    && !['NULL', 'NONE', 'N/A', 'NA', '-', 'S/T', 'SIN TICKET'].includes(normalizedTicket);
                   const canSend = ['DRAFT', 'ERROR', 'REJECTED'].includes(row.status)
+                    || (row.status === 'SENT' && !hasTicket)
                     || isStaleSending(row.status, row.updated_at);
                   const canTicket = row.status === 'SENT' || (!!row.sunat_ticket && !['ACCEPTED', 'CANCELLED'].includes(row.status));
                   const canEditRow = !['ACCEPTED', 'CANCELLED'].includes(row.status);
@@ -1624,7 +1645,15 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
               </label>
               <label className="ds-field">
                 <span>Serie</span>
-                <select className="ds-input" value={payload.series} onChange={(e) => setPayload((p) => ({ ...p, series: e.target.value.toUpperCase() }))}>
+                <select
+                  className="ds-input"
+                  value={payload.series}
+                  onChange={(e) => setPayload((p) => ({ ...p, series: e.target.value.toUpperCase() }))}
+                  disabled={lookups.series.length === 0}
+                >
+                  <option value="" disabled>
+                    {lookups.series.length === 0 ? 'Sin series GRE en Maestros > Series' : 'Seleccionar serie'}
+                  </option>
                   {lookups.series.map((row) => (
                     <option key={row.id} value={row.series}>{row.series} - {row.name}</option>
                   ))}
