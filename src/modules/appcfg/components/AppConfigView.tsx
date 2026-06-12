@@ -167,6 +167,7 @@ function humanizeFeatureCode(code: string): string {
 
   const explicitLabels: Record<string, string> = {
     SALES_ALLOW_RECEIPT_WITH_RUC: 'Boleta con RUC',
+    SALES_PRINT_SHOW_PRODUCT_CODES: 'Mostrar codigo de producto en formatos A4/Ticket',
   };
 
   if (explicitLabels[normalized]) {

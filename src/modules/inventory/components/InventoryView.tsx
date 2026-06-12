@@ -373,6 +373,8 @@ export function InventoryView({
   const [commercialConfigByProductId, setCommercialConfigByProductId] = useState<Record<number, InventoryProductCommercialConfig | null>>({});
   const [expandedPresentationByProductId, setExpandedPresentationByProductId] = useState<Record<number, boolean>>({});
   const loadingCommercialConfigIdsRef = useRef(new Set<number>());
+  const showSalesSunatReminder = activeTab === 'reportes'
+    && (reportCode === 'SALES_DOCUMENTS_SUMMARY' || reportCode === 'SALES_SUNAT_MONITOR');
 
   const normalizedLocation = (locationRaw: string | null | undefined): string => {
     const location = (locationRaw ?? '').trim();
@@ -2642,6 +2644,18 @@ export function InventoryView({
               </button>
             </div>
           </div>
+
+          {showSalesSunatReminder && (
+            <aside className="inventory-sunat-reminder-fixed" role="note" aria-live="polite">
+              <strong className="inventory-sunat-reminder-fixed__title">Recordatorio SUNAT</strong>
+              <span>
+                Estado final correcto: <strong className="inventory-sunat-status inventory-sunat-status--accepted">Aceptado</strong>.
+                Si se anula: <strong className="inventory-sunat-status inventory-sunat-status--cancelled">Anulado</strong>.
+                En boletas, la anulación termina al enviar/consultar ticket en Resumen Diario.
+                Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
+              </span>
+            </aside>
+          )}
 
           <div className="table-wrap">
             <div className="inventory-table-head">

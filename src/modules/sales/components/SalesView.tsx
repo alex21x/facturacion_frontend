@@ -6324,7 +6324,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         </p>
       )}
 
-      {salesWorkspaceMode === 'SELL' && (
+      {(salesWorkspaceMode === 'SELL' || salesWorkspaceMode === 'REPORT') && (
         <aside className="sales-sunat-reminder-fixed" role="note" aria-live="polite">
           <strong className="sales-sunat-reminder-fixed__title">Recordatorio SUNAT</strong>
           <span>
