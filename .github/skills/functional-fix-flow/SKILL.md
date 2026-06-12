@@ -53,6 +53,14 @@ If a hotfix is mistakenly committed first to `feature/docker-multientorno`:
 - Remote heads updated: `origin/feature/cambios-generales`, `origin/feature/docker-multientorno`, `origin/railway`.
 - In speed mode, confirm that one-time approval was used and no extra approvals were requested.
 
+## Build artifact hygiene (mandatory)
+- Do not run frontend production builds (`npm run build`, `vite build`) unless the user explicitly requests it.
+- Prefer targeted validation (`get_errors`, focused lint/test) to avoid mutating tracked build outputs.
+- Never include generated artifacts in functional commits: `dist/**`, `tsconfig.tsbuildinfo`, or equivalent compiled bundles.
+- If a build was executed accidentally, clean immediately before continuing:
+	- `git restore dist tsconfig.tsbuildinfo`
+	- Verify clean tree for generated files with `git status --short`.
+
 ## Commit message convention
 Use semantic prefix and context, e.g.:
 - `fix(sunat): ...`

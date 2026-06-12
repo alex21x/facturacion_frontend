@@ -32,6 +32,13 @@ export type CompanyProfile = {
   sunat_secondary_pass?: string | null;
   client_id?: string | null;
   client_secret?: string | null;
+  smtp_host?: string | null;
+  smtp_port?: number | null;
+  smtp_encryption?: 'tls' | 'ssl' | 'starttls' | 'none' | null;
+  smtp_username?: string | null;
+  smtp_from_email?: string | null;
+  smtp_from_name?: string | null;
+  smtp_password_set?: boolean;
   show_payment_brand_icons?: boolean;
 };
 
@@ -57,6 +64,14 @@ export type UpdateCompanyProfilePayload = {
   sunat_secondary_pass?: string;
   client_id?: string;
   client_secret?: string;
+  smtp_host?: string;
+  smtp_port?: number;
+  smtp_encryption?: 'tls' | 'ssl' | 'starttls' | 'none';
+  smtp_username?: string;
+  smtp_password?: string;
+  smtp_password_clear?: boolean;
+  smtp_from_email?: string;
+  smtp_from_name?: string;
   show_payment_brand_icons?: boolean;
 };
 

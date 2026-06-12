@@ -330,6 +330,7 @@ export type SalesCustomerSuggestion = {
   doc_number: string | null;
   name: string;
   trade_name: string | null;
+  email?: string | null;
   plate: string | null;
   address: string | null;
   phone?: string | null;

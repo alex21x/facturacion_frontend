@@ -47,6 +47,15 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
   const [sunatSecondaryPass, setSunatSecondaryPass] = useState('');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
+  const [smtpHost, setSmtpHost] = useState('');
+  const [smtpPort, setSmtpPort] = useState('');
+  const [smtpEncryption, setSmtpEncryption] = useState<'tls' | 'ssl' | 'starttls' | 'none'>('tls');
+  const [smtpUsername, setSmtpUsername] = useState('');
+  const [smtpPassword, setSmtpPassword] = useState('');
+  const [smtpPasswordSet, setSmtpPasswordSet] = useState(false);
+  const [smtpPasswordClear, setSmtpPasswordClear] = useState(false);
+  const [smtpFromEmail, setSmtpFromEmail] = useState('');
+  const [smtpFromName, setSmtpFromName] = useState('');
   const [bankAccounts, setBankAccounts] = useState<BankAccount[]>([]);
   const [showPaymentBrandIcons, setShowPaymentBrandIcons] = useState(true);
 
@@ -83,6 +92,15 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
     setSunatSecondaryPass(p.sunat_secondary_pass ?? '');
     setClientId(p.client_id ?? '');
     setClientSecret(p.client_secret ?? '');
+    setSmtpHost(p.smtp_host ?? '');
+    setSmtpPort(p.smtp_port !== null && p.smtp_port !== undefined ? String(p.smtp_port) : '');
+    setSmtpEncryption((p.smtp_encryption ?? 'tls') as 'tls' | 'ssl' | 'starttls' | 'none');
+    setSmtpUsername(p.smtp_username ?? '');
+    setSmtpPassword('');
+    setSmtpPasswordSet(Boolean(p.smtp_password_set));
+    setSmtpPasswordClear(false);
+    setSmtpFromEmail(p.smtp_from_email ?? '');
+    setSmtpFromName(p.smtp_from_name ?? '');
     setBankAccounts(p.bank_accounts ?? []);
     setShowPaymentBrandIcons(p.show_payment_brand_icons ?? true);
   }
@@ -157,6 +175,14 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
         sunat_secondary_pass: sunatSecondaryPass || undefined,
         client_id: clientId || undefined,
         client_secret: clientSecret || undefined,
+        smtp_host: smtpHost || undefined,
+        smtp_port: smtpPort.trim() !== '' ? Number(smtpPort) : undefined,
+        smtp_encryption: smtpEncryption || undefined,
+        smtp_username: smtpUsername || undefined,
+        smtp_password: smtpPassword.trim() !== '' ? smtpPassword : undefined,
+        smtp_password_clear: smtpPasswordClear || undefined,
+        smtp_from_email: smtpFromEmail || undefined,
+        smtp_from_name: smtpFromName || undefined,
         bank_accounts: bankAccounts,
         show_payment_brand_icons: showPaymentBrandIcons,
       });
@@ -474,6 +500,105 @@ export function CompanyConfigView({ accessToken }: CompanyConfigViewProps) {
                     placeholder="Ingresa client_secret"
                     autoComplete="new-password"
                   />
+                </label>
+              </div>
+            </div>
+
+            <div className="form-card companycfg-card">
+              <h4>Correo Saliente SMTP</h4>
+              <p className="notice">Si completas estos campos, los comprobantes se enviaran usando el servidor SMTP propio de tu empresa.</p>
+              <div className="grid-form">
+                <label>
+                  Host SMTP
+                  <input
+                    type="text"
+                    maxLength={190}
+                    value={smtpHost}
+                    onChange={(e) => setSmtpHost(e.target.value)}
+                    placeholder="smtp.gmail.com"
+                  />
+                </label>
+                <label>
+                  Puerto SMTP
+                  <input
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={smtpPort}
+                    onChange={(e) => setSmtpPort(e.target.value)}
+                    placeholder="587"
+                  />
+                </label>
+                <label>
+                  Cifrado
+                  <select
+                    value={smtpEncryption}
+                    onChange={(e) => setSmtpEncryption((e.target.value || 'tls') as 'tls' | 'ssl' | 'starttls' | 'none')}
+                  >
+                    <option value="tls">TLS</option>
+                    <option value="ssl">SSL</option>
+                    <option value="starttls">STARTTLS</option>
+                    <option value="none">Sin cifrado</option>
+                  </select>
+                </label>
+                <label>
+                  Usuario SMTP
+                  <input
+                    type="text"
+                    maxLength={190}
+                    value={smtpUsername}
+                    onChange={(e) => setSmtpUsername(e.target.value)}
+                    placeholder="usuario@empresa.com"
+                  />
+                </label>
+                <label>
+                  Password SMTP (solo si deseas actualizar)
+                  <input
+                    type="password"
+                    maxLength={500}
+                    value={smtpPassword}
+                    onChange={(e) => {
+                      setSmtpPassword(e.target.value);
+                      if (e.target.value.trim() !== '') {
+                        setSmtpPasswordClear(false);
+                      }
+                    }}
+                    placeholder={smtpPasswordSet ? '******** (guardada)' : 'Ingresa password SMTP'}
+                    autoComplete="new-password"
+                  />
+                </label>
+                <label>
+                  Correo remitente SMTP
+                  <input
+                    type="email"
+                    maxLength={200}
+                    value={smtpFromEmail}
+                    onChange={(e) => setSmtpFromEmail(e.target.value)}
+                    placeholder="facturacion@empresa.com"
+                  />
+                </label>
+                <label style={{ gridColumn: '1 / -1' }}>
+                  Nombre remitente SMTP
+                  <input
+                    type="text"
+                    maxLength={200}
+                    value={smtpFromName}
+                    onChange={(e) => setSmtpFromName(e.target.value)}
+                    placeholder="Mi Empresa SAC"
+                  />
+                </label>
+                <label style={{ gridColumn: '1 / -1' }}>
+                  <input
+                    type="checkbox"
+                    checked={smtpPasswordClear}
+                    onChange={(e) => {
+                      setSmtpPasswordClear(e.target.checked);
+                      if (e.target.checked) {
+                        setSmtpPassword('');
+                      }
+                    }}
+                  />{' '}
+                  Borrar password SMTP guardada
                 </label>
               </div>
             </div>

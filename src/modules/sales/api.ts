@@ -774,6 +774,67 @@ export async function fetchCommercialDocumentDetails(
   return response as PrintableSalesDocument;
 }
 
+export async function fetchCommercialDocumentShareLink(
+  accessToken: string,
+  documentId: number,
+  format: 'a4' | 'ticket' = 'a4'
+): Promise<{ url: string; expiresAt: string }> {
+  const response = await apiClient.request<{ data?: { url?: string; expiresAt?: string } }>(
+    `/api/sales/commercial-documents/${documentId}/share-link?format=${format}`,
+    {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    }
+  );
+
+  const data = response.data ?? {};
+  return {
+    url: String(data.url ?? ''),
+    expiresAt: String(data.expiresAt ?? ''),
+  };
+}
+
+export async function sendCommercialDocumentShareEmail(
+  accessToken: string,
+  documentId: number,
+  payload: {
+    toEmail: string;
+    subject?: string;
+    message?: string;
+    format?: 'a4' | 'ticket';
+  }
+): Promise<{ message: string; from?: string; to?: string; url?: string; expiresAt?: string }> {
+  const response = await apiClient.request<{
+    message?: string;
+    data?: {
+      from?: string;
+      to?: string;
+      url?: string;
+      expiresAt?: string;
+    };
+  }>(
+    `/api/sales/commercial-documents/${documentId}/share-email`,
+    {
+      method: 'POST',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({
+        to_email: payload.toEmail,
+        subject: payload.subject,
+        message: payload.message,
+        format: payload.format ?? 'a4',
+      }),
+    }
+  );
+
+  return {
+    message: String(response.message ?? 'Correo enviado.'),
+    from: response.data?.from,
+    to: response.data?.to,
+    url: response.data?.url,
+    expiresAt: response.data?.expiresAt,
+  };
+}
+
 export async function fetchCommercialDocumentPrintHtml(
   accessToken: string,
   documentId: number,

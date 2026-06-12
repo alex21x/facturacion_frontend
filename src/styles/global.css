@@ -627,6 +627,21 @@ button.danger {
   margin: 14px 0 12px;
 }
 
+.sales-sunat-toast-floating-anchor {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(700px, calc(100% - 24px));
+  z-index: 13110;
+  pointer-events: none;
+}
+
+.sales-sunat-toast-floating-anchor .sales-sunat-toast {
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
 .sales-sunat-toast {
   width: min(680px, calc(100% - 8px));
   border: 1px solid #d1d5db;
@@ -4942,8 +4957,111 @@ th {
   padding: 12px;
 }
 
+.issued-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 13050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(15, 23, 42, 0.56);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+
+.issued-preview-modal {
+  width: min(920px, 100%);
+  max-height: min(88vh, 920px);
+  overflow: auto;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.32);
+}
+
+.issued-preview-modal-header {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.issued-preview-modal-header p {
+  margin: 4px 0 0;
+  color: #334155;
+}
+
+.issued-preview-modal-close {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.issued-preview-modal-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin: 10px 0 12px;
+  color: #1e293b;
+}
+
+.issued-preview-link-field {
+  grid-column: 1 / -1;
+}
+
+.issued-preview-link-field input {
+  font-family: Consolas, Monaco, monospace;
+}
+
+.issued-preview-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 .issued-preview h4 {
   margin: 0 0 6px;
+}
+
+.issued-preview-share-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  margin: 8px 0 10px;
+}
+
+.issued-preview-share-fields label {
+  display: grid;
+  gap: 4px;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.issued-preview-share-fields input {
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.42rem 0.55rem;
+  font: inherit;
+  color: #0f172a;
+  background: #fff;
+}
+
+.issued-preview-share-fields input:focus {
+  outline: none;
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.2);
+}
+
+.issued-preview-share-note {
+  display: block;
+  margin-top: 8px;
+  color: #475569;
+  line-height: 1.35;
 }
 
 .sales-concepts-shell {

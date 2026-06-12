@@ -27,6 +27,8 @@ import {
   exportCommercialDocumentsExcel,
   exportCommercialDocumentsJson,
   fetchCommercialDocumentDetails,
+  fetchCommercialDocumentShareLink,
+  sendCommercialDocumentShareEmail,
   fetchCommercialDocumentPdf,
   fetchCommercialDocumentPrintHtml,
   fetchCustomerAutocomplete,
@@ -55,6 +57,7 @@ import {
   type PrintableSalesDocument,
 } from '../print';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
+import { apiClient } from '../../../shared/api/client';
 import type {
   CommercialDocumentListItem,
   PaginatedCommercialDocuments,
@@ -1253,6 +1256,15 @@ function toOptionalNumber(value: unknown): number | null {
   return Number.isFinite(num) && num > 0 ? num : null;
 }
 
+function normalizeWhatsAppPhone(value: string): string {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (digits.length === 9) {
+    return `51${digits}`;
+  }
+
+  return digits;
+}
+
 function resolveSalesFlowMode(features: Array<{ feature_code: string; is_enabled: boolean }>): SalesFlowMode {
   const row = features.find((item) => item.feature_code === 'SALES_SELLER_TO_CASHIER');
   return row?.is_enabled ? 'SELLER_TO_CASHIER' : 'DIRECT_CASHIER';
@@ -1401,6 +1413,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     status: string;
     printable: PrintableSalesDocument;
   }>(null);
+  const [issuedShareEmail, setIssuedShareEmail] = useState('');
+  const [issuedSharePhone, setIssuedSharePhone] = useState('');
+  const [issuedPublicPdfLink, setIssuedPublicPdfLink] = useState('');
   const [previewDialog, setPreviewDialog] = useState<null | {
     title: string;
     subtitle: string;
@@ -3790,6 +3805,235 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     });
   }
 
+  function resolveIssuedDocumentLabel(): string {
+    if (!issuedPreview) {
+      return 'Comprobante emitido';
+    }
+
+    const paddedNumber = String(issuedPreview.number).padStart(6, '0');
+    return `${docKindLabelResolved(issuedPreview.document_kind)} ${issuedPreview.series}-${paddedNumber}`;
+  }
+
+  function resolveIssuedPdfLink(format: 'a4' | 'ticket' = 'a4'): string {
+    if (!issuedPreview) {
+      return '';
+    }
+
+    if (issuedPublicPdfLink.trim() !== '') {
+      return issuedPublicPdfLink;
+    }
+
+    return '';
+  }
+
+  async function ensureIssuedPublicPdfLink(format: 'a4' | 'ticket' = 'a4'): Promise<string> {
+    if (!issuedPreview) {
+      return '';
+    }
+
+    if (issuedPublicPdfLink.trim() !== '') {
+      return issuedPublicPdfLink.trim();
+    }
+
+    const shareLink = await fetchCommercialDocumentShareLink(accessToken, issuedPreview.id, format);
+    const url = String(shareLink.url ?? '').trim();
+    if (url !== '') {
+      setIssuedPublicPdfLink(url);
+      return url;
+    }
+
+    return '';
+  }
+
+  async function openIssuedSharePopup(row: CommercialDocumentListItem) {
+    setIssuedPreview({
+      id: row.id,
+      document_kind: row.document_kind,
+      series: row.series,
+      number: Number(row.number ?? 0),
+      total: Number(row.total ?? 0),
+      status: row.status,
+      printable: {
+        id: row.id,
+        documentKind: row.document_kind,
+        series: row.series,
+        number: Number(row.number ?? 0),
+        issueDate: String(row.issue_at ?? ''),
+        dueDate: null,
+        status: row.status,
+        currencyCode: 'PEN',
+        currencySymbol: 'S/',
+        paymentMethodName: String(row.payment_method_name ?? ''),
+        customerName: String(row.customer_name ?? ''),
+        customerDocNumber: '',
+        customerAddress: '',
+        customerPhone: '',
+        customerEmail: '',
+        subtotal: 0,
+        taxTotal: 0,
+        grandTotal: Number(row.total ?? 0),
+        gravadaTotal: 0,
+        inafectaTotal: 0,
+        exoneradaTotal: 0,
+        items: [],
+      },
+    });
+    setIssuedShareEmail('');
+    setIssuedSharePhone('');
+    setIssuedPublicPdfLink('');
+
+    try {
+      const [details, shareLink] = await Promise.all([
+        fetchCommercialDocumentDetails(accessToken, row.id),
+        fetchCommercialDocumentShareLink(accessToken, row.id, 'a4'),
+      ]);
+
+      setIssuedPreview({
+        id: details.id,
+        document_kind: details.documentKind,
+        series: details.series,
+        number: Number(details.number ?? row.number ?? 0),
+        total: Number(details.grandTotal ?? row.total ?? 0),
+        status: details.status,
+        printable: details,
+      });
+      setIssuedShareEmail(String(details.customerEmail ?? '').trim());
+      setIssuedSharePhone(String(details.customerPhone ?? '').trim());
+      setIssuedPublicPdfLink(String(shareLink.url ?? '').trim());
+    } catch (error) {
+      setSunatToast({
+        tone: 'bad',
+        title: 'Error al abrir popup de compartido',
+        detail: error instanceof Error ? error.message : 'No se pudo completar la carga del popup de compartido.',
+      });
+    }
+  }
+
+  async function shareIssuedByEmail() {
+    if (!issuedPreview) {
+      return;
+    }
+
+    const email = issuedShareEmail.trim();
+    if (email === '') {
+      setSunatToast({
+        tone: 'warn',
+        title: 'Correo requerido',
+        detail: 'Ingresa un correo de destino para enviar el comprobante.',
+      });
+      return;
+    }
+
+    const pdfLink = await ensureIssuedPublicPdfLink('a4');
+    if (pdfLink.trim() === '') {
+      setSunatToast({
+        tone: 'bad',
+        title: 'No se pudo compartir',
+        detail: 'No se pudo generar el enlace firmado para compartir. Intenta nuevamente.',
+      });
+      return;
+    }
+
+    const subject = `${resolveIssuedDocumentLabel()} emitido`;
+    const body = [
+      'Hola,',
+      '',
+      `Te compartimos tu ${resolveIssuedDocumentLabel()}.`,
+      `Descarga PDF: ${pdfLink}`,
+      '',
+      'Gracias por tu compra.',
+    ].join('\n');
+
+    try {
+      const result = await sendCommercialDocumentShareEmail(accessToken, issuedPreview.id, {
+        toEmail: email,
+        subject,
+        message: body,
+        format: 'a4',
+      });
+
+      setSunatToast({
+        tone: 'ok',
+        title: 'Correo enviado',
+        detail: result.message || 'Correo enviado correctamente.',
+      });
+      if (result.url) {
+        setIssuedPublicPdfLink(String(result.url).trim());
+      }
+    } catch (error) {
+      setSunatToast({
+        tone: 'bad',
+        title: 'Error al enviar correo',
+        detail: error instanceof Error ? error.message : 'No se pudo enviar el correo.',
+      });
+    }
+  }
+
+  async function shareIssuedByWhatsApp() {
+    if (!issuedPreview) {
+      return;
+    }
+
+    const pdfLink = await ensureIssuedPublicPdfLink('a4');
+    if (pdfLink.trim() === '') {
+      setSunatToast({
+        tone: 'bad',
+        title: 'No se pudo compartir',
+        detail: 'No se pudo generar el enlace firmado para compartir. Intenta nuevamente.',
+      });
+      return;
+    }
+
+    const messageText = [
+      `Hola, te compartimos tu ${resolveIssuedDocumentLabel()}.`,
+      `Descarga PDF: ${pdfLink}`,
+    ].join('\n');
+
+    const phone = normalizeWhatsAppPhone(issuedSharePhone);
+    const encoded = encodeURIComponent(messageText);
+    const targetUrl = phone !== ''
+      ? `https://wa.me/${phone}?text=${encoded}`
+      : `https://web.whatsapp.com/send?text=${encoded}`;
+
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    setSunatToast({
+      tone: 'ok',
+      title: 'WhatsApp abierto',
+      detail: 'Se abrio WhatsApp con el mensaje y enlace del comprobante.',
+    });
+  }
+
+  async function copyIssuedPdfLink() {
+    if (!issuedPreview) {
+      return;
+    }
+
+    const url = await ensureIssuedPublicPdfLink('a4');
+    if (url.trim() === '') {
+      setSunatToast({
+        tone: 'bad',
+        title: 'No se pudo copiar enlace',
+        detail: 'No se pudo generar el enlace firmado para copiar.',
+      });
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setSunatToast({
+        tone: 'ok',
+        title: 'Enlace copiado',
+        detail: 'Enlace de descarga PDF copiado.',
+      });
+    } catch {
+      setSunatToast({
+        tone: 'warn',
+        title: 'Copia manual requerida',
+        detail: `No se pudo copiar automaticamente. Enlace: ${url}`,
+      });
+    }
+  }
+
   function formatDebugJson(value: unknown): string {
     if (value === null || value === undefined) {
       return 'null';
@@ -4984,6 +5228,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           ...issued,
           printable: printableWithCompany,
         });
+        setIssuedShareEmail(String((selectedCustomer as { email?: string | null } | null)?.email ?? '').trim());
+        setIssuedSharePhone(String(form.customerPhone ?? selectedCustomer?.phone ?? '').trim());
+        setIssuedPublicPdfLink('');
 
         const issuedPrintFormat = salesFlowMode === 'SELLER_TO_CASHIER' ? 'ticket' : 'a4';
         const issuedPreviewHtml = await fetchPrintHtmlCached(issued.id, issuedPrintFormat);
@@ -5889,6 +6136,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setResolvingCustomerDocument(false);
     setCreditPlanModalOpen(false);
     setIssuedPreview(null);
+    setIssuedShareEmail('');
+    setIssuedSharePhone('');
+    setIssuedPublicPdfLink('');
     setFocusDocumentId(null);
     setHighlightedDocumentId(null);
     setPinnedDocumentId(null);
@@ -6033,14 +6283,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       )}
 
       {message && <p className="notice">{message}</p>}
-      {sunatToast && (
-        <div className="sales-sunat-toast-anchor">
+      {sunatToast && createPortal(
+        <div className="sales-sunat-toast-floating-anchor">
           <div className={`sales-sunat-toast ${sunatToast.tone}`} role="status" aria-live="polite">
             <strong>{sunatToast.title}</strong>
             <span>{sunatToast.detail}</span>
             <button type="button" onClick={() => setSunatToast(null)} aria-label="Cerrar notificacion">Cerrar</button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {salesWorkspaceMode === 'SELL' && canUseSellWorkspace && (
         <>
@@ -7423,22 +7674,97 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         document.body
       )}
 
-      {issuedPreview && (
-        <div className="issued-preview">
-          <h4>Vista previa de emision</h4>
-          <p>
-            {docKindLabelResolved(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
-            {issuedPreview.total.toFixed(2)} | Estado: {commercialStatusLabel(issuedPreview.status)}
-          </p>
-          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <button type="button" onClick={() => printIssuedPreview('A4')}>
-              Imprimir A4 / PDF
-            </button>
-            <button type="button" onClick={() => printIssuedPreview('80mm')}>
-              Imprimir Ticket 80mm
-            </button>
+      {issuedPreview && typeof document !== 'undefined' && createPortal(
+        <div
+          className="issued-preview-backdrop"
+          onClick={(event) => {
+            if (event.currentTarget === event.target) {
+              setIssuedPreview(null);
+              setIssuedShareEmail('');
+              setIssuedSharePhone('');
+              setIssuedPublicPdfLink('');
+            }
+          }}
+        >
+          <div className="issued-preview issued-preview-modal">
+            <div className="issued-preview-modal-header">
+              <div>
+                <h4>Compartir comprobante</h4>
+                <p>
+                  {docKindLabelResolved(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
+                  {issuedPreview.total.toFixed(2)} | Estado: {commercialStatusLabel(issuedPreview.status)}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="issued-preview-modal-close"
+                onClick={() => {
+                  setIssuedPreview(null);
+                  setIssuedShareEmail('');
+                  setIssuedSharePhone('');
+                  setIssuedPublicPdfLink('');
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="issued-preview-modal-summary">
+              <span><strong>Cliente:</strong> {issuedPreview.printable.customerName}</span>
+              <span><strong>Documento:</strong> {issuedPreview.printable.customerDocNumber}</span>
+              <span><strong>Correo:</strong> {issuedShareEmail.trim() || issuedPreview.printable.customerEmail?.trim() || '-'}</span>
+              <span><strong>WhatsApp:</strong> {issuedSharePhone.trim() || issuedPreview.printable.customerPhone?.trim() || '-'}</span>
+            </div>
+
+            <div className="issued-preview-share-fields">
+              <label>
+                Correo cliente
+                <input
+                  type="email"
+                  placeholder="cliente@correo.com"
+                  value={issuedShareEmail}
+                  onChange={(event) => setIssuedShareEmail(event.target.value)}
+                />
+              </label>
+              <label>
+                WhatsApp cliente
+                <input
+                  type="text"
+                  placeholder="999888777 o +51999888777"
+                  value={issuedSharePhone}
+                  onChange={(event) => setIssuedSharePhone(event.target.value)}
+                />
+              </label>
+              <label className="issued-preview-link-field">
+                Enlace PDF firmado
+                <input type="text" readOnly value={issuedPublicPdfLink.trim() || resolveIssuedPdfLink('a4')} />
+              </label>
+            </div>
+
+            <div className="issued-preview-actions">
+              <button type="button" onClick={() => printIssuedPreview('A4')}>
+                Imprimir A4 / PDF
+              </button>
+              <button type="button" onClick={() => printIssuedPreview('80mm')}>
+                Imprimir Ticket 80mm
+              </button>
+              <button type="button" onClick={() => void shareIssuedByEmail()}>
+                Enviar por correo
+              </button>
+              <button type="button" onClick={() => void shareIssuedByWhatsApp()}>
+                Enviar por WhatsApp
+              </button>
+              <button type="button" onClick={() => void copyIssuedPdfLink()}>
+                Copiar link PDF
+              </button>
+            </div>
+
+            <small className="issued-preview-share-note">
+              El enlace PDF se genera con firma temporal para que el cliente lo abra sin iniciar sesión.
+            </small>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
         </>
@@ -8005,6 +8331,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       >
                         🧾
                       </button>
+                        <button
+                          type="button"
+                          className="btn-mini sales-action-btn sales-action-view"
+                          disabled={loading}
+                          onClick={() => void openIssuedSharePopup(row)}
+                          title="Compartir comprobante"
+                        >
+                          📤
+                        </button>
                       {editControl.visible && (
                         <button
                           type="button"
@@ -8479,6 +8814,99 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </div>
           </div>
         </>
+      )}
+
+      {salesWorkspaceMode !== 'SELL' && issuedPreview && typeof document !== 'undefined' && createPortal(
+        <div
+          className="issued-preview-backdrop"
+          onClick={(event) => {
+            if (event.currentTarget === event.target) {
+              setIssuedPreview(null);
+              setIssuedShareEmail('');
+              setIssuedSharePhone('');
+              setIssuedPublicPdfLink('');
+            }
+          }}
+        >
+          <div className="issued-preview issued-preview-modal">
+            <div className="issued-preview-modal-header">
+              <div>
+                <h4>Compartir comprobante</h4>
+                <p>
+                  {docKindLabelResolved(issuedPreview.document_kind)} {issuedPreview.series}-{issuedPreview.number} | Total:{' '}
+                  {issuedPreview.total.toFixed(2)} | Estado: {commercialStatusLabel(issuedPreview.status)}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="issued-preview-modal-close"
+                onClick={() => {
+                  setIssuedPreview(null);
+                  setIssuedShareEmail('');
+                  setIssuedSharePhone('');
+                  setIssuedPublicPdfLink('');
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+
+            <div className="issued-preview-modal-summary">
+              <span><strong>Cliente:</strong> {issuedPreview.printable.customerName}</span>
+              <span><strong>Documento:</strong> {issuedPreview.printable.customerDocNumber}</span>
+              <span><strong>Correo:</strong> {issuedShareEmail.trim() || issuedPreview.printable.customerEmail?.trim() || '-'}</span>
+              <span><strong>WhatsApp:</strong> {issuedSharePhone.trim() || issuedPreview.printable.customerPhone?.trim() || '-'}</span>
+            </div>
+
+            <div className="issued-preview-share-fields">
+              <label>
+                Correo cliente
+                <input
+                  type="email"
+                  placeholder="cliente@correo.com"
+                  value={issuedShareEmail}
+                  onChange={(event) => setIssuedShareEmail(event.target.value)}
+                />
+              </label>
+              <label>
+                WhatsApp cliente
+                <input
+                  type="text"
+                  placeholder="999888777 o +51999888777"
+                  value={issuedSharePhone}
+                  onChange={(event) => setIssuedSharePhone(event.target.value)}
+                />
+              </label>
+              <label className="issued-preview-link-field">
+                Enlace PDF firmado
+                <input type="text" readOnly value={issuedPublicPdfLink.trim() || resolveIssuedPdfLink('a4')} />
+              </label>
+            </div>
+
+            <div className="issued-preview-actions">
+              <button type="button" onClick={() => printIssuedPreview('A4')}>
+                Imprimir A4 / PDF
+              </button>
+              <button type="button" onClick={() => printIssuedPreview('80mm')}>
+                Imprimir Ticket 80mm
+              </button>
+              <button type="button" onClick={() => void shareIssuedByEmail()}>
+                Enviar por correo
+              </button>
+              <button type="button" onClick={() => void shareIssuedByWhatsApp()}>
+                Enviar por WhatsApp
+              </button>
+              <button type="button" onClick={() => void copyIssuedPdfLink()}>
+                Copiar link PDF
+              </button>
+            </div>
+
+            <small className="issued-preview-share-note">
+              El enlace PDF se genera con firma temporal para que el cliente lo abra sin iniciar sesión.
+            </small>
+          </div>
+        </div>,
+        document.body
       )}
 
       {previewDialog && (

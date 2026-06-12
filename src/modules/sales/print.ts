@@ -40,6 +40,8 @@ export type PrintableSalesDocument = {
   customerName: string;
   customerDocNumber: string;
   customerAddress: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   subtotal: number;
   taxTotal: number;
   grandTotal: number;
