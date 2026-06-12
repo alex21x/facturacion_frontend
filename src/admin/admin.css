@@ -908,6 +908,20 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
   align-items: center;
 }
 
+.adm-row-issued {
+  flex-shrink: 0;
+  min-width: 96px;
+  text-align: center;
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.76rem;
+  color: #7c2d12;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-radius: 999px;
+  padding: 0.18rem 0.48rem;
+  font-weight: 700;
+}
+
 /* Admin username */
 .adm-row-admin {
   flex-shrink: 0;

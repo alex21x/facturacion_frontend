@@ -284,6 +284,7 @@ export type CompanyVerticalAdminCompany = {
   legal_name: string;
   trade_name: string | null;
   company_status: number;
+  issued_documents_count: number;
   active_vertical_code: string | null;
   active_vertical_name: string | null;
   access_slug: string | null;

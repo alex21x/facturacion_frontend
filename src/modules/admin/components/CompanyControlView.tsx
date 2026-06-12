@@ -1671,6 +1671,9 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                       : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
                     }
                   </span>
+                  <span className="adm-row-issued" title="Comprobantes emitidos">
+                    {Number(company.issued_documents_count ?? 0).toLocaleString('es-PE')} comp.
+                  </span>
                   <span className="adm-row-admin">
                     {company.admin_username
                       ? <span className="adm-row-admin-name">{company.admin_username}</span>
