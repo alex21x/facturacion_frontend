@@ -21,7 +21,6 @@ export type CompanyProfile = {
   email: string | null;
   website: string | null;
   logo_url: string | null;
-  logo_data_uri?: string | null;
   has_cert: boolean;
   bank_accounts: BankAccount[];
   ubigeo?: string | null;

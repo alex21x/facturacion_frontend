@@ -1,6 +1,5 @@
 import { apiClient } from '../../shared/api/client';
 import type { CompanyProfile } from '../company/types';
-import type { SalesLookups } from '../sales/types';
 import type {
   CashMovement,
   CashSession,
@@ -16,32 +15,6 @@ function authHeaders(accessToken: string): HeadersInit {
   return { Authorization: `Bearer ${accessToken}` };
 }
 
-function normalizeLocalLoopbackHost(rawUrl: string): string {
-  if (typeof window === 'undefined') {
-    return rawUrl;
-  }
-
-  try {
-    const parsed = new URL(rawUrl);
-    const host = parsed.hostname.toLowerCase();
-    const isLoopback = host === '0.0.0.0' || host === '127.0.0.1' || host === 'localhost';
-    if (!isLoopback) {
-      return rawUrl;
-    }
-
-    const currentHost = window.location.hostname.toLowerCase();
-    const replacementHost = currentHost === '0.0.0.0' ? 'localhost' : currentHost;
-    if (!replacementHost) {
-      return rawUrl;
-    }
-
-    parsed.hostname = replacementHost;
-    return parsed.toString();
-  } catch {
-    return rawUrl;
-  }
-}
-
 function toAbsoluteAssetUrl(value: string | null | undefined): string | null {
   const raw = String(value ?? '').trim();
   if (!raw) {
@@ -49,10 +22,10 @@ function toAbsoluteAssetUrl(value: string | null | undefined): string | null {
   }
 
   if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) {
-    return raw.startsWith('data:') ? raw : normalizeLocalLoopbackHost(raw);
+    return raw;
   }
 
-  const base = normalizeLocalLoopbackHost(apiClient.baseUrl.replace(/\/+$/, ''));
+  const base = apiClient.baseUrl.replace(/\/+$/, '');
   if (raw.startsWith('/')) {
     return `${base}${raw}`;
   }
@@ -173,43 +146,15 @@ export async function fetchSessionDetail(
 }
 
 export async function fetchCashCompanyProfile(accessToken: string): Promise<CompanyProfile> {
-  try {
-    const profile = await apiClient.request<CompanyProfile>('/api/appcfg/company-profile', {
-      method: 'GET',
-      headers: authHeaders(accessToken),
-    });
+  const profile = await apiClient.request<CompanyProfile>('/api/appcfg/company-profile', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
 
-    return {
-      ...profile,
-      logo_url: toAbsoluteAssetUrl(profile.logo_data_uri ?? profile.logo_url),
-    };
-  } catch {
-    const lookups = await apiClient.request<SalesLookups>('/api/sales/lookups', {
-      method: 'GET',
-      headers: authHeaders(accessToken),
-    });
-
-    const company = lookups.company_profile;
-    if (!company) {
-      throw new Error('No se pudo obtener el perfil de empresa para el reporte de caja.');
-    }
-
-    return {
-      company_id: 0,
-      tax_id: company.tax_id ?? null,
-      legal_name: company.legal_name ?? '',
-      trade_name: company.trade_name ?? null,
-      status: 1,
-      address: company.address ?? null,
-      phone: company.phone ?? null,
-      email: company.email ?? null,
-      website: null,
-      logo_url: toAbsoluteAssetUrl(company.logo_url),
-      has_cert: false,
-      bank_accounts: [],
-      show_payment_brand_icons: true,
-    };
-  }
+  return {
+    ...profile,
+    logo_url: toAbsoluteAssetUrl(profile.logo_url),
+  };
 }
 
 export async function fetchCashSalesFeatureFlags(
