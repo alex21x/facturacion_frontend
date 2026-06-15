@@ -883,7 +883,7 @@ export async function fetchCommercialDocumentPrintHtml(
   documentId: number,
   format: 'ticket' | 'a4' = 'ticket'
 ): Promise<string> {
-  const response = await fetch(`${apiClient.baseUrl}/api/sales/commercial-documents/${documentId}/print?format=${format}`, {
+  const response = await apiClient.requestRaw(`/api/sales/commercial-documents/${documentId}/print?format=${encodeURIComponent(format)}`, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -891,12 +891,26 @@ export async function fetchCommercialDocumentPrintHtml(
     },
   });
 
-  const html = await response.text();
+  const contentType = response.headers.get('content-type') ?? '';
+  const body = await response.text();
+
   if (!response.ok) {
-    throw new Error(`API ${response.status}: ${html}`);
+    if (contentType.includes('application/json')) {
+      try {
+        const parsed = JSON.parse(body) as { message?: string };
+        const message = typeof parsed.message === 'string' && parsed.message.trim() !== ''
+          ? parsed.message
+          : `API ${response.status}`;
+        throw new Error(message);
+      } catch {
+        throw new Error(`API ${response.status}: ${body}`);
+      }
+    }
+
+    throw new Error(`API ${response.status}: ${body}`);
   }
 
-  return html;
+  return body;
 }
 
 function resolveFileNameFromDisposition(contentDisposition: string | null, fallback: string): string {

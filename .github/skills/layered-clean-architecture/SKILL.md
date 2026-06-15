@@ -21,6 +21,8 @@ Keep functional code decoupled, predictable, and scalable.
 3. No external HTTP calls in controllers.
 4. No validation rules inline in controllers/services if a Request class exists for that endpoint.
 5. Keep response shape stable when refactoring.
+6. No Controller -> Controller communication (hard prohibition).
+7. Never decouple one controller by coupling another controller (invalid trade-off).
 
 ## Allowed responsibilities by layer
 
@@ -61,6 +63,8 @@ Keep functional code decoupled, predictable, and scalable.
 3. Any HTTP client call in Controller/Service? move to Gateway.
 4. Any duplicated query in multiple services? centralize in Repository.
 5. Any repeated controller branching? push business branch to Service.
+6. Any constructor injecting another controller? refactor required.
+7. Any controller method delegating to another controller? refactor required.
 
 ## Autonomous sweep mode
 Use when codebase drift is high and architecture boundaries were mixed.
