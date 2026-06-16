@@ -170,12 +170,12 @@ function isAuthRoute(path: string): boolean {
 }
 
 function resolveAuthScopeKey(session: AuthSession | null, authHeader?: string): string {
-  if (session?.user?.id && session?.user?.company_id) {
-    return `${session.user.id}:${session.user.company_id}:${session.deviceId}`;
+  if (authHeader && authHeader.trim() !== '') {
+    return `auth:${authHeader.trim()}`;
   }
 
-  if (authHeader && authHeader.trim() !== '') {
-    return 'auth';
+  if (session?.user?.id && session?.user?.company_id) {
+    return `${session.user.id}:${session.user.company_id}:${session.deviceId}`;
   }
 
   return 'anon';

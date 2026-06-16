@@ -991,7 +991,9 @@ export function App() {
   ): Promise<void> {
     const requestKey = `${branchId ?? 'ALL'}:${warehouseId ?? 'ALL'}:${cashRegisterId ?? 'ALL'}`;
 
-    if (operationalContextInFlightKeyRef.current === requestKey) {
+    // Avoid startup waterfalls (branch-only -> branch+warehouse+cash) by allowing
+    // only one operational-context request in flight at a time.
+    if (operationalContextInFlightKeyRef.current !== null) {
       return;
     }
 
@@ -1058,7 +1060,7 @@ export function App() {
       }
 
       hasHydratedOperationalContextRef.current = true;
-      operationalContextLastCompletedKeyRef.current = requestKey;
+      operationalContextLastCompletedKeyRef.current = `${nextBranchId ?? 'ALL'}:${nextWarehouseId ?? 'ALL'}:${nextCashRegisterId ?? 'ALL'}`;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'No se pudo cargar contexto operativo';
       setErrorMessage(message);
@@ -1075,49 +1077,33 @@ export function App() {
       return;
     }
 
+    if (isContextLoading) {
+      return;
+    }
+
+    const initialBranch = session.user.branch_id ? Number(session.user.branch_id) : null;
+    const effectiveBranchId = selectedBranchId ?? initialBranch;
+
+    // Ensure first load is scope-aware in multi-company context.
+    if (selectedBranchId === null && initialBranch !== null) {
+      setSelectedBranchId(initialBranch);
+    }
+
     // Ensure vertical-aware menu is hydrated on startup after hard refresh.
     if (!hasHydratedOperationalContextRef.current && !isContextLoading && !activeVertical?.code) {
       void loadOperationalContext(
         session.accessToken,
-        selectedBranchId,
+        effectiveBranchId,
         selectedWarehouseId,
         selectedCashRegisterId,
       );
       return;
     }
-
-    // Avoid null-branch startup stalls: use auth payload immediately.
-    const initialBranch = session.user.branch_id ? Number(session.user.branch_id) : null;
-    if (selectedBranchId === null && initialBranch !== null) {
-      setSelectedBranchId(initialBranch);
-    }
-
-    // Defer full context bootstrap to when a module actually needs it.
-    if (hasHydratedOperationalContextRef.current || activeTab === 'home' || RESTAURANT_TABS.has(activeTab)) {
-      return;
-    }
-
-    void loadOperationalContext(
-      session.accessToken,
-      selectedBranchId,
-      selectedWarehouseId,
-      selectedCashRegisterId,
-    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.accessToken, activeTab, activeVertical?.code, isContextLoading, selectedBranchId, selectedCashRegisterId, selectedWarehouseId]);
 
   useEffect(() => {
     if (!session || !context || !hasHydratedOperationalContextRef.current) {
-      return;
-    }
-
-    const currentContextBranchId =
-      context.selected.branch_id
-      ?? context.branches[0]?.id
-      ?? null;
-
-    // Skip redundant first reload after initial hydration.
-    if (selectedBranchId === currentContextBranchId) {
       return;
     }
 
@@ -1138,14 +1124,9 @@ export function App() {
       return;
     }
 
-    void loadOperationalContext(
-      session.accessToken,
-      selectedBranchId,
-      selectedWarehouseId,
-      selectedCashRegisterId
-    );
+    // Branch/warehouse/cash selectors already update local state; avoid auto-refetch cascade.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedBranchId, activeTab]);
+  }, [activeTab, context, selectedBranchId, selectedCashRegisterId, selectedWarehouseId, session]);
 
   useEffect(() => {
     if (!session) {
@@ -1154,7 +1135,9 @@ export function App() {
       return;
     }
 
-    const cacheScope = `${session.user.company_id}:${selectedBranchId ?? 'ALL'}`;
+    const initialBranch = session.user.branch_id ? Number(session.user.branch_id) : null;
+    const effectiveBranchId = selectedBranchId ?? initialBranch;
+    const cacheScope = `${session.user.company_id}:${effectiveBranchId ?? 'ALL'}`;
     let cancelled = false;
 
     try {
@@ -1183,7 +1166,7 @@ export function App() {
     // Keep UX responsive with defaults, then resolve flags in background.
     void (async () => {
       try {
-        const featureRows = await fetchFeatureToggles(session.accessToken, selectedBranchId);
+        const featureRows = await fetchFeatureToggles(session.accessToken, effectiveBranchId);
         if (cancelled) {
           return;
         }
@@ -1485,19 +1468,18 @@ export function App() {
                                 const value = e.target.value ? Number(e.target.value) : null;
                                 setSelectedBranchId(value);
 
-                                const nextWarehouse = context?.warehouses.find((row) => row.branch_id === value || row.branch_id === null)?.id ?? null;
-                                const nextCash = context?.cash_registers.find((row) => (
-                                  (row.branch_id === value || row.branch_id === null)
-                                  && (nextWarehouse === null || row.warehouse_id === null || row.warehouse_id === nextWarehouse)
-                                ))?.id ?? null;
+                                // Branch switch must refresh context once with the new branch scope.
+                                setSelectedWarehouseId(null);
+                                setSelectedCashRegisterId(null);
 
-                                // Keep branch switch lightweight and avoid transient null-context requests.
-                                setSelectedWarehouseId(nextWarehouse);
-                                setSelectedCashRegisterId(
-                                  RESTAURANT_TABS.has(activeTab)
-                                    ? null
-                                    : (context.selection_locks?.cash_register ? (context.selected.cash_register_id ?? null) : (shouldRequireManualCashSelection ? null : nextCash))
-                                );
+                                if (session?.accessToken) {
+                                  void loadOperationalContext(
+                                    session.accessToken,
+                                    value,
+                                    null,
+                                    null,
+                                  );
+                                }
                               }}
                             >
                               <option value="">Seleccionar</option>

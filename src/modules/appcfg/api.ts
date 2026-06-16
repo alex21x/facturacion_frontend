@@ -24,6 +24,20 @@ import type {
   InventorySettingsRecord,
 } from './types';
 
+const APP_SCOPE_REQUEST_TTL_MS = 5000;
+const featureTogglesInFlight = new Map<string, Promise<FeatureToggleRow[]>>();
+const featureTogglesRecent = new Map<string, { expiresAt: number; data: FeatureToggleRow[] }>();
+const operationalContextInFlight = new Map<string, Promise<OperationalContextResponse>>();
+const operationalContextRecent = new Map<string, { expiresAt: number; data: OperationalContextResponse }>();
+
+function pruneRecentMap<T>(map: Map<string, { expiresAt: number; data: T }>, now: number): void {
+  map.forEach((entry, key) => {
+    if (entry.expiresAt <= now) {
+      map.delete(key);
+    }
+  });
+}
+
 function authHeaders(accessToken: string): HeadersInit {
   return {
     Authorization: `Bearer ${accessToken}`,
@@ -53,13 +67,41 @@ export async function fetchFeatureToggles(accessToken: string, branchId?: number
   }
 
   const path = query.toString() ? `/api/appcfg/feature-toggles?${query.toString()}` : '/api/appcfg/feature-toggles';
+  const dedupKey = `${accessToken}::${path}`;
+  const now = Date.now();
+  pruneRecentMap(featureTogglesRecent, now);
 
-  const response = await apiClient.request<{ features: FeatureToggleRow[] }>(path, {
-    method: 'GET',
-    headers: authHeaders(accessToken),
-  });
+  const cached = featureTogglesRecent.get(dedupKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
 
-  return response.features;
+  const inFlight = featureTogglesInFlight.get(dedupKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = (async () => {
+    const response = await apiClient.request<{ features: FeatureToggleRow[] }>(path, {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    });
+
+    const data = response.features;
+    featureTogglesRecent.set(dedupKey, {
+      data,
+      expiresAt: Date.now() + APP_SCOPE_REQUEST_TTL_MS,
+    });
+    return data;
+  })();
+
+  featureTogglesInFlight.set(dedupKey, requestPromise);
+
+  try {
+    return await requestPromise;
+  } finally {
+    featureTogglesInFlight.delete(dedupKey);
+  }
 }
 
 export async function fetchOperationalContext(
@@ -80,11 +122,40 @@ export async function fetchOperationalContext(
 
   const suffix = query.toString();
   const path = suffix ? `/api/appcfg/operational-context?${suffix}` : '/api/appcfg/operational-context';
+  const dedupKey = `${accessToken}::${path}`;
+  const now = Date.now();
+  pruneRecentMap(operationalContextRecent, now);
 
-  return apiClient.request<OperationalContextResponse>(path, {
-    method: 'GET',
-    headers: authHeaders(accessToken),
-  });
+  const cached = operationalContextRecent.get(dedupKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.data;
+  }
+
+  const inFlight = operationalContextInFlight.get(dedupKey);
+  if (inFlight) {
+    return inFlight;
+  }
+
+  const requestPromise = (async () => {
+    const response = await apiClient.request<OperationalContextResponse>(path, {
+      method: 'GET',
+      headers: authHeaders(accessToken),
+    });
+
+    operationalContextRecent.set(dedupKey, {
+      data: response,
+      expiresAt: Date.now() + APP_SCOPE_REQUEST_TTL_MS,
+    });
+    return response;
+  })();
+
+  operationalContextInFlight.set(dedupKey, requestPromise);
+
+  try {
+    return await requestPromise;
+  } finally {
+    operationalContextInFlight.delete(dedupKey);
+  }
 }
 
 export async function fetchHomeMetricsSummary(

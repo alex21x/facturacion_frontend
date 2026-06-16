@@ -587,55 +587,48 @@ export function InventoryView({
     return filteredStock.slice(start, start + stockPerPage);
   }, [filteredStock, stockPage, stockPerPage]);
 
-  useEffect(() => {
-    if (activeTab !== 'stock' || paginatedStock.length === 0) {
+  async function loadCommercialConfigForProduct(productId: number): Promise<void> {
+    if (!Number.isFinite(productId) || productId <= 0) {
       return;
     }
 
-    const productIds = Array.from(new Set(paginatedStock.map((row) => Number(row.product_id))))
-      .filter((id) => Number.isFinite(id) && id > 0)
-      .filter((id) => commercialConfigByProductId[id] === undefined && !loadingCommercialConfigIdsRef.current.has(id));
-
-    if (productIds.length === 0) {
+    if (loadingCommercialConfigIdsRef.current.has(productId)) {
       return;
     }
 
-    productIds.forEach((id) => loadingCommercialConfigIdsRef.current.add(id));
-    let cancelled = false;
+    if (commercialConfigByProductId[productId] !== undefined) {
+      return;
+    }
 
-    void (async () => {
-      try {
-        const results = await Promise.all(
-          productIds.map(async (id) => {
-            try {
-              const config = await fetchInventoryProductCommercialConfig(accessToken, id);
-              return [id, config] as const;
-            } catch {
-              return [id, null] as const;
-            }
-          })
-        );
+    loadingCommercialConfigIdsRef.current.add(productId);
 
-        if (cancelled) {
-          return;
+    try {
+      const config = await fetchInventoryProductCommercialConfig(accessToken, productId);
+      setCommercialConfigByProductId((prev) => {
+        if (prev[productId] !== undefined) {
+          return prev;
         }
 
-        setCommercialConfigByProductId((prev) => {
-          const next = { ...prev };
-          results.forEach(([id, config]) => {
-            next[id] = config;
-          });
-          return next;
-        });
-      } finally {
-        productIds.forEach((id) => loadingCommercialConfigIdsRef.current.delete(id));
-      }
-    })();
+        return {
+          ...prev,
+          [productId]: config,
+        };
+      });
+    } catch {
+      setCommercialConfigByProductId((prev) => {
+        if (prev[productId] !== undefined) {
+          return prev;
+        }
 
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, accessToken, paginatedStock, commercialConfigByProductId]);
+        return {
+          ...prev,
+          [productId]: null,
+        };
+      });
+    } finally {
+      loadingCommercialConfigIdsRef.current.delete(productId);
+    }
+  }
 
   const adjustmentProduct = useMemo(
     () => products.find((row) => row.id === adjustmentProductId) ?? null,
@@ -1805,7 +1798,24 @@ export function InventoryView({
                     <td>{productLocationById.get(row.product_id) ?? '-'}</td>
                     <td>
                       {(() => {
+                        const configResolved = commercialConfigByProductId[row.product_id] !== undefined;
                         const rows = buildPresentationRows(row.product_id, row.stock);
+                        if (!configResolved) {
+                          return (
+                            <button
+                              type="button"
+                              className="inventory-presentation-more"
+                              onClick={() => {
+                                setExpandedPresentationByProductId((prev) => ({ ...prev, [row.product_id]: true }));
+                                void loadCommercialConfigForProduct(row.product_id);
+                              }}
+                              title="Cargar presentaciones"
+                            >
+                              Ver presentaciones
+                            </button>
+                          );
+                        }
+
                         if (rows.length <= 1) {
                           return <span className="inventory-presentation-empty">-</span>;
                         }
@@ -1825,7 +1835,10 @@ export function InventoryView({
                               <button
                                 type="button"
                                 className="inventory-presentation-more"
-                                onClick={() => setExpandedPresentationByProductId((prev) => ({ ...prev, [row.product_id]: true }))}
+                                onClick={() => {
+                                  setExpandedPresentationByProductId((prev) => ({ ...prev, [row.product_id]: true }));
+                                  void loadCommercialConfigForProduct(row.product_id);
+                                }}
                                 title="Ver todas las presentaciones"
                               >
                                 +{hiddenCount} más
