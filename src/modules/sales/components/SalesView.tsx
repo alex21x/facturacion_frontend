@@ -1837,10 +1837,20 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     return html;
   }
 
-  async function resolvePreviewSubtitle(documentId: number): Promise<string> {
+  async function resolvePreviewSubtitle(
+    documentId: number,
+    fallbackSeries?: string | null,
+    fallbackNumber?: number | string | null,
+  ): Promise<string> {
     const cached = previewSubtitleCacheRef.current.get(documentId);
     if (cached) {
       return cached;
+    }
+
+    const series = String(fallbackSeries ?? '').trim();
+    const number = String(fallbackNumber ?? '').trim();
+    if (series !== '' && number !== '') {
+      return rememberPreviewSubtitle(documentId, series, number);
     }
 
     const data = await fetchCommercialDocumentDetails(accessToken, documentId);
@@ -4227,8 +4237,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   async function showDocumentPreview(documentId: number, format: 'A4' | '80mm' = 'A4') {
     try {
       const printFormat = format === '80mm' ? 'ticket' : 'a4';
+      const listRow = documents.find((row) => row.id === documentId);
       const [subtitle, html] = await Promise.all([
-        resolvePreviewSubtitle(documentId),
+        resolvePreviewSubtitle(documentId, listRow?.series ?? null, listRow?.number ?? null),
         fetchPrintHtmlCached(documentId, printFormat),
       ]);
 
