@@ -28,6 +28,8 @@ const BUSINESS_PULSE_CACHE_TTL_MS = 2 * 60 * 1000;
 type ModuleTab =
   | 'home'
   | 'cash'
+  | 'customer-collections'
+  | 'supplier-payments'
   | 'racing-ops'
   | 'restaurant-orders'
   | 'comandas'
@@ -68,6 +70,8 @@ const QUICK_ACCESS_PRIORITY: ModuleTab[] = [
   'sales',
   'racing-ops',
   'cash',
+  'customer-collections',
+  'supplier-payments',
   'purchases',
   'inventory',
   'products',
@@ -118,6 +122,8 @@ const RetailInventoryView = lazy(() => import('../modules/inventory/components/R
 const RestaurantPurchasesView = lazy(() => import('../modules/purchases/components/RestaurantPurchasesView').then((m) => ({ default: m.RestaurantPurchasesView })));
 const RetailPurchasesView = lazy(() => import('../modules/purchases/components/RetailPurchasesView').then((m) => ({ default: m.RetailPurchasesView })));
 const ReportsCenterView = lazy(() => import('../modules/reports/components/ReportsCenterView').then((m) => ({ default: m.ReportsCenterView })));
+const CustomerCollectionsView = lazy(() => import('../modules/credit-payments/components/CustomerCollectionsView').then((m) => ({ default: m.CustomerCollectionsView })));
+const SupplierPaymentsView = lazy(() => import('../modules/credit-payments/components/SupplierPaymentsView').then((m) => ({ default: m.SupplierPaymentsView })));
 const RetailProductsView = lazy(() => import('../modules/products/components/RetailProductsView').then((m) => ({ default: m.RetailProductsView })));
 const RestaurantMenuProductsView = lazy(() => import('../modules/products/components/RestaurantMenuProductsView').then((m) => ({ default: m.RestaurantMenuProductsView })));
 const RestaurantSuppliesProductsView = lazy(() => import('../modules/products/components/RestaurantSuppliesProductsView').then((m) => ({ default: m.RestaurantSuppliesProductsView })));
@@ -178,6 +184,32 @@ const MENU_ITEMS: Array<{
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 9h18v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9zm0 0V7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2M9 13h6M12 13v4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'customer-collections',
+    group: 'operacion',
+    kicker: 'Cartera',
+    label: 'Cobros de Clientes',
+    hint: 'Seguimiento de creditos y recuperacion',
+    moduleCode: 'SALES',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 6h18v12H3zM7 10h10M7 14h6M16.5 18a1.5 1.5 0 1 0 0 .01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'supplier-payments',
+    group: 'abastecimiento',
+    kicker: 'Cartera',
+    label: 'Pagos a Proveedores',
+    hint: 'Control de deuda y cancelaciones',
+    moduleCode: 'INVENTORY',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 7h18M5 7v12h14V7M8 11h8M8 15h4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -592,6 +624,8 @@ function resolveInitialActiveTab(): ModuleTab {
   const allowed: ModuleTab[] = [
     'home',
     'cash',
+    'customer-collections',
+    'supplier-payments',
     'racing-ops',
     'restaurant-orders',
     'comandas',
@@ -1398,7 +1432,7 @@ export function App() {
                     warehouseId={selectedWarehouseId}
                     canViewBusinessPulse={canViewBusinessPulse}
                     quickAccessItems={quickAccessItems}
-                    onTabSelect={handleMenuTabSelect}
+                    onTabSelect={(tab) => handleMenuTabSelect(tab as ModuleTab)}
                   />
                 </Suspense>
               )}
@@ -1546,6 +1580,18 @@ export function App() {
                     cashRegisterId={selectedCashRegisterId}
                     salesFlowMode={salesFlowMode}
                     canViewNetMargin={false}
+                  />
+                )}
+                {activeTab === 'customer-collections' && (
+                  <CustomerCollectionsView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                  />
+                )}
+                {activeTab === 'supplier-payments' && (
+                  <SupplierPaymentsView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
                   />
                 )}
                 {activeTab === 'racing-ops' && (
