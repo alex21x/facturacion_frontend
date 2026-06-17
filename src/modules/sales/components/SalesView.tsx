@@ -5560,7 +5560,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         void_at: nowLimaIso(),
       };
 
-      let response: { sunat_void_status?: string | null; daily_summary_id?: unknown };
+      let response: {
+        data?: {
+          status?: string | null;
+          sunat_void_status?: string | null;
+          daily_summary_id?: unknown;
+        };
+        status?: string | null;
+        sunat_void_status?: string | null;
+        daily_summary_id?: unknown;
+      };
       try {
         response = (await voidCommercialDocument(accessToken, row.id, basePayload)) as {
           sunat_void_status?: string | null;
@@ -5602,13 +5611,31 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         };
       }
 
-      const linkedSummaryId = toPositiveInt((response as { daily_summary_id?: unknown } | null)?.daily_summary_id);
+      const responseData = (response?.data && typeof response.data === 'object')
+        ? response.data
+        : response;
+
+      const linkedSummaryId = toPositiveInt((responseData as { daily_summary_id?: unknown } | null)?.daily_summary_id);
       const summaryType = isReceipt ? 'RA' : 'baja SUNAT';
       const summaryInfo = linkedSummaryId && isReceipt ? ` Asignado automaticamente a ${summaryType} #${linkedSummaryId}.` : '';
-      setMessage(`${docLabel} ${row.series}-${row.number} anulado correctamente.${summaryInfo}`);
+      if (isReceipt) {
+        setMessage(`${docLabel} ${row.series}-${row.number} enviado a anulacion por resumen RA.${summaryInfo}`);
+      } else {
+        setMessage(`${docLabel} ${row.series}-${row.number} anulado correctamente.${summaryInfo}`);
+      }
+
+      const nextStatus = String(
+        (responseData as { status?: string | null } | null)?.status
+        ?? (isReceipt ? 'ISSUED' : 'VOID')
+      ).toUpperCase();
+      const nextSunatVoidStatus = String(
+        (responseData as { sunat_void_status?: string | null } | null)?.sunat_void_status
+        ?? (isReceipt ? 'PENDING_SUMMARY' : 'PENDING')
+      ).toUpperCase();
+
       updateDocumentInList(row.id, {
-        status: 'VOID',
-        sunat_void_status: String(response.sunat_void_status ?? 'PENDING').toUpperCase(),
+        status: nextStatus,
+        sunat_void_status: nextSunatVoidStatus,
       });
       invalidateDocumentPreviewCache(row.id);
     } catch (error) {
@@ -5681,12 +5708,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const detailSummary = [httpSummary, responseSummary, endpointSummary, payloadHashSummary]
         .filter((part) => part !== '')
         .join(' | ');
-
-      setMessage(
-        detailSummary
-          ? `${response.message || 'Comunicacion de baja SUNAT ejecutada.'} (${detailSummary})`
-          : (response.message || 'Comunicacion de baja SUNAT ejecutada.')
-      );
 
       setSunatToast({
         tone: response.sunat_void_status === 'ACCEPTED' ? 'ok' : response.sunat_void_status === 'REJECTED' ? 'bad' : 'warn',
