@@ -86,6 +86,21 @@ function normalizeDocTypeLabel(code?: string | null): string {
   return normalized;
 }
 
+function normalizeDocumentKindLabel(kind?: string | null, fallbackLabel?: string | null): string {
+  const explicit = String(fallbackLabel ?? '').trim();
+  if (explicit !== '') {
+    return explicit;
+  }
+
+  const normalized = String(kind ?? '').trim().toUpperCase();
+  if (normalized === '') return '-';
+  if (normalized === 'INVOICE') return 'FACTURA';
+  if (normalized === 'RECEIPT') return 'BOLETA';
+  if (normalized.startsWith('CREDIT_NOTE')) return 'NOTA DE CREDITO';
+  if (normalized.startsWith('DEBIT_NOTE')) return 'NOTA DE DEBITO';
+  return normalized;
+}
+
 function formatMoney(value?: string | number | null): string {
   if (value === null || value === undefined || String(value).trim() === '') {
     return '-';
@@ -421,7 +436,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                 </div>
                 <div className="sunat-exceptions__hover-preview-body">
                   <span>RUC emision: {String(quickViewDocument.issuer_ruc ?? '').trim() || '-'}</span>
-                  <span>Tipo comprobante: {String(quickViewDocument.document_kind_label ?? quickViewDocument.document_kind).trim() || '-'}</span>
+                  <span>Tipo comprobante: {normalizeDocumentKindLabel(quickViewDocument.document_kind, quickViewDocument.document_kind_label)}</span>
                   <span>Serie numero: {quickViewDocument.series}-{quickViewDocument.number}</span>
                   <span>{normalizeDocTypeLabel(quickViewDocument.customer_doc_type_code)} cliente: {String(quickViewDocument.customer_doc_number ?? '').trim() || '-'}</span>
                   <span>Cliente: {quickViewDocument.customer_name}</span>
@@ -489,7 +504,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                             setSelected(row);
                           }}
                         >
-                        <strong>{row.document_kind}</strong> {row.series}-{row.number}
+                        <strong>{normalizeDocumentKindLabel(row.document_kind, row.document_kind_label)}</strong> {row.series}-{row.number}
                         <div className="sunat-exceptions__customer">{row.customer_name}</div>
                         </button>
                       </td>
@@ -524,7 +539,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                   </p>
                 )}
                 <p className="sunat-exceptions__aside-doc">
-                  Documento #{selected.id} · {selected.document_kind} {selected.series}-{selected.number}
+                  Documento #{selected.id} · {normalizeDocumentKindLabel(selected.document_kind, selected.document_kind_label)} {selected.series}-{selected.number}
                 </p>
                 <p className="sunat-exceptions__aside-meta">
                   Emision: {formatDateTime(selected.issue_at)} · Ult. sync: {formatDateTime(selected.sunat_reconcile_next_at)}
