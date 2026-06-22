@@ -714,6 +714,7 @@ function sortDocumentsLatestFirst<T extends { id?: number | null; created_at?: s
 const SUNAT_OPERATION_WINDOW_DAYS = 3;
 const ONE_DAY_IN_MS = 24 * 60 * 60 * 1000;
 const SUNAT_SENDING_STALE_MINUTES = 10;
+const SUNAT_CONSULTA_LIBRE_URL = 'https://ww1.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/consulta';
 
 function parseDateOnlyToUtc(value: string | null | undefined): Date | null {
   const raw = String(value ?? '').trim();
@@ -1164,6 +1165,15 @@ function manualSunatButtonLabel(status: string | null | undefined): string {
   return normalized === 'PENDING_MANUAL' || normalized === '' ? 'Enviar SUNAT' : 'Reenviar SUNAT';
 }
 
+function buildSunatConsultaLibreUrl(row: Pick<CommercialDocumentListItem, 'document_kind' | 'document_kind_base' | 'series' | 'number'>): string {
+  const query = new URLSearchParams();
+  query.set('tipo', resolveRowDocumentKindBase(row));
+  query.set('serie', String(row.series ?? '').trim().toUpperCase());
+  query.set('numero', String(row.number ?? '').trim());
+
+  return `${SUNAT_CONSULTA_LIBRE_URL}?${query.toString()}`;
+}
+
 function summarizeBridgeResponse(response: unknown): string {
   if (typeof response === 'string') {
     const compact = response.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1511,6 +1521,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [focusDocumentId, setFocusDocumentId] = useState<number | null>(null);
   const [highlightedDocumentId, setHighlightedDocumentId] = useState<number | null>(null);
   const [pinnedDocumentId, setPinnedDocumentId] = useState<number | null>(null);
+  const [reportSunatHoverDocumentId, setReportSunatHoverDocumentId] = useState<number | null>(null);
 
   const normalizedRoleCode = (currentUserRoleCode ?? '').toUpperCase();
   const normalizedRoleProfile = (currentUserRoleProfile ?? '').toUpperCase();
@@ -1916,6 +1927,36 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
     setPinnedDocumentId(null);
   }, [documentViewFilter, documentsPage]);
+
+  useEffect(() => {
+    if (reportSunatHoverDocumentId === null) {
+      return;
+    }
+
+    const stillExists = documents.some((row) => Number(row.id) === reportSunatHoverDocumentId);
+    if (!stillExists) {
+      setReportSunatHoverDocumentId(null);
+    }
+  }, [documents, reportSunatHoverDocumentId]);
+
+  const reportSunatValidationTarget = useMemo(() => {
+    const findTributaryById = (targetId: number | null) => {
+      if (targetId === null) {
+        return null;
+      }
+
+      const row = documents.find((item) => Number(item.id) === targetId) ?? null;
+      return row && isTributaryRow(row) ? row : null;
+    };
+
+    return (
+      findTributaryById(reportSunatHoverDocumentId)
+      ?? findTributaryById(pinnedDocumentId)
+      ?? findTributaryById(highlightedDocumentId)
+      ?? documents.find((row) => isTributaryRow(row))
+      ?? null
+    );
+  }, [documents, highlightedDocumentId, pinnedDocumentId, reportSunatHoverDocumentId]);
 
   const isTributaryDocument = useMemo(() => {
     const row = (lookups?.document_kinds ?? []).find((item) => item.code === form.documentKind);
@@ -8205,6 +8246,34 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <button type="button" className="btn-export" onClick={() => void handleExportDocumentsXlsxByProduct()} disabled={loadingDocuments || exportingDocuments}>
               {exportingDocuments ? 'Exportando…' : '⬇ XLSX Detalle Productos'}
             </button>
+            <span className="report-filter-spacer" />
+            {reportSunatValidationTarget ? (
+              <a
+                href={buildSunatConsultaLibreUrl(reportSunatValidationTarget)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Validar en SUNAT: ${reportSunatValidationTarget.series}-${String(reportSunatValidationTarget.number).padStart(6, '0')}`}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.78rem',
+                  fontWeight: 700,
+                  color: '#0f766e',
+                  textDecoration: 'none',
+                  padding: '0.25rem 0.55rem',
+                  borderRadius: '9999px',
+                  border: '1px solid #99f6e4',
+                  background: '#f0fdfa',
+                }}
+              >
+                🔎 Validar comprobante en SUNAT                
+              </a>
+            ) : (
+              <span style={{ fontSize: '0.76rem', color: '#6b7280' }}>
+                🔎 SUNAT: no hay comprobantes tributarios en esta vista
+              </span>
+            )}
           </div>
         </div>
         <table>
@@ -8241,6 +8310,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <tr
                 key={row.id}
                 ref={Number(row.id) === focusDocumentId ? focusedReportRowRef : null}
+                onMouseEnter={() => setReportSunatHoverDocumentId(Number(row.id))}
+                onMouseLeave={() => setReportSunatHoverDocumentId((current) => (current === Number(row.id) ? null : current))}
                 className={[
                   Number(row.id) === highlightedDocumentId ? 'sales-row-focused' : '',
                   Number(row.id) === pinnedDocumentId ? 'sales-row-selected' : '',
@@ -8532,44 +8603,45 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     </div>
                   )}
                   {isTributaryRow(row) ? (
-                    <div
-                      className={`sales-sunat-dropdown ${canOpenSunatActionsMenu(row, taxBridgeEnabled, canVoidDocumentsInCurrentMode) ? '' : 'is-locked'}`}
-                    >
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.28rem' }}>
-                        <button type="button" className={`sales-sunat-badge ${sunatUi.className}`}>
-                          {sunatUi.label}
-                        </button>
-                        {canViewTaxBridgeDebug && (
-                          <button
-                            type="button"
-                            onClick={(event) => {
-                              event.preventDefault();
-                              event.stopPropagation();
-                              void handleToggleSunatBridgeDebug(row);
-                            }}
-                            title="Ver historial de intentos SUNAT (payload y respuesta por intento)"
-                            style={{
-                              width: '20px',
-                              height: '20px',
-                              borderRadius: '9999px',
-                              border: sunatBridgeDebugState?.documentId === row.id ? '1px solid #0f766e' : '1px solid #cbd5e1',
-                              background: sunatBridgeDebugState?.documentId === row.id ? '#ecfeff' : '#f8fafc',
-                              color: '#0f172a',
-                              fontSize: '0.66rem',
-                              fontWeight: 700,
-                              lineHeight: 1,
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              cursor: 'pointer',
-                              padding: 0,
-                            }}
-                          >
-                            i
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '0.32rem' }}>
+                      <div
+                        className={`sales-sunat-dropdown ${canOpenSunatActionsMenu(row, taxBridgeEnabled, canVoidDocumentsInCurrentMode) ? '' : 'is-locked'}`}
+                      >
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.28rem' }}>
+                          <button type="button" className={`sales-sunat-badge ${sunatUi.className}`}>
+                            {sunatUi.label}
                           </button>
-                        )}
-                      </div>
-                      <div className="sales-sunat-dropdown-menu">
+                          {canViewTaxBridgeDebug && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void handleToggleSunatBridgeDebug(row);
+                              }}
+                              title="Ver historial de intentos SUNAT (payload y respuesta por intento)"
+                              style={{
+                                width: '20px',
+                                height: '20px',
+                                borderRadius: '9999px',
+                                border: sunatBridgeDebugState?.documentId === row.id ? '1px solid #0f766e' : '1px solid #cbd5e1',
+                                background: sunatBridgeDebugState?.documentId === row.id ? '#ecfeff' : '#f8fafc',
+                                color: '#0f172a',
+                                fontSize: '0.66rem',
+                                fontWeight: 700,
+                                lineHeight: 1,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: 'pointer',
+                                padding: 0,
+                              }}
+                            >
+                              i
+                            </button>
+                          )}
+                        </div>
+                        <div className="sales-sunat-dropdown-menu">
                         {/* ── DOCS ACEPTADOS: Descargas + Notas ─────────────── */}
                         {String(row.sunat_status ?? '').toUpperCase() === 'ACCEPTED' && (
                           <>
@@ -8705,6 +8777,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             </button>
                           </>
                         )}
+                        </div>
                       </div>
                     </div>
                   ) : (

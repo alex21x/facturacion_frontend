@@ -95,11 +95,17 @@ export type SunatExceptionItem = {
   id: number;
   branch_id?: number | null;
   document_kind: string;
+  document_kind_label?: string | null;
   series: string;
   number: number;
   issue_at: string;
   document_status: string;
+  total?: string | number | null;
+  issuer_ruc?: string | null;
   customer_name: string;
+  customer_doc_number?: string | null;
+  customer_doc_type_code?: string | null;
+  customer_type_label?: string | null;
   sunat_status: string;
   sunat_label: string;
   pending_hours: number;

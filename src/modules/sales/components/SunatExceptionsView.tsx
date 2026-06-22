@@ -41,6 +41,8 @@ const DOCUMENT_KIND_OPTIONS = [
   { value: 'DEBIT_NOTE', label: 'Nota de debito' },
 ];
 
+const SUNAT_CONSULTA_LIBRE_URL = 'https://ww1.sunat.gob.pe/ol-ti-itconsultaunificadalibre/consultaUnificadaLibre/consulta';
+
 const EVIDENCE_OPTIONS: Array<{ value: ManualSunatConfirmPayload['evidence_type']; label: string }> = [
   { value: 'TICKET', label: 'Ticket' },
   { value: 'CDR', label: 'CDR' },
@@ -61,6 +63,43 @@ function formatDateTime(value?: string | null): string {
   }).format(date);
 }
 
+function buildSunatConsultaLibreUrl(item: Pick<SunatExceptionItem, 'document_kind' | 'series' | 'number'>): string {
+  const query = new URLSearchParams();
+  query.set('tipo', String(item.document_kind ?? '').trim().toUpperCase());
+  query.set('serie', String(item.series ?? '').trim().toUpperCase());
+  query.set('numero', String(item.number ?? '').trim());
+
+  return `${SUNAT_CONSULTA_LIBRE_URL}?${query.toString()}`;
+}
+
+function normalizeDocTypeLabel(code?: string | null): string {
+  const normalized = String(code ?? '').trim().toUpperCase();
+  if (normalized === '') return '-';
+  if (normalized === '6') return 'RUC';
+  if (normalized === '1') return 'DNI';
+  if (normalized === '4') return 'CARNET DE EXTRANJERIA';
+  if (normalized === '7') return 'PASAPORTE';
+  return normalized;
+}
+
+function formatMoney(value?: string | number | null): string {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return '-';
+  }
+
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return String(value);
+  }
+
+  return new Intl.NumberFormat('es-PE', {
+    style: 'currency',
+    currency: 'PEN',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numeric);
+}
+
 export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   const [activeTab, setActiveTab] = useState<'documents' | 'summaries'>('documents');
   const [loading, setLoading] = useState(false);
@@ -78,6 +117,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   });
   const [audit, setAudit] = useState<SunatExceptionsAuditResponse | null>(null);
   const [selected, setSelected] = useState<SunatExceptionItem | null>(null);
+  const [clickedDocument, setClickedDocument] = useState<SunatExceptionItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -87,7 +127,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   selectedRef.current = selected;
 
   const [resolution, setResolution] = useState<ManualSunatConfirmPayload['resolution']>('ACCEPTED');
-  const [evidenceType, setEvidenceType] = useState<ManualSunatConfirmPayload['evidence_type']>('WHATSAPP');
+  const [evidenceType, setEvidenceType] = useState<ManualSunatConfirmPayload['evidence_type']>('OTHER');
   const [evidenceRef, setEvidenceRef] = useState('');
   const [evidenceNote, setEvidenceNote] = useState('');
 
@@ -116,6 +156,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
       setQueue(queueResponse);
       setAudit(auditResponse);
       setSelectedIds((prev) => prev.filter((id) => queueResponse.data.some((row) => row.id === id)));
+      setClickedDocument((prev) => (prev && queueResponse.data.some((row) => row.id === prev.id) ? prev : null));
 
       if (queueResponse.data.length === 0) {
         setSelected(null);
@@ -217,6 +258,8 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   const mismatchChipClass = stats.mismatch_count > 0
     ? 'sunat-exceptions__chip sunat-exceptions__chip--danger'
     : 'sunat-exceptions__chip sunat-exceptions__chip--ok';
+
+  const quickViewDocument = clickedDocument ?? selected;
 
   if (activeTab === 'summaries') {
     return (
@@ -359,6 +402,31 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
 
         <div className="sunat-exceptions__layout">
           <div className="sunat-exceptions__table-wrap">
+            {quickViewDocument && (
+              <div className="sunat-exceptions__hover-preview" role="status" aria-live="polite">
+                <div className="sunat-exceptions__hover-preview-header">
+                  <strong>Detalle rapido (clic en comprobante)</strong>
+                  <a
+                    href={buildSunatConsultaLibreUrl(quickViewDocument)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="sunat-exceptions__hover-preview-link"
+                  >
+                    Validar en SUNAT
+                  </a>
+                </div>
+                <div className="sunat-exceptions__hover-preview-body">
+                  <span>RUC emision: {String(quickViewDocument.issuer_ruc ?? '').trim() || '-'}</span>
+                  <span>Tipo cliente: {normalizeDocTypeLabel(quickViewDocument.customer_doc_type_code)}</span>
+                  <span>{normalizeDocTypeLabel(quickViewDocument.customer_doc_type_code)} cliente: {String(quickViewDocument.customer_doc_number ?? '').trim() || '-'}</span>
+                  <span>Cliente: {quickViewDocument.customer_name}</span>
+                  <span>Tipo comprobante: {String(quickViewDocument.document_kind_label ?? quickViewDocument.document_kind).trim() || '-'}</span>
+                  <span>Serie numero: {quickViewDocument.series}-{quickViewDocument.number}</span>
+                  <span>Monto: {formatMoney(quickViewDocument.total)}</span>
+                  <span>Fecha emision: {formatDateTime(quickViewDocument.issue_at)}</span>
+                </div>
+              </div>
+            )}
             <table>
               <thead>
                 <tr>
@@ -408,8 +476,19 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                         />
                       </td>
                       <td>
+                        <button
+                          type="button"
+                          className="sunat-exceptions__doc-button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setClickedDocument(row);
+                            setSelected(row);
+                          }}
+                        >
                         <strong>{row.document_kind}</strong> {row.series}-{row.number}
                         <div className="sunat-exceptions__customer">{row.customer_name}</div>
+                        </button>
                       </td>
                       <td>
                         <span className={`sales-sunat-badge ${row.sunat_status === 'PENDING_CONFIRMATION' ? 'is-warn' : 'is-progress'}`}>
@@ -446,6 +525,15 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                 </p>
                 <p className="sunat-exceptions__aside-meta">
                   Emision: {formatDateTime(selected.issue_at)} · Ult. sync: {formatDateTime(selected.sunat_reconcile_next_at)}
+                </p>
+                <p className="sunat-exceptions__aside-meta" style={{ marginTop: 6 }}>
+                  <a
+                    href={buildSunatConsultaLibreUrl(selected)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Validar comprobante en SUNAT
+                  </a>
                 </p>
 
                 {(selected.sunat_error_code || selected.sunat_error_message) && (
