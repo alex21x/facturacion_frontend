@@ -33,6 +33,14 @@ const STATUS_OPTIONS = [
   { value: 'REJECTED', label: 'Rechazado' },
 ];
 
+const DOCUMENT_KIND_OPTIONS = [
+  { value: '', label: 'Todos' },
+  { value: 'INVOICE', label: 'Factura' },
+  { value: 'RECEIPT', label: 'Boleta' },
+  { value: 'CREDIT_NOTE', label: 'Nota de credito' },
+  { value: 'DEBIT_NOTE', label: 'Nota de debito' },
+];
+
 const EVIDENCE_OPTIONS: Array<{ value: ManualSunatConfirmPayload['evidence_type']; label: string }> = [
   { value: 'TICKET', label: 'Ticket' },
   { value: 'CDR', label: 'CDR' },
@@ -59,6 +67,8 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
+  const [documentFilter, setDocumentFilter] = useState('');
+  const [documentKind, setDocumentKind] = useState('');
   const [minAgeHours, setMinAgeHours] = useState(0);
   const [minAttempts, setMinAttempts] = useState(0);
   const [onlyManualNeeded, setOnlyManualNeeded] = useState(false);
@@ -69,6 +79,8 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
   const [audit, setAudit] = useState<SunatExceptionsAuditResponse | null>(null);
   const [selected, setSelected] = useState<SunatExceptionItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [resultMessage, setResultMessage] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
 
   // Ref so loadData can read the current selection without being in its deps array
   const selectedRef = useRef<SunatExceptionItem | null>(null);
@@ -87,6 +99,8 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
         fetchSunatExceptions(accessToken, {
           branchId,
           status,
+          document: documentFilter,
+          documentKind,
           minAgeHours,
           minAttempts,
           onlyManualNeeded,
@@ -101,6 +115,7 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
 
       setQueue(queueResponse);
       setAudit(auditResponse);
+      setSelectedIds((prev) => prev.filter((id) => queueResponse.data.some((row) => row.id === id)));
 
       if (queueResponse.data.length === 0) {
         setSelected(null);
@@ -112,35 +127,83 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [accessToken, branchId, status, minAgeHours, minAttempts, onlyManualNeeded, page]);
+  }, [accessToken, branchId, status, documentFilter, documentKind, minAgeHours, minAttempts, onlyManualNeeded, page]);
 
   useEffect(() => {
     void loadData();
   }, [loadData]);
 
   const handleManualConfirm = useCallback(async () => {
-    if (!selected) {
+    const targetIds = selectedIds.length > 0
+      ? selectedIds
+      : (selected ? [selected.id] : []);
+
+    if (targetIds.length === 0) {
       return;
     }
 
     setSubmitting(true);
     setError(null);
+    setResultMessage(null);
     try {
-      await manualConfirmSunatException(accessToken, selected.id, {
-        resolution,
-        evidence_type: evidenceType,
-        evidence_ref: evidenceRef.trim() || undefined,
-        evidence_note: evidenceNote.trim() || undefined,
-      });
+      let okCount = 0;
+      const failedDocs: number[] = [];
+
+      for (const documentId of targetIds) {
+        try {
+          await manualConfirmSunatException(accessToken, documentId, {
+            resolution,
+            evidence_type: evidenceType,
+            evidence_ref: evidenceRef.trim() || undefined,
+            evidence_note: evidenceNote.trim() || undefined,
+          });
+          okCount += 1;
+        } catch (_error) {
+          failedDocs.push(documentId);
+        }
+      }
+
       setEvidenceRef('');
       setEvidenceNote('');
+      setSelectedIds([]);
       await loadData();
+
+      if (failedDocs.length > 0) {
+        setError(`Se procesaron ${okCount} comprobante(s). Fallaron ${failedDocs.length}: ${failedDocs.join(', ')}`);
+      } else {
+        setResultMessage(`Se confirmaron ${okCount} comprobante(s) correctamente.`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo registrar la confirmacion manual.');
     } finally {
       setSubmitting(false);
     }
-  }, [accessToken, selected, resolution, evidenceType, evidenceRef, evidenceNote, loadData]);
+  }, [accessToken, selectedIds, selected, resolution, evidenceType, evidenceRef, evidenceNote, loadData]);
+
+  const allPageSelected = queue.data.length > 0 && queue.data.every((row) => selectedIds.includes(row.id));
+
+  const toggleRowSelection = useCallback((documentId: number, checked: boolean) => {
+    setSelectedIds((prev) => {
+      if (checked) {
+        if (prev.includes(documentId)) {
+          return prev;
+        }
+
+        return [...prev, documentId];
+      }
+
+      return prev.filter((id) => id !== documentId);
+    });
+  }, []);
+
+  const toggleSelectAllCurrentPage = useCallback((checked: boolean) => {
+    if (!checked) {
+      setSelectedIds([]);
+      return;
+    }
+
+    setSelectedIds(queue.data.map((row) => row.id));
+  }, [queue.data]);
 
   const stats = useMemo(() => {
     return audit?.summary ?? {
@@ -245,6 +308,23 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
             </select>
           </label>
           <label className="sunat-exceptions__field">
+            <span>Tipo comprobante</span>
+            <select value={documentKind} onChange={(e) => { setPage(1); setDocumentKind(e.target.value); }}>
+              {DOCUMENT_KIND_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="sunat-exceptions__field">
+            <span>Comprobante</span>
+            <input
+              type="text"
+              placeholder="Ej: F001-123 o 123"
+              value={documentFilter}
+              onChange={(e) => { setPage(1); setDocumentFilter(e.target.value); }}
+            />
+          </label>
+          <label className="sunat-exceptions__field">
             <span>Min horas</span>
             <input type="number" min={0} value={minAgeHours} onChange={(e) => { setPage(1); setMinAgeHours(Number(e.target.value || 0)); }} />
           </label>
@@ -271,11 +351,25 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
           </div>
         )}
 
+        {resultMessage && (
+          <div className="sunat-exceptions__chip sunat-exceptions__chip--ok" style={{ marginBottom: 12 }}>
+            {resultMessage}
+          </div>
+        )}
+
         <div className="sunat-exceptions__layout">
           <div className="sunat-exceptions__table-wrap">
             <table>
               <thead>
                 <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      checked={allPageSelected}
+                      onChange={(e) => toggleSelectAllCurrentPage(e.target.checked)}
+                      title="Seleccionar todos los comprobantes visibles"
+                    />
+                  </th>
                   <th>Documento</th>
                   <th>SUNAT</th>
                   <th>Horas</th>
@@ -286,18 +380,33 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
               <tbody>
                 {queue.data.length === 0 ? (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={6}>
                       {loading ? 'Cargando excepciones...' : 'Sin excepciones con los filtros actuales'}
                     </td>
                   </tr>
                 ) : queue.data.map((row) => {
                   const isSelected = selected?.id === row.id;
+                  const isChecked = selectedIds.includes(row.id);
                   return (
                     <tr
                       key={row.id}
                       onClick={() => setSelected(row)}
                       className={isSelected ? 'sunat-exceptions__row is-selected' : 'sunat-exceptions__row'}
                     >
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelected(row);
+                            }
+                            toggleRowSelection(row.id, e.target.checked);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          title={`Seleccionar comprobante ${row.series}-${row.number}`}
+                        />
+                      </td>
                       <td>
                         <strong>{row.document_kind}</strong> {row.series}-{row.number}
                         <div className="sunat-exceptions__customer">{row.customer_name}</div>
@@ -327,6 +436,11 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
             ) : (
               <div className="sunat-exceptions__aside-content">
                 <h3 className="sunat-exceptions__aside-title">Gestion manual con evidencia</h3>
+                {selectedIds.length > 0 && (
+                  <p className="sunat-exceptions__aside-meta">
+                    Seleccionados para accion masiva: <strong>{selectedIds.length}</strong>
+                  </p>
+                )}
                 <p className="sunat-exceptions__aside-doc">
                   Documento #{selected.id} · {selected.document_kind} {selected.series}-{selected.number}
                 </p>
@@ -384,7 +498,11 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                   disabled={submitting}
                   onClick={() => void handleManualConfirm()}
                 >
-                  {submitting ? 'Registrando...' : 'Confirmar manual con evidencia'}
+                  {submitting
+                    ? 'Registrando...'
+                    : (selectedIds.length > 0
+                      ? `Confirmar ${selectedIds.length} seleccionados`
+                      : 'Confirmar manual con evidencia')}
                 </button>
               </div>
             )}

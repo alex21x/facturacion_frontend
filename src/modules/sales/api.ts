@@ -436,6 +436,10 @@ export async function fetchSunatExceptions(
   context?: {
     branchId?: number | null;
     status?: string;
+    document?: string;
+    documentKind?: string;
+    series?: string;
+    number?: string;
     minAgeHours?: number;
     minAttempts?: number;
     onlyManualNeeded?: boolean;
@@ -452,6 +456,18 @@ export async function fetchSunatExceptions(
   }
   if (context?.status && context.status.trim() !== '') {
     query.set('status', context.status.trim().toUpperCase());
+  }
+  if (context?.document && context.document.trim() !== '') {
+    query.set('document', context.document.trim().toUpperCase());
+  }
+  if (context?.documentKind && context.documentKind.trim() !== '') {
+    query.set('document_kind', context.documentKind.trim().toUpperCase());
+  }
+  if (context?.series && context.series.trim() !== '') {
+    query.set('series', context.series.trim().toUpperCase());
+  }
+  if (context?.number && context.number.trim() !== '') {
+    query.set('number', context.number.trim());
   }
   if ((context?.minAgeHours ?? 0) > 0) {
     query.set('min_age_hours', String(context?.minAgeHours));

@@ -886,7 +886,7 @@ function canSendSunatManually(row: CommercialDocumentListItem, bridgeEnabled: bo
     return (Date.now() - updatedAt.getTime()) >= SUNAT_SENDING_STALE_MINUTES * 60 * 1000;
   }
 
-  return true;
+  return sunatUi.statusKey !== 'PENDING_CONFIRMATION';
 }
 
 function canVoidBeforeSunatSend(row: CommercialDocumentListItem, canVoidDocuments: boolean): boolean {
