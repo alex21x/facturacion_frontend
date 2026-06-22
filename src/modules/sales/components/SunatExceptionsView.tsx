@@ -57,8 +57,12 @@ function formatDateTime(value?: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('es-PE', {
-    dateStyle: 'short',
-    timeStyle: 'short',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
     timeZone: 'America/Lima',
   }).format(date);
 }
@@ -417,13 +421,12 @@ export function SunatExceptionsView({ accessToken, branchId = null }: Props) {
                 </div>
                 <div className="sunat-exceptions__hover-preview-body">
                   <span>RUC emision: {String(quickViewDocument.issuer_ruc ?? '').trim() || '-'}</span>
-                  <span>Tipo cliente: {normalizeDocTypeLabel(quickViewDocument.customer_doc_type_code)}</span>
-                  <span>{normalizeDocTypeLabel(quickViewDocument.customer_doc_type_code)} cliente: {String(quickViewDocument.customer_doc_number ?? '').trim() || '-'}</span>
-                  <span>Cliente: {quickViewDocument.customer_name}</span>
                   <span>Tipo comprobante: {String(quickViewDocument.document_kind_label ?? quickViewDocument.document_kind).trim() || '-'}</span>
                   <span>Serie numero: {quickViewDocument.series}-{quickViewDocument.number}</span>
-                  <span>Monto: {formatMoney(quickViewDocument.total)}</span>
+                  <span>{normalizeDocTypeLabel(quickViewDocument.customer_doc_type_code)} cliente: {String(quickViewDocument.customer_doc_number ?? '').trim() || '-'}</span>
+                  <span>Cliente: {quickViewDocument.customer_name}</span>
                   <span>Fecha emision: {formatDateTime(quickViewDocument.issue_at)}</span>
+                  <span>Monto: {formatMoney(quickViewDocument.total)}</span>                  
                 </div>
               </div>
             )}
