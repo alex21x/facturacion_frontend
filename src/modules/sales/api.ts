@@ -768,6 +768,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
       notes: form.notes?.trim() || null,
       metadata: {
         defer_sunat_send: form.receiptSendMode === 'NO_SEND',
+        force_async_on_issue: !isPreDocument,
         table_label: form.documentKind === 'SALES_ORDER'
           ? (form.restaurantTableLabel?.trim() || null)
           : null,

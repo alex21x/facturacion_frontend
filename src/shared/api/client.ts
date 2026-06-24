@@ -9,18 +9,36 @@ let refreshingPromise: Promise<string | null> | null = null;
 const inFlightGetRequests = new Map<string, Promise<unknown>>();
 const recentGetResponses = new Map<string, { expiresAt: number; data: unknown }>();
 const DEFAULT_GET_RESPONSE_CACHE_TTL_MS = 1000;
-const DEFAULT_REQUEST_TIMEOUT_MS = 20000;
-const AUTH_REQUEST_TIMEOUT_MS = 12000;
-const EXPORT_REQUEST_TIMEOUT_MS = 45000;
-const SLOW_LOOKUP_REQUEST_TIMEOUT_MS = 30000;
-const BULK_IMPORT_REQUEST_TIMEOUT_MS = 120000;
+const DEFAULT_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_REQUEST_TIMEOUT_MS', 20000);
+const AUTH_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_AUTH_REQUEST_TIMEOUT_MS', 12000);
+const EXPORT_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_EXPORT_REQUEST_TIMEOUT_MS', 45000);
+const SLOW_LOOKUP_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_SLOW_LOOKUP_TIMEOUT_MS', 30000);
+const BULK_IMPORT_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_BULK_IMPORT_TIMEOUT_MS', 120000);
+const SALES_ISSUE_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_SALES_ISSUE_TIMEOUT_MS', 90000);
+const SUNAT_ASYNC_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_SUNAT_ASYNC_TIMEOUT_MS', 90000);
 const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
+
+function readTimeoutFromEnv(key: string, fallbackMs: number): number {
+  const rawValue = import.meta.env[key as keyof ImportMetaEnv];
+  if (typeof rawValue !== 'string') {
+    return fallbackMs;
+  }
+
+  const parsed = Number.parseInt(rawValue.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallbackMs;
+  }
+
+  return parsed;
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function resolveRequestTimeoutMs(path: string, method: string): number {
+  const cleanPath = path.split('?')[0] ?? path;
+
   if (isAuthRoute(path)) {
     return AUTH_REQUEST_TIMEOUT_MS;
   }
@@ -31,6 +49,22 @@ function resolveRequestTimeoutMs(path: string, method: string): number {
 
   if (path.includes('/export') || path.includes('/print-pdf') || path.includes('/print')) {
     return EXPORT_REQUEST_TIMEOUT_MS;
+  }
+
+  if (
+    cleanPath === '/api/sales/commercial-documents'
+    || /\/api\/sales\/commercial-documents\/\d+\/sunat-void$/.test(cleanPath)
+    || /\/api\/sales\/commercial-documents\/\d+\/convert$/.test(cleanPath)
+  ) {
+    return SALES_ISSUE_REQUEST_TIMEOUT_MS;
+  }
+
+  if (
+    cleanPath.startsWith('/api/sales/daily-summaries')
+    || cleanPath.startsWith('/api/sales/sunat-exceptions')
+    || cleanPath.startsWith('/api/sales/gre-guides')
+  ) {
+    return SUNAT_ASYNC_REQUEST_TIMEOUT_MS;
   }
 
   if (
