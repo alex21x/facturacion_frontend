@@ -53,6 +53,43 @@ export type SalesBootstrapResponse = {
 };
 import type { PrintableSalesDocument } from './print';
 
+const pendingCreateDocumentRequestKeys = new Map<string, { key: string; createdAt: number }>();
+const CREATE_DOCUMENT_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+
+function prunePendingCreateDocumentRequestKeys(now: number): void {
+  pendingCreateDocumentRequestKeys.forEach((entry, signature) => {
+    if ((now - entry.createdAt) > CREATE_DOCUMENT_IDEMPOTENCY_TTL_MS) {
+      pendingCreateDocumentRequestKeys.delete(signature);
+    }
+  });
+}
+
+function createClientRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function resolveCreateDocumentIdempotencyKey(signature: string): string {
+  const now = Date.now();
+  prunePendingCreateDocumentRequestKeys(now);
+
+  const existing = pendingCreateDocumentRequestKeys.get(signature);
+  if (existing) {
+    return existing.key;
+  }
+
+  const key = createClientRequestId();
+  pendingCreateDocumentRequestKeys.set(signature, { key, createdAt: now });
+  return key;
+}
+
+function clearCreateDocumentIdempotencyKey(signature: string): void {
+  pendingCreateDocumentRequestKeys.delete(signature);
+}
+
 function authHeaders(accessToken: string): HeadersInit {
   return {
     Authorization: `Bearer ${accessToken}`,
@@ -749,10 +786,43 @@ export async function createCommercialDocument(accessToken: string, form: Create
           },
         ];
 
-  return apiClient.request('/api/sales/commercial-documents', {
-    method: 'POST',
-    headers: authHeaders(accessToken),
-    body: JSON.stringify({
+  const metadataBase = {
+    defer_sunat_send: form.receiptSendMode === 'NO_SEND',
+    force_async_on_issue: !isPreDocument,
+    table_label: form.documentKind === 'SALES_ORDER'
+      ? (form.restaurantTableLabel?.trim() || null)
+      : null,
+    restaurant_order_status: form.documentKind === 'SALES_ORDER' ? 'PENDING' : null,
+    receipt_send_mode: form.documentKind === 'RECEIPT'
+      ? ((form.receiptSendMode === 'SUMMARY') ? 'SUMMARY' : 'DIRECT')
+      : null,
+    customer_address: form.customerAddress?.trim() || null,
+    customer_phone: form.customerPhone?.trim() || null,
+    source_document_id: form.noteAffectedDocumentId ?? null,
+    note_reason_code: form.noteReasonCode?.trim() || null,
+    has_detraccion: form.hasDetraccion ?? false,
+    detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
+    has_retencion: form.hasRetencion ?? false,
+    retencion_type_code: form.hasRetencion ? (form.retencionTypeCode ?? null) : null,
+    has_percepcion: form.hasPercepcion ?? false,
+    percepcion_type_code: form.hasPercepcion ? (form.percepcionTypeCode ?? null) : null,
+    sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion) ? (form.sunatOperationTypeCode ?? null) : null,
+    payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
+    credit_installments: form.isCreditSale
+      ? normalizedInstallments.map((row, index) => ({
+          installment_no: index + 1,
+          amount: Number(row.amount.toFixed(2)),
+          due_at: row.dueDate,
+          notes: row.observation || null,
+        }))
+      : [],
+    credit_total: form.isCreditSale ? Number(pendingCreditTotal.toFixed(2)) : 0,
+    has_advance: hasAdvance,
+    advance_amount: hasAdvance ? Number(advanceAmount.toFixed(2)) : 0,
+    discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
+  };
+
+  const requestBodyBase = {
       document_kind: form.documentKind,
       document_kind_id: form.documentKindId ?? undefined,
       branch_id: form.branchId ?? undefined,
@@ -766,46 +836,34 @@ export async function createCommercialDocument(accessToken: string, form: Create
       currency_id: Number(form.currencyId),
       payment_method_id: Number(form.paymentMethodId),
       notes: form.notes?.trim() || null,
-      metadata: {
-        defer_sunat_send: form.receiptSendMode === 'NO_SEND',
-        force_async_on_issue: !isPreDocument,
-        table_label: form.documentKind === 'SALES_ORDER'
-          ? (form.restaurantTableLabel?.trim() || null)
-          : null,
-        restaurant_order_status: form.documentKind === 'SALES_ORDER' ? 'PENDING' : null,
-        receipt_send_mode: form.documentKind === 'RECEIPT'
-          ? ((form.receiptSendMode === 'SUMMARY') ? 'SUMMARY' : 'DIRECT')
-          : null,
-        customer_address: form.customerAddress?.trim() || null,
-        customer_phone: form.customerPhone?.trim() || null,
-        source_document_id: form.noteAffectedDocumentId ?? null,
-        note_reason_code: form.noteReasonCode?.trim() || null,
-        has_detraccion: form.hasDetraccion ?? false,
-        detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
-        has_retencion: form.hasRetencion ?? false,
-        retencion_type_code: form.hasRetencion ? (form.retencionTypeCode ?? null) : null,
-        has_percepcion: form.hasPercepcion ?? false,
-        percepcion_type_code: form.hasPercepcion ? (form.percepcionTypeCode ?? null) : null,
-        sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion) ? (form.sunatOperationTypeCode ?? null) : null,
-        payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
-        credit_installments: form.isCreditSale
-          ? normalizedInstallments.map((row, index) => ({
-              installment_no: index + 1,
-              amount: Number(row.amount.toFixed(2)),
-              due_at: row.dueDate,
-              notes: row.observation || null,
-            }))
-          : [],
-        credit_total: form.isCreditSale ? Number(pendingCreditTotal.toFixed(2)) : 0,
-        has_advance: hasAdvance,
-        advance_amount: hasAdvance ? Number(advanceAmount.toFixed(2)) : 0,
-        discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
-      },
+      metadata: metadataBase,
       status: targetStatus,
       items,
       payments,
-    }),
-  });
+  };
+
+  const idempotencySignature = JSON.stringify(requestBodyBase);
+  const clientRequestId = resolveCreateDocumentIdempotencyKey(idempotencySignature);
+  const requestBody = {
+    ...requestBodyBase,
+    metadata: {
+      ...metadataBase,
+      client_request_id: clientRequestId,
+    },
+  };
+
+  try {
+    const result = await apiClient.request('/api/sales/commercial-documents', {
+      method: 'POST',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify(requestBody),
+    });
+
+    clearCreateDocumentIdempotencyKey(idempotencySignature);
+    return result;
+  } catch (error) {
+    throw error;
+  }
 }
 
 export async function fetchProductCommercialConfig(accessToken: string, productId: number) {
