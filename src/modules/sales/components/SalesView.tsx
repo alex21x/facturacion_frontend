@@ -2954,7 +2954,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         const rows = await fetchReferenceDocuments(accessToken, {
           customerId: Number(form.customerId),
           branchId,
-          documentKindId: selectedEffectiveDocumentKind?.id ?? null,
           noteKind: isCreditNote ? 'CREDIT_NOTE' : isDebitNote ? 'DEBIT_NOTE' : null,
           limit: 120,
         });
@@ -2962,7 +2961,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         const fallbackRows = (rows.length === 0 && branchId)
           ? await fetchReferenceDocuments(accessToken, {
               customerId: Number(form.customerId),
-              documentKindId: selectedEffectiveDocumentKind?.id ?? null,
               noteKind: isCreditNote ? 'CREDIT_NOTE' : isDebitNote ? 'DEBIT_NOTE' : null,
               limit: 120,
             })
