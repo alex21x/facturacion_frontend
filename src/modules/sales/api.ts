@@ -596,15 +596,91 @@ export async function fetchReferenceDocuments(
     query.set('limit', String(context.limit));
   }
 
-  const response = await apiClient.request<{ data: SalesReferenceDocument[] }>(
-    `/api/sales/reference-documents?${query.toString()}`,
-    {
-      method: 'GET',
-      headers: authHeaders(accessToken),
-    }
-  );
+  try {
+    const response = await apiClient.request<{ data: SalesReferenceDocument[] }>(
+      `/api/sales/reference-documents?${query.toString()}`,
+      {
+        method: 'GET',
+        headers: authHeaders(accessToken),
+      }
+    );
 
-  return response.data;
+    return response.data;
+  } catch {
+    return fetchReferenceDocumentsFallback(accessToken, context);
+  }
+}
+
+function mapCommercialDocumentToReferenceDocument(
+  row: CommercialDocumentListItem,
+  customerId: number
+): SalesReferenceDocument {
+  return {
+    id: row.id,
+    customer_id: customerId,
+    document_kind: String(row.document_kind ?? '').toUpperCase() === 'RECEIPT' ? 'RECEIPT' : 'INVOICE',
+    series: row.series,
+    number: Number(row.number ?? 0),
+    issue_at: row.issue_at,
+    total: String(row.total ?? '0'),
+    balance_due: String(row.balance_due ?? '0'),
+    status: String(row.status ?? ''),
+    applied_credit_total: 0,
+    applied_debit_total: 0,
+    has_credit_note: false,
+    has_debit_note: false,
+  };
+}
+
+function isAcceptedSunatCommercialDocument(row: CommercialDocumentListItem): boolean {
+  return String((row as { sunat_status?: string | null }).sunat_status ?? '').trim().toUpperCase() === 'ACCEPTED';
+}
+
+async function fetchReferenceDocumentsFallback(
+  accessToken: string,
+  context: {
+    customerId: number;
+    branchId?: number | null;
+    documentKindId?: number | null;
+    noteKind?: 'CREDIT_NOTE' | 'DEBIT_NOTE' | null;
+    limit?: number;
+  }
+): Promise<SalesReferenceDocument[]> {
+  const perPage = context.limit && context.limit > 0 ? context.limit : 120;
+
+  const loadRows = async (branchId: number | null | undefined): Promise<SalesReferenceDocument[]> => {
+    const response = await fetchCommercialDocuments(accessToken, {
+      branchId,
+      documentKindId: context.documentKindId ?? null,
+      customerId: context.customerId,
+      page: 1,
+      perPage,
+    });
+
+    return response.data
+      .filter((row) => isAcceptedSunatCommercialDocument(row))
+      .filter((row) => {
+        const documentKind = String(row.document_kind ?? '').toUpperCase();
+        return documentKind === 'INVOICE' || documentKind === 'RECEIPT';
+      })
+      .map((row) => mapCommercialDocumentToReferenceDocument(row, context.customerId))
+      .sort((left, right) => {
+        const leftDate = new Date(left.issue_at).getTime();
+        const rightDate = new Date(right.issue_at).getTime();
+        if (rightDate !== leftDate) {
+          return rightDate - leftDate;
+        }
+
+        return right.id - left.id;
+      });
+  };
+
+  const rowsWithBranch = await loadRows(context.branchId ?? null);
+  if (rowsWithBranch.length > 0 || !context.branchId) {
+    return rowsWithBranch;
+  }
+
+  return loadRows(null);
 }
 
 export async function convertCommercialDocument(
