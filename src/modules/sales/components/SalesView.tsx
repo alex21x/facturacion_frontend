@@ -1747,6 +1747,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const customerVehiclesRequestSeqRef = useRef(0);
   const reportCustomerVehiclesRequestSeqRef = useRef(0);
   const lastBootstrapScopeRef = useRef('');
+  const bootstrapInFlightRef = useRef<{
+    key: string;
+    promise: Promise<Awaited<ReturnType<typeof fetchSalesBootstrap>>>;
+  } | null>(null);
   const documentsRequestSeqRef = useRef(0);
   const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
   const printHtmlCacheRef = useRef<Map<string, string>>(new Map());
@@ -2541,7 +2545,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
       if (shouldReloadLookups) {
         setLoadingBootstrap(true);
-        const bootstrap = await fetchSalesBootstrap(accessToken, {
+        const bootstrapRequestContext = {
           branchId,
           warehouseId,
           cashRegisterId: resolvedCashRegisterId,
@@ -2567,7 +2571,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               perPage: documentsMeta.per_page,
             }
             : {}),
-        });
+        };
+
+        const bootstrapRequestKey = JSON.stringify(bootstrapRequestContext);
+        let bootstrapPromise = bootstrapInFlightRef.current?.key === bootstrapRequestKey
+          ? bootstrapInFlightRef.current.promise
+          : null;
+
+        if (!bootstrapPromise) {
+          bootstrapPromise = fetchSalesBootstrap(accessToken, bootstrapRequestContext);
+          bootstrapInFlightRef.current = {
+            key: bootstrapRequestKey,
+            promise: bootstrapPromise,
+          };
+        }
+
+        let bootstrap: Awaited<ReturnType<typeof fetchSalesBootstrap>>;
+        try {
+          bootstrap = await bootstrapPromise;
+        } finally {
+          if (bootstrapInFlightRef.current?.key === bootstrapRequestKey) {
+            bootstrapInFlightRef.current = null;
+          }
+        }
 
         lookupRows = bootstrap.lookups;
         bootstrapDocuments = bootstrap.documents;
