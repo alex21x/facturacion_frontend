@@ -187,6 +187,7 @@
   box-shadow: 0 12px 24px rgba(31, 122, 69, 0.14);
   font-size: 0.79rem;
   line-height: 1.4;
+  pointer-events: none;
 }
 
 .sales-sunat-reminder-fixed__title {

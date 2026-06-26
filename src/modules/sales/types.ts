@@ -237,6 +237,56 @@ export type VoidCommercialDocumentPayload = {
   void_password?: string;
 };
 
+export type BulkSunatAnnulmentPayload = {
+  branchId?: number | null;
+  warehouseId?: number | null;
+  cashRegisterId?: number | null;
+  sourceOrigin?: 'RESTAURANT' | null;
+  documentKind?: string;
+  documentKindId?: number | null;
+  conversionState?: 'PENDING' | 'CONVERTED' | null;
+  customer?: string;
+  customerId?: number | null;
+  customerVehicleId?: number | null;
+  issueDateFrom?: string;
+  issueDateTo?: string;
+  series?: string;
+  number?: string;
+  maxDocuments?: number;
+  pauseMs?: number;
+  reason?: string;
+  notes?: string;
+  voidPassword?: string;
+};
+
+export type BulkSunatAnnulmentResultItem = {
+  document_id: number;
+  document_kind: string;
+  operation: 'SUNAT_VOID' | 'RA_SUMMARY';
+  status: string;
+  daily_summary_id?: number | null;
+  void_number?: number | null;
+  http_code?: number | null;
+  message?: string;
+};
+
+export type BulkSunatAnnulmentResult = {
+  scanned_count: number;
+  eligible_count: number;
+  processed_count: number;
+  max_documents: number;
+  pause_ms: number;
+  summary: {
+    invoices_attempted: number;
+    invoices_accepted: number;
+    invoices_pending: number;
+    receipts_attempted: number;
+    receipts_queued_to_ra: number;
+    errors: number;
+  };
+  items: BulkSunatAnnulmentResultItem[];
+};
+
 export type SalesDocumentKind = {
   id: number;
   code: string;

@@ -4,6 +4,8 @@ import type {
   CommercialDocumentProductDetailRow,
   ConvertCommercialDocumentPayload,
   CreateDocumentForm,
+  BulkSunatAnnulmentPayload,
+  BulkSunatAnnulmentResult,
   ManualSunatConfirmPayload,
   PaginatedCommercialDocuments,
   PaginatedSunatExceptions,
@@ -717,6 +719,40 @@ export async function voidCommercialDocument(
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+}
+
+export async function bulkSunatAnnulmentFromReport(
+  accessToken: string,
+  payload: BulkSunatAnnulmentPayload
+): Promise<BulkSunatAnnulmentResult> {
+  return apiClient.request<{ message: string; data: BulkSunatAnnulmentResult }>(
+    '/api/sales/commercial-documents/bulk-sunat-annulment',
+    {
+      method: 'POST',
+      headers: authHeaders(accessToken),
+      body: JSON.stringify({
+        branch_id: payload.branchId,
+        warehouse_id: payload.warehouseId,
+        cash_register_id: payload.cashRegisterId,
+        source_origin: payload.sourceOrigin,
+        document_kind: payload.documentKind,
+        document_kind_id: payload.documentKindId,
+        conversion_state: payload.conversionState,
+        customer: payload.customer,
+        customer_id: payload.customerId,
+        customer_vehicle_id: payload.customerVehicleId,
+        issue_date_from: payload.issueDateFrom,
+        issue_date_to: payload.issueDateTo,
+        series: payload.series,
+        number: payload.number,
+        max_documents: payload.maxDocuments,
+        pause_ms: payload.pauseMs,
+        reason: payload.reason,
+        notes: payload.notes,
+        void_password: payload.voidPassword,
+      }),
+    }
+  ).then((response) => response.data);
 }
 
 function nowInLimaIso(): string {

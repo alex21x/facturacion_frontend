@@ -14,6 +14,7 @@ const AUTH_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_AUTH_REQUEST_TIMEOUT_MS
 const EXPORT_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_EXPORT_REQUEST_TIMEOUT_MS', 45000);
 const SLOW_LOOKUP_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_SLOW_LOOKUP_TIMEOUT_MS', 30000);
 const BULK_IMPORT_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_BULK_IMPORT_TIMEOUT_MS', 120000);
+const BULK_SUNAT_VOID_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_BULK_SUNAT_VOID_TIMEOUT_MS', 600000);
 const SALES_ISSUE_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_SALES_ISSUE_TIMEOUT_MS', 90000);
 const SUNAT_ASYNC_REQUEST_TIMEOUT_MS = readTimeoutFromEnv('VITE_SUNAT_ASYNC_TIMEOUT_MS', 90000);
 const TRANSIENT_STATUS_CODES = new Set([408, 429, 502, 503, 504]);
@@ -45,6 +46,10 @@ function resolveRequestTimeoutMs(path: string, method: string): number {
 
   if (path.includes('/bulk-import')) {
     return BULK_IMPORT_REQUEST_TIMEOUT_MS;
+  }
+
+  if (path.includes('/bulk-sunat-annulment')) {
+    return BULK_SUNAT_VOID_REQUEST_TIMEOUT_MS;
   }
 
   if (path.includes('/export') || path.includes('/print-pdf') || path.includes('/print')) {

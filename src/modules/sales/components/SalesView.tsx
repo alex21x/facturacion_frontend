@@ -46,6 +46,7 @@ import {
   type TaxBridgeAuditAttemptDetail,
   fetchTaxBridgeDebug,
   sendSunatVoidCommunication,
+  bulkSunatAnnulmentFromReport,
   downloadSunatXml,
   downloadSunatCdr,
   updateCommercialDocument,
@@ -1482,6 +1483,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   });
   const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(initialDocumentAdvancedFilters);
   const [exportingDocuments, setExportingDocuments] = useState(false);
+  const [processingBulkSunatAnnulment, setProcessingBulkSunatAnnulment] = useState(false);
   const [reportCustomerInputFocused, setReportCustomerInputFocused] = useState(false);
   const [reportCustomerSuggestions, setReportCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [reportCustomerVehicles, setReportCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
@@ -1559,6 +1561,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         ? allowVoidForSeller
         : false;
   const canVoidDocumentsInCurrentMode = featureEnabled(lookups?.commerce_features, 'SALES_ALLOW_DOCUMENT_VOID', true) && canVoidByProfile;
+  const bulkSunatAnnulmentEnabled = isAdminUser && featureEnabled(lookups?.commerce_features, 'SALES_BULK_VOID_REPORT_ENABLED', false);
   const voidPasswordRequired = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REQUIRE_PASSWORD', false);
   const reverseStockOnVoidEnabled = featureEnabled(lookups?.commerce_features, 'SALES_VOID_REVERSE_STOCK', true);
   const allowNegativeStockEnabled = Boolean(lookups?.inventory_settings?.allow_negative_stock);
@@ -1752,6 +1755,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     promise: Promise<Awaited<ReturnType<typeof fetchSalesBootstrap>>>;
   } | null>(null);
   const documentsRequestSeqRef = useRef(0);
+  const bulkSunatAnnulmentTriggerInFlightRef = useRef(false);
   const seriesCacheRef = useRef<Map<string, SeriesNumber[]>>(new Map());
   const printHtmlCacheRef = useRef<Map<string, string>>(new Map());
   const previewSubtitleCacheRef = useRef<Map<number, string>>(new Map());
@@ -4439,7 +4443,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
         documentKind: filterParams.documentKind,
-        documentKindId: filterParams.documentKindId,
+        documentKindId: (filterParams.documentKindId ? Number(filterParams.documentKindId) : undefined) as number | undefined,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
@@ -4666,6 +4670,81 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     } finally {
       setExportingDocuments(false);
     }
+  }
+
+  async function handleBulkSunatAnnulment() {
+    if (!bulkSunatAnnulmentEnabled || salesWorkspaceMode !== 'REPORT') {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      'Se procesaran comprobantes ISSUED con SUNAT=ACCEPTED en el alcance actual de filtros. Facturas iran a comunicacion de baja y boletas a resumen RA. Desea continuar?'
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setProcessingBulkSunatAnnulment(true);
+    setMessage('Procesando anulacion masiva SUNAT... este proceso puede tardar varios minutos.');
+
+    try {
+      const isCashierPendingQueue =
+        shouldPrioritizePendingOrders
+        && cashierReportPanelMode === 'PENDING'
+        && documentViewFilter === 'PENDING_CONVERSION';
+      const pendingFilterParams = buildDocumentFilterParams('PENDING_CONVERSION', lookups?.document_kinds ?? []);
+      const filterParams = isCashierPendingQueue
+        ? pendingFilterParams
+        : buildDocumentFilterParams(documentViewFilter, lookups?.document_kinds ?? []);
+      const shouldFilterByCashRegister = shouldApplyCashRegisterFilter();
+
+      const result = await bulkSunatAnnulmentFromReport(accessToken, {
+        branchId,
+        warehouseId,
+        cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
+        documentKind: filterParams.documentKind,
+        documentKindId: filterParams.documentKindId ? Number(filterParams.documentKindId) : undefined,
+        conversionState: filterParams.conversionState,
+        sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
+        customer: documentFiltersApplied.customer || undefined,
+        customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
+        customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
+          ? Number(documentFiltersApplied.customerVehicleId)
+          : undefined,
+        issueDateFrom: documentFiltersApplied.issueDateFrom || undefined,
+        issueDateTo: documentFiltersApplied.issueDateTo || undefined,
+        series: documentFiltersApplied.series || undefined,
+        number: documentFiltersApplied.number || undefined,
+        maxDocuments: 100,
+      });
+
+      setMessage(
+        `Anulacion masiva finalizada. Escaneados: ${result.scanned_count}, elegibles: ${result.eligible_count}, facturas aceptadas: ${result.summary.invoices_accepted}, boletas enviadas a RA: ${result.summary.receipts_queued_to_ra}, errores: ${result.summary.errors}.`
+      );
+      window.alert(
+        `Anulacion masiva finalizada.\nEscaneados: ${result.scanned_count}\nElegibles: ${result.eligible_count}\nFacturas aceptadas: ${result.summary.invoices_accepted}\nBoletas enviadas a RA: ${result.summary.receipts_queued_to_ra}\nErrores: ${result.summary.errors}`
+      );
+      setDocumentsPage(1);
+      void loadData();
+    } catch (error) {
+      const text = error instanceof Error ? error.message : 'No se pudo ejecutar la anulacion masiva';
+      setMessage(text);
+      window.alert(text);
+    } finally {
+      setProcessingBulkSunatAnnulment(false);
+    }
+  }
+
+  function triggerBulkSunatAnnulmentAction() {
+    if (bulkSunatAnnulmentTriggerInFlightRef.current) {
+      return;
+    }
+
+    bulkSunatAnnulmentTriggerInFlightRef.current = true;
+    void handleBulkSunatAnnulment().finally(() => {
+      bulkSunatAnnulmentTriggerInFlightRef.current = false;
+    });
   }
 
   async function handleAddNewVehicle() {
@@ -8270,6 +8349,23 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             <button type="button" className="btn-export" onClick={() => void handleExportDocumentsXlsxByProduct()} disabled={loadingDocuments || exportingDocuments}>
               {exportingDocuments ? 'Exportando…' : '⬇ XLSX Detalle Productos'}
             </button>
+            {bulkSunatAnnulmentEnabled && (
+              <button
+                type="button"
+                className="btn-export"
+                onPointerDown={(event) => {
+                  if (event.button !== 0) {
+                    return;
+                  }
+
+                  triggerBulkSunatAnnulmentAction();
+                }}
+                onClick={triggerBulkSunatAnnulmentAction}
+                disabled={loadingDocuments || processingBulkSunatAnnulment}
+              >
+                {processingBulkSunatAnnulment ? 'Procesando anulaciones…' : '⚠ Anulacion Masiva SUNAT'}
+              </button>
+            )}
             <span className="report-filter-spacer" />
             {reportSunatValidationTarget ? (
               <a
