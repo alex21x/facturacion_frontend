@@ -398,6 +398,7 @@ export async function fetchCommercialDocuments(
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
+    sunatStatus?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
     customerId?: number | null;
@@ -432,6 +433,9 @@ export async function fetchCommercialDocuments(
   }
   if (context?.status) {
     query.set('status', context.status);
+  }
+  if (context?.sunatStatus) {
+    query.set('sunat_status', context.sunatStatus);
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);
@@ -1156,6 +1160,7 @@ export async function exportCommercialDocumentsExcel(
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
+    sunatStatus?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
     customerId?: number | null;
@@ -1188,6 +1193,9 @@ export async function exportCommercialDocumentsExcel(
   }
   if (context?.status) {
     query.set('status', context.status);
+  }
+  if (context?.sunatStatus) {
+    query.set('sunat_status', context.sunatStatus);
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);
@@ -1256,6 +1264,7 @@ export async function exportCommercialDocumentsJson(
     documentKind?: string;
     documentKindId?: number | string | null;
     status?: string;
+    sunatStatus?: string;
     conversionState?: 'PENDING' | 'CONVERTED' | null;
     customer?: string;
     customerId?: number | null;
@@ -1289,6 +1298,9 @@ export async function exportCommercialDocumentsJson(
   }
   if (context?.status) {
     query.set('status', context.status);
+  }
+  if (context?.sunatStatus) {
+    query.set('sunat_status', context.sunatStatus);
   }
   if (context?.conversionState) {
     query.set('conversion_state', context.conversionState);

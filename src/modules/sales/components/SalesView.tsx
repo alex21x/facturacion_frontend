@@ -154,12 +154,14 @@ type DocumentAdvancedFilters = {
   customer: string;
   customerId: string;
   customerVehicleId: string;
+  documentKind: string;
   sourceOrigin: '' | 'RESTAURANT';
   issueDateFrom: string;
   issueDateTo: string;
   series: string;
   number: string;
   status: string;
+  sunatStatus: string;
 };
 
 type SalesWorkspaceMode = 'SELL' | 'REPORT';
@@ -175,12 +177,14 @@ const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   customer: '',
   customerId: '',
   customerVehicleId: '',
+  documentKind: '',
   sourceOrigin: '',
   issueDateFrom: '',
   issueDateTo: '',
   series: '',
   number: '',
   status: '',
+  sunatStatus: '',
 };
 
 function resolveConversionFactor(config: ProductCommercialConfig | null, selectedUnitId: number | null): number {
@@ -1470,12 +1474,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         customer: typeof parsed.customer === 'string' ? parsed.customer : '',
         customerId: typeof parsed.customerId === 'string' ? parsed.customerId : '',
         customerVehicleId: typeof parsed.customerVehicleId === 'string' ? parsed.customerVehicleId : '',
+        documentKind: typeof parsed.documentKind === 'string' ? parsed.documentKind : '',
         sourceOrigin: parsed.sourceOrigin === 'RESTAURANT' ? 'RESTAURANT' : '',
         issueDateFrom: typeof parsed.issueDateFrom === 'string' ? parsed.issueDateFrom : '',
         issueDateTo: typeof parsed.issueDateTo === 'string' ? parsed.issueDateTo : '',
         series: typeof parsed.series === 'string' ? parsed.series : '',
         number: typeof parsed.number === 'string' ? parsed.number : '',
         status: typeof parsed.status === 'string' ? parsed.status : '',
+        sunatStatus: typeof parsed.sunatStatus === 'string' ? parsed.sunatStatus : '',
       };
     } catch {
       return initialDocumentAdvancedFilters;
@@ -1488,6 +1494,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [reportCustomerSuggestions, setReportCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [reportCustomerVehicles, setReportCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
   const [loadingReportCustomerVehicles, setLoadingReportCustomerVehicles] = useState(false);
+  const tributaryReportFiltersEnabled = documentViewFilter === 'TRIBUTARY';
 
   const documentKindLabelMap = useMemo(() => {
     const map = new Map<string, string>();
@@ -1691,6 +1698,23 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       setDocumentFiltersDraft((prev) => ({ ...prev, sourceOrigin: '' }));
     }
   }, [documentFiltersApplied.sourceOrigin, documentFiltersDraft.sourceOrigin, isRestaurantVertical]);
+
+  useEffect(() => {
+    if (tributaryReportFiltersEnabled) {
+      return;
+    }
+
+    setDocumentFiltersDraft((prev) => (
+      prev.documentKind === '' && prev.sunatStatus === ''
+        ? prev
+        : { ...prev, documentKind: '', sunatStatus: '' }
+    ));
+    setDocumentFiltersApplied((prev) => (
+      prev.documentKind === '' && prev.sunatStatus === ''
+        ? prev
+        : { ...prev, documentKind: '', sunatStatus: '' }
+    ));
+  }, [tributaryReportFiltersEnabled]);
 
   const sellerRequestDocumentKind = useMemo(() => {
     const availableCodes = new Set((lookups?.document_kinds ?? []).map((row) => row.code));
@@ -2562,6 +2586,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               ),
               sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
               status: documentFiltersApplied.status || undefined,
+              ...(tributaryReportFiltersEnabled && documentFiltersApplied.documentKind
+                ? { documentKind: documentFiltersApplied.documentKind }
+                : {}),
+              ...(tributaryReportFiltersEnabled && documentFiltersApplied.sunatStatus
+                ? { sunatStatus: documentFiltersApplied.sunatStatus }
+                : {}),
               customer: documentFiltersApplied.customer || undefined,
               customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
               customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -2646,6 +2676,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           ),
           sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
           status: documentFiltersApplied.status || undefined,
+          ...(tributaryReportFiltersEnabled && documentFiltersApplied.documentKind
+            ? { documentKind: documentFiltersApplied.documentKind }
+            : {}),
+          ...(tributaryReportFiltersEnabled && documentFiltersApplied.sunatStatus
+            ? { sunatStatus: documentFiltersApplied.sunatStatus }
+            : {}),
           customer: documentFiltersApplied.customer || undefined,
           customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
           customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -4442,11 +4478,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         branchId,
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
-        documentKind: filterParams.documentKind,
+        documentKind: tributaryReportFiltersEnabled
+          ? (documentFiltersApplied.documentKind || filterParams.documentKind)
+          : filterParams.documentKind,
         documentKindId: (filterParams.documentKindId ? Number(filterParams.documentKindId) : undefined) as number | undefined,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
+        sunatStatus: tributaryReportFiltersEnabled ? (documentFiltersApplied.sunatStatus || undefined) : undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -4492,11 +4531,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         branchId,
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
-        documentKind: filterParams.documentKind,
+        documentKind: tributaryReportFiltersEnabled
+          ? (documentFiltersApplied.documentKind || filterParams.documentKind)
+          : filterParams.documentKind,
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
+        sunatStatus: tributaryReportFiltersEnabled ? (documentFiltersApplied.sunatStatus || undefined) : undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -4563,11 +4605,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         branchId,
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
-        documentKind: filterParams.documentKind,
+        documentKind: tributaryReportFiltersEnabled
+          ? (documentFiltersApplied.documentKind || filterParams.documentKind)
+          : filterParams.documentKind,
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
+        sunatStatus: tributaryReportFiltersEnabled ? (documentFiltersApplied.sunatStatus || undefined) : undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -4607,11 +4652,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         branchId,
         warehouseId,
         cashRegisterId: shouldFilterByCashRegister ? cashRegisterId : null,
-        documentKind: filterParams.documentKind,
+        documentKind: tributaryReportFiltersEnabled
+          ? (documentFiltersApplied.documentKind || filterParams.documentKind)
+          : filterParams.documentKind,
         documentKindId: filterParams.documentKindId,
         conversionState: filterParams.conversionState,
         status: documentFiltersApplied.status || undefined,
         sourceOrigin: documentFiltersApplied.sourceOrigin || undefined,
+        sunatStatus: tributaryReportFiltersEnabled ? (documentFiltersApplied.sunatStatus || undefined) : undefined,
         customer: documentFiltersApplied.customer || undefined,
         customerId: documentFiltersApplied.customerId ? Number(documentFiltersApplied.customerId) : undefined,
         customerVehicleId: workshopMultiVehicleEnabled && documentFiltersApplied.customerVehicleId
@@ -8216,7 +8264,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           <div className="report-filters-header">
             <span className="report-filters-title">Filtros de búsqueda</span>
           </div>
-          <div className="report-filter-grid">
+          <div className={`report-filter-grid${tributaryReportFiltersEnabled ? ' report-filter-grid--tributary' : ''}`}>
             <label>
               <span>Cliente / Documento</span>
               <div className="with-suggest report-filter-customer-suggest" onBlur={() => window.setTimeout(() => setReportCustomerInputFocused(false), 120)}>
@@ -8273,6 +8321,24 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 </select>
               </label>
             )}
+            {tributaryReportFiltersEnabled && (
+              <label>
+                <span>Tipo comprobante</span>
+                <select
+                  value={documentFiltersDraft.documentKind}
+                  onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, documentKind: event.target.value }))}
+                >
+                  <option value="">Todos los tributarios</option>
+                  {(lookups?.document_kinds ?? [])
+                    .filter((row) => ['INVOICE', 'RECEIPT', 'CREDIT_NOTE', 'DEBIT_NOTE'].includes(String(row.base_kind ?? row.code ?? '').trim().toUpperCase()))
+                    .map((row) => (
+                      <option key={`report-doc-kind-${row.id}`} value={String(row.code ?? '').trim().toUpperCase()}>
+                        {row.label}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
             <label>
               <span>Fecha desde</span>
               <input
@@ -8305,20 +8371,41 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 placeholder="Ej. 00001"
               />
             </label>
-            <label>
-              <span>Estado</span>
-              <select
-                value={documentFiltersDraft.status}
-                onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, status: event.target.value }))}
-              >
-                <option value="">Todos los estados</option>
-                <option value="DRAFT">Borrador</option>
-                <option value="APPROVED">Aprobado</option>
-                <option value="ISSUED">Emitido</option>
-                <option value="VOID">Anulado</option>
-                <option value="CANCELED">Cancelado</option>
-              </select>
-            </label>
+            {!tributaryReportFiltersEnabled && (
+              <label>
+                <span>Estado</span>
+                <select
+                  value={documentFiltersDraft.status}
+                  onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, status: event.target.value }))}
+                >
+                  <option value="">Todos los estados</option>
+                  <option value="DRAFT">Borrador</option>
+                  <option value="APPROVED">Aprobado</option>
+                  <option value="ISSUED">Emitido</option>
+                  <option value="VOID">Anulado</option>
+                  <option value="CANCELED">Cancelado</option>
+                </select>
+              </label>
+            )}
+            {tributaryReportFiltersEnabled && (
+              <label>
+                <span>Estado SUNAT</span>
+                <select
+                  value={documentFiltersDraft.sunatStatus}
+                  onChange={(event) => setDocumentFiltersDraft((prev) => ({ ...prev, sunatStatus: event.target.value }))}
+                >
+                  <option value="">Todos</option>
+                  <option value="PENDING_MANUAL">Pendiente manual</option>
+                  <option value="PENDING">Pendiente</option>
+                  <option value="SENT">Enviado</option>
+                  <option value="PROCESSING">Procesando</option>
+                  <option value="ACCEPTED">Aceptado</option>
+                  <option value="REJECTED">Rechazado</option>
+                  <option value="HTTP_ERROR">Error HTTP</option>
+                  <option value="NETWORK_ERROR">Error de red</option>
+                </select>
+              </label>
+            )}
             {isRestaurantVertical && (
               <label>
                 <span>Origen</span>
