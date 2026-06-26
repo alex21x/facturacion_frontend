@@ -49,7 +49,7 @@ function resolveRequestTimeoutMs(path: string, method: string): number {
   }
 
   if (path.includes('/bulk-sunat-annulment')) {
-    return BULK_SUNAT_VOID_REQUEST_TIMEOUT_MS;
+    return Math.max(BULK_SUNAT_VOID_REQUEST_TIMEOUT_MS, 600000);
   }
 
   if (path.includes('/export') || path.includes('/print-pdf') || path.includes('/print')) {
