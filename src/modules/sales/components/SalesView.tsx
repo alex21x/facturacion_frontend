@@ -4716,14 +4716,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         issueDateTo: documentFiltersApplied.issueDateTo || undefined,
         series: documentFiltersApplied.series || undefined,
         number: documentFiltersApplied.number || undefined,
-        maxDocuments: 100,
+        // Keep each HTTP request short enough for cloud gateways.
+        // Run again to continue processing additional batches.
+        maxDocuments: 20,
+        pauseMs: 120,
       });
 
       setMessage(
-        `Anulacion masiva finalizada. Escaneados: ${result.scanned_count}, elegibles: ${result.eligible_count}, facturas aceptadas: ${result.summary.invoices_accepted}, boletas enviadas a RA: ${result.summary.receipts_queued_to_ra}, errores: ${result.summary.errors}.`
+        `Anulacion masiva finalizada (lote). Escaneados: ${result.scanned_count}, elegibles: ${result.eligible_count}, facturas aceptadas: ${result.summary.invoices_accepted}, boletas enviadas a RA: ${result.summary.receipts_queued_to_ra}, errores: ${result.summary.errors}.`
       );
       window.alert(
-        `Anulacion masiva finalizada.\nEscaneados: ${result.scanned_count}\nElegibles: ${result.eligible_count}\nFacturas aceptadas: ${result.summary.invoices_accepted}\nBoletas enviadas a RA: ${result.summary.receipts_queued_to_ra}\nErrores: ${result.summary.errors}`
+        `Anulacion masiva finalizada (lote).\nEscaneados: ${result.scanned_count}\nElegibles: ${result.eligible_count}\nFacturas aceptadas: ${result.summary.invoices_accepted}\nBoletas enviadas a RA: ${result.summary.receipts_queued_to_ra}\nErrores: ${result.summary.errors}\n\nSi aun hay elegibles, ejecuta nuevamente para continuar con el siguiente lote.`
       );
       setDocumentsPage(1);
       void loadData();
