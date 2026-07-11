@@ -42,6 +42,8 @@ export type CommercialDocumentListItem = {
   item_discount_total?: number | string | null;
   global_discount_total?: number | string | null;
   customer_name: string;
+  customer_doc_type?: string | null;
+  customer_doc_number?: string | null;
   customer_vehicle_id?: number | null;
   vehicle_plate_snapshot?: string | null;
   vehicle_brand_snapshot?: string | null;
@@ -66,6 +68,8 @@ export type CommercialDocumentProductDetailRow = {
   sunat_status?: string | null;
   sunat_void_status?: string | null;
   customer_name: string;
+  customer_doc_type?: string | null;
+  customer_doc_number?: string | null;
   customer_vehicle_id?: number | null;
   vehicle_plate_snapshot?: string | null;
   vehicle_brand_snapshot?: string | null;
