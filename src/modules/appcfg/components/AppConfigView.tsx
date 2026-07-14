@@ -868,39 +868,6 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
                     disabled={platformLimitsReadOnly}
                   />
                 </label>
-                <label>
-                  {UI_LABELS.maxBranches}
-                  <input
-                    type="number"
-                    min={1}
-                    value={limitsForm.max_branches_enabled ?? ''}
-                    onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_branches_enabled: Number(e.target.value) }))}
-                    readOnly={platformLimitsReadOnly}
-                    disabled={platformLimitsReadOnly}
-                  />
-                </label>
-                <label>
-                  {UI_LABELS.maxWarehouses}
-                  <input
-                    type="number"
-                    min={1}
-                    value={limitsForm.max_warehouses_enabled ?? ''}
-                    onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_warehouses_enabled: Number(e.target.value) }))}
-                    readOnly={platformLimitsReadOnly}
-                    disabled={platformLimitsReadOnly}
-                  />
-                </label>
-                <label>
-                  {UI_LABELS.maxCashRegisters}
-                  <input
-                    type="number"
-                    min={1}
-                    value={limitsForm.max_cash_registers_enabled ?? ''}
-                    onChange={(e) => setLimitsForm((prev) => ({ ...prev, max_cash_registers_enabled: Number(e.target.value) }))}
-                    readOnly={platformLimitsReadOnly}
-                    disabled={platformLimitsReadOnly}
-                  />
-                </label>
                 <button className="wide" type="submit" disabled={loading || platformLimitsReadOnly}>
                   {platformLimitsReadOnly ? 'Solo lectura (Portal Admin)' : UI_LABELS.saveLimits}
                 </button>

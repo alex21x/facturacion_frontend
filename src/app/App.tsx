@@ -2,7 +2,7 @@ import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
-import { fetchFeatureToggles, fetchOperationalContext } from '../modules/appcfg/api';
+import { fetchCompanySubscriptionAlert, fetchFeatureToggles, fetchOperationalContext } from '../modules/appcfg/api';
 import type { OperationalContextResponse } from '../modules/appcfg/types';
 import {
   clearAuthSession,
@@ -99,6 +99,7 @@ const LAST_ACTIVE_TAB_STORAGE_KEY = 'facturacion.lastActiveTab.v1';
 const OPERATIONAL_CONTEXT_CACHE_KEY = 'facturacion.operationalContextCache.v1';
 const OPERATIONAL_CONTEXT_CACHE_TTL_MS = 30 * 60 * 1000;
 const LAST_SUCCESSFUL_DEVICE_ID_KEY = 'facturacion.auth.lastDeviceId';
+const SUBSCRIPTION_ALERT_DISMISS_KEY = 'facturacion.subscriptionAlertDismiss.v1';
 
 const loadCashView = () => import('../modules/cash/components/CashView');
 const HomeView = lazy(() => import('./HomeView').then((m) => ({ default: m.HomeView })));
@@ -639,6 +640,7 @@ export function App() {
   const [businessPulseData, setBusinessPulseData] = useState<BusinessPulseDataset>(BUSINESS_PULSE_EMPTY);
   const [businessPulseLoading, setBusinessPulseLoading] = useState(false);
   const [businessPulseError, setBusinessPulseError] = useState<string | null>(null);
+  const [subscriptionAlert, setSubscriptionAlert] = useState<{ tone: 'ok' | 'warn' | 'bad'; title: string; detail: string; signature: string } | null>(null);
   const [uiDensity, setUiDensity] = useState<UiDensity>(() => {
     if (typeof window === 'undefined') {
       return 'compact';
@@ -769,6 +771,61 @@ export function App() {
       setSession(nextSession);
     }, authScope);
   }, [authScope]);
+
+  useEffect(() => {
+    if (!session?.accessToken) {
+      setSubscriptionAlert(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const alert = await fetchCompanySubscriptionAlert(session.accessToken);
+        if (cancelled || !alert.should_show) {
+          if (!cancelled) {
+            setSubscriptionAlert(null);
+          }
+          return;
+        }
+
+        const signature = `${session.user.company_id}:${alert.state}:${alert.due_date ?? ''}:${alert.days_overdue ?? ''}`;
+        const todayLima = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: 'America/Lima',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        }).format(new Date());
+        const dismissKey = `${signature}:${todayLima}`;
+
+        try {
+          const dismissed = window.localStorage.getItem(SUBSCRIPTION_ALERT_DISMISS_KEY);
+          if (dismissed === dismissKey) {
+            setSubscriptionAlert(null);
+            return;
+          }
+        } catch {
+          // Ignore localStorage read issues.
+        }
+
+        setSubscriptionAlert({
+          tone: alert.tone,
+          title: alert.title,
+          detail: alert.detail,
+          signature: dismissKey,
+        });
+      } catch {
+        if (!cancelled) {
+          setSubscriptionAlert(null);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accessToken, session?.user?.company_id]);
 
   useEffect(() => {
     if (!session?.accessToken) {
@@ -1278,6 +1335,29 @@ export function App() {
         )}
 
         {errorMessage && <p className="error-box">{errorMessage}</p>}
+
+        {session && subscriptionAlert && (
+          <div className={`subscription-alert subscription-alert--${subscriptionAlert.tone}`} role="status" aria-live="polite">
+            <div>
+              <strong>{subscriptionAlert.title}</strong>
+              <p>{subscriptionAlert.detail}</p>
+            </div>
+            <button
+              type="button"
+              className="subscription-alert__close"
+              onClick={() => {
+                try {
+                  window.localStorage.setItem(SUBSCRIPTION_ALERT_DISMISS_KEY, subscriptionAlert.signature);
+                } catch {
+                  // Ignore localStorage write issues.
+                }
+                setSubscriptionAlert(null);
+              }}
+            >
+              Entendido
+            </button>
+          </div>
+        )}
 
         {session && (
           <section className="session-box">

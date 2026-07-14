@@ -9,6 +9,7 @@ import {
   fetchCompanyInventorySettingsAdminMatrix,
   fetchCompanyOperationalLimitMatrix,
   fetchCompanyRateLimitMatrix,
+  fetchGlobalSubscriptionSchedule,
   fetchCompanySunatReconcileAdminMatrix,
   fetchCompanyVerticalAdminMatrix,
   resetAdminCompanyPassword,
@@ -19,6 +20,8 @@ import {
   updateCompanyOperationalLimitMatrixBulk,
   updateCompanyRateLimitMatrix,
   updateCompanyRateLimitMatrixBulk,
+  updateGlobalSubscriptionSchedule,
+  updateCompanySubscriptionAdminMatrix,
   updateCompanySunatReconcileAdminMatrix,
   updateCompanyVerticalAdminMatrix,
   updateCompanyVerticalAdminMatrixBulk,
@@ -26,12 +29,14 @@ import {
 import type {
   CompanyCommerceAdminMatrixResponse,
   CompanyInventorySettingsAdminMatrixResponse,
+  CompanySubscriptionSummary,
   InventorySettingsRecord,
   CompanyOperationalLimitMatrixResponse,
   CompanyRateLimitMatrixResponse,
   CompanySunatReconcileAdminMatrixResponse,
   CompanySunatReconcileAdminRecord,
   CompanyVerticalAdminMatrixResponse,
+  GlobalSubscriptionScheduleResponse,
 } from '../../appcfg/types';
 
 const ADMIN_COMMERCE_FEATURE_BASELINE = [
@@ -142,6 +147,61 @@ function formatLastIssuedAgoLabel(value: string | null | undefined): string {
   return `hace ${days} dia${days === 1 ? '' : 's'}`;
 }
 
+function cloneSubscriptionDraft(subscription: CompanySubscriptionSummary): CompanySubscriptionSummary {
+  return { ...subscription };
+}
+
+function subscriptionStateLabel(subscription: CompanySubscriptionSummary): string {
+  switch (subscription.alert_state) {
+    case 'OK':
+      return 'Vigente';
+    case 'UPCOMING':
+      return `Vence en ${subscription.days_until_due ?? subscription.reminder_days_before}d`;
+    case 'DUE_TODAY':
+      return 'Vence hoy';
+    case 'GRACE':
+      return `En gracia ${subscription.days_overdue ?? 0}d`;
+    case 'OVERDUE':
+      return `Vencida ${subscription.days_overdue ?? 0}d`;
+    case 'SOFT_BLOCK':
+      return 'Escalar parcial';
+    case 'HARD_BLOCK':
+      return 'Escalar fuerte';
+    case 'PAUSED':
+      return 'Pausada';
+    case 'CANCELED':
+      return 'Cancelada';
+    default:
+      return 'Sin configurar';
+  }
+}
+
+function subscriptionBadgeClass(alertState: CompanySubscriptionSummary['alert_state']): string {
+  switch (alertState) {
+    case 'OK':
+      return 'adm-badge-ok';
+    case 'UPCOMING':
+    case 'DUE_TODAY':
+      return 'adm-badge-blue';
+    case 'GRACE':
+    case 'SOFT_BLOCK':
+      return 'adm-badge-warn';
+    case 'OVERDUE':
+    case 'HARD_BLOCK':
+      return 'adm-badge-off';
+    default:
+      return 'adm-badge-neutral';
+  }
+}
+
+function formatSubscriptionDueText(subscription: CompanySubscriptionSummary): string {
+  if (!subscription.current_period_ends_at) {
+    return 'Sin fecha';
+  }
+
+  return `Vence ${subscription.current_period_ends_at}`;
+}
+
 type Props = { accessToken: string; onUnauthorized?: () => void };
 
 type AdminPanelKey = 'companies' | 'operational' | 'rate' | 'commerce' | 'sunat' | 'inventory';
@@ -161,6 +221,42 @@ type BackupHistoryRow = {
   generated_at: string;
 };
 
+type CompanySortKey =
+  | 'legal_name'
+  | 'tax_id'
+  | 'active_vertical_name'
+  | 'company_status'
+  | 'issued_documents_count'
+  | 'issued_last_at'
+  | 'admin_username';
+
+type CompanySortState = {
+  key: CompanySortKey;
+  direction: 'asc' | 'desc';
+};
+
+type CompanySubscriptionDraftMap = Record<number, CompanySubscriptionSummary>;
+
+function compareCompanyText(a: string | null | undefined, b: string | null | undefined): number {
+  return String(a ?? '').trim().localeCompare(String(b ?? '').trim(), 'es', {
+    sensitivity: 'base',
+    numeric: true,
+  });
+}
+
+function compareCompanyDate(a: string | null | undefined, b: string | null | undefined): number {
+  const aTime = a ? new Date(a).getTime() : Number.NaN;
+  const bTime = b ? new Date(b).getTime() : Number.NaN;
+  const aMissing = Number.isNaN(aTime);
+  const bMissing = Number.isNaN(bTime);
+
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+
+  return aTime - bTime;
+}
+
 export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const PAGE_SIZE = 12;
   const BACKUP_PAGE_SIZE = 10;
@@ -179,6 +275,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [matrix, setMatrix]   = useState<CompanyVerticalAdminMatrixResponse | null>(null);
   const [rateMatrix, setRateMatrix] = useState<CompanyRateLimitMatrixResponse | null>(null);
   const [operationalMatrix, setOperationalMatrix] = useState<CompanyOperationalLimitMatrixResponse | null>(null);
+  const [globalSubscriptionSchedule, setGlobalSubscriptionSchedule] = useState<GlobalSubscriptionScheduleResponse | null>(null);
   const [sunatMatrix, setSunatMatrix] = useState<CompanySunatReconcileAdminMatrixResponse | null>(null);
   const [selectedVerticalByCompany, setSelectedVerticalByCompany] = useState<Record<number, string>>({});
   const [rateDraftByCompany, setRateDraftByCompany] = useState<Record<number, {
@@ -205,6 +302,10 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [bulkOpWarehouses, setBulkOpWarehouses] = useState(1);
   const [bulkOpCash, setBulkOpCash] = useState(1);
   const [bulkOpCashPerWarehouse, setBulkOpCashPerWarehouse] = useState(1);
+  const [subscriptionFrequency, setSubscriptionFrequency] = useState<'DAILY' | 'WEEKLY' | 'MONTHLY'>('WEEKLY');
+  const [subscriptionAlertTime, setSubscriptionAlertTime] = useState('08:00');
+  const [subscriptionWeeklyDigestDay, setSubscriptionWeeklyDigestDay] = useState(1);
+  const [subscriptionMonthlyDigestDay, setSubscriptionMonthlyDigestDay] = useState(1);
   const [commerceMatrix, setCommerceMatrix] = useState<CompanyCommerceAdminMatrixResponse | null>(null);
   const [inventoryMatrix, setInventoryMatrix] = useState<CompanyInventorySettingsAdminMatrixResponse | null>(null);
   const [commerceDraftByCompany, setCommerceDraftByCompany] = useState<Record<number, Record<string, boolean>>>({});
@@ -252,6 +353,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const [adminUsernameTouched, setAdminUsernameTouched] = useState(false);
   const [debouncedSearchText, setDebouncedSearchText] = useState('');
   const [currentCompanyPage, setCurrentCompanyPage] = useState(1);
+  const [companySort, setCompanySort] = useState<CompanySortState>({ key: 'legal_name', direction: 'asc' });
+  const [subscriptionDraftByCompany, setSubscriptionDraftByCompany] = useState<CompanySubscriptionDraftMap>({});
   const [backupRows, setBackupRows] = useState<BackupHistoryRow[]>([]);
   const [backupHistoryLoading, setBackupHistoryLoading] = useState(false);
   const [selectedBackupCompanyId, setSelectedBackupCompanyId] = useState<number | null>(null);
@@ -335,9 +438,10 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   }
 
   async function loadExtendedMatrices() {
-    const [rateResult, operationalResult, commerceResult, sunatResult, inventoryResult] = await Promise.all([
+    const [rateResult, operationalResult, globalScheduleResult, commerceResult, sunatResult, inventoryResult] = await Promise.all([
       fetchCompanyRateLimitMatrix(accessToken),
       fetchCompanyOperationalLimitMatrix(accessToken),
+      fetchGlobalSubscriptionSchedule(accessToken),
       fetchCompanyCommerceAdminMatrix(accessToken),
       fetchCompanySunatReconcileAdminMatrix(accessToken),
       fetchCompanyInventorySettingsAdminMatrix(accessToken),
@@ -345,6 +449,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
 
     setRateMatrix(rateResult);
     setOperationalMatrix(operationalResult);
+    setGlobalSubscriptionSchedule(globalScheduleResult);
     setCommerceMatrix(commerceResult);
     setSunatMatrix(sunatResult);
     setInventoryMatrix(inventoryResult);
@@ -422,6 +527,12 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     setBulkOpWarehouses(operationalResult.defaults.max_warehouses_enabled);
     setBulkOpCash(operationalResult.defaults.max_cash_registers_enabled);
     setBulkOpCashPerWarehouse(operationalResult.defaults.max_cash_registers_per_warehouse);
+
+    const schedule = globalScheduleResult.schedule;
+    setSubscriptionFrequency(schedule.company_subscription_alert_frequency ?? 'WEEKLY');
+    setSubscriptionAlertTime(schedule.company_subscription_alert_time ?? '08:00');
+    setSubscriptionWeeklyDigestDay(schedule.company_subscription_weekly_digest_day ?? 1);
+    setSubscriptionMonthlyDigestDay(schedule.company_subscription_monthly_digest_day ?? 1);
   }
 
   async function ensureExtendedMatricesLoaded(force = false): Promise<void> {
@@ -462,10 +573,13 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setMatrix(verticalResult);
 
       const nextMap: Record<number, string> = {};
+      const nextSubscriptionDrafts: CompanySubscriptionDraftMap = {};
       for (const company of verticalResult.companies) {
         nextMap[company.company_id] = company.active_vertical_code ?? verticalResult.verticals[0]?.code ?? '';
+        nextSubscriptionDrafts[company.company_id] = cloneSubscriptionDraft(company.subscription);
       }
       setSelectedVerticalByCompany(nextMap);
+      setSubscriptionDraftByCompany(nextSubscriptionDrafts);
 
       setBulkVerticalCode(prev => prev || verticalResult.verticals[0]?.code || '');
 
@@ -671,9 +785,73 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     });
   }, [matrix?.companies, debouncedSearchText, filterVerticalCode]);
 
+  const sortedCompanies = useMemo(() => {
+    const directionFactor = companySort.direction === 'asc' ? 1 : -1;
+    return [...filteredCompanies].sort((left, right) => {
+      let result = 0;
+
+      switch (companySort.key) {
+        case 'legal_name':
+          result = compareCompanyText(left.legal_name, right.legal_name);
+          break;
+        case 'tax_id':
+          result = compareCompanyText(left.tax_id, right.tax_id);
+          break;
+        case 'active_vertical_name':
+          result = compareCompanyText(left.active_vertical_name, right.active_vertical_name);
+          break;
+        case 'company_status':
+          result = left.company_status - right.company_status;
+          break;
+        case 'issued_documents_count':
+          result = left.issued_documents_count - right.issued_documents_count;
+          break;
+        case 'issued_last_at':
+          result = compareCompanyDate(left.issued_last_at, right.issued_last_at);
+          break;
+        case 'admin_username':
+          result = compareCompanyText(left.admin_username, right.admin_username);
+          break;
+      }
+
+      if (result === 0) {
+        result = compareCompanyText(left.legal_name, right.legal_name);
+      }
+
+      if (result === 0) {
+        result = left.company_id - right.company_id;
+      }
+
+      return result * directionFactor;
+    });
+  }, [filteredCompanies, companySort]);
+
   useEffect(() => {
     setCurrentCompanyPage(1);
-  }, [debouncedSearchText, filterVerticalCode]);
+  }, [debouncedSearchText, filterVerticalCode, companySort]);
+
+  function handleCompanySort(key: CompanySortKey) {
+    setCompanySort((prev) => {
+      if (prev.key === key) {
+        return { key, direction: prev.direction === 'asc' ? 'desc' : 'asc' };
+      }
+
+      const defaultDirection: CompanySortState['direction'] =
+        key === 'company_status' || key === 'issued_documents_count' || key === 'issued_last_at'
+          ? 'desc'
+          : 'asc';
+
+      return { key, direction: defaultDirection };
+    });
+  }
+
+  function companySortIndicator(key: CompanySortKey): string {
+    if (companySort.key !== key) {
+      return 'v';
+    }
+
+    return companySort.direction === 'asc' ? '^' : 'v';
+  }
 
   async function toggleOne(companyId: number, isEnabled: boolean) {
     if (!matrix) return;
@@ -719,6 +897,53 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setMessage(err instanceof Error ? err.message : 'No se pudo ejecutar la acción masiva');
       setIsError(true);
     } finally { setLoading(false); }
+  }
+
+  async function saveCompanySubscription(companyId: number) {
+    const draft = subscriptionDraftByCompany[companyId];
+    if (!draft) {
+      return;
+    }
+
+    setLoading(true);
+    setMessage('');
+    setIsError(false);
+    try {
+      const result = await updateCompanySubscriptionAdminMatrix(accessToken, {
+        company_id: companyId,
+        billing_cycle: draft.billing_cycle,
+        status: draft.status,
+        source: draft.source,
+        alerts_enabled: draft.alerts_enabled,
+        enforcement_mode: draft.enforcement_mode,
+        starts_at: draft.starts_at,
+        current_period_starts_at: draft.current_period_starts_at,
+        current_period_ends_at: draft.current_period_ends_at,
+        reminder_days_before: draft.reminder_days_before,
+        grace_days: draft.grace_days,
+        soft_block_days_after: draft.soft_block_days_after,
+        hard_block_days_after: draft.hard_block_days_after,
+        admin_email_enabled: draft.admin_email_enabled,
+        admin_email_recipients: draft.admin_email_recipients,
+        admin_email_frequency: draft.admin_email_frequency,
+        admin_email_send_hour: draft.admin_email_send_hour,
+        notes: draft.notes,
+      });
+
+      setMatrix(result);
+
+      const nextSubscriptionDrafts: CompanySubscriptionDraftMap = {};
+      for (const company of result.companies) {
+        nextSubscriptionDrafts[company.company_id] = cloneSubscriptionDraft(company.subscription);
+      }
+      setSubscriptionDraftByCompany(nextSubscriptionDrafts);
+      setMessage('Suscripcion actualizada.');
+    } catch (err) {
+      setMessage(handleApiError(err, 'No se pudo actualizar la suscripcion.'));
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function saveRateOne(companyId: number) {
@@ -873,6 +1098,34 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       setMessage(`Límites operativos masivos aplicados en ${companyIds.length} empresa(s).`);
     } catch (err) {
       setMessage(err instanceof Error ? err.message : 'No se pudo ejecutar la actualización masiva de límites operativos');
+      setIsError(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveGlobalSubscriptionSchedule() {
+    setLoading(true);
+    setMessage('');
+    setIsError(false);
+
+    try {
+      const result = await updateGlobalSubscriptionSchedule(accessToken, {
+        company_subscription_alert_frequency: subscriptionFrequency,
+        company_subscription_alert_time: subscriptionAlertTime,
+        company_subscription_weekly_digest_day: subscriptionWeeklyDigestDay,
+        company_subscription_monthly_digest_day: subscriptionMonthlyDigestDay,
+      });
+
+      setGlobalSubscriptionSchedule(result);
+      const schedule = result.schedule;
+      setSubscriptionFrequency(schedule.company_subscription_alert_frequency ?? 'WEEKLY');
+      setSubscriptionAlertTime(schedule.company_subscription_alert_time ?? '08:00');
+      setSubscriptionWeeklyDigestDay(schedule.company_subscription_weekly_digest_day ?? 1);
+      setSubscriptionMonthlyDigestDay(schedule.company_subscription_monthly_digest_day ?? 1);
+      setMessage('Programación global de suscripciones actualizada.');
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'No se pudo actualizar la programación global de suscripciones');
       setIsError(true);
     } finally {
       setLoading(false);
@@ -1102,12 +1355,12 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
   const activeCompanies = matrix?.companies.filter(c => c.active_vertical_code).length ?? 0;
   const totalVerticals  = matrix?.verticals.length ?? 0;
   const pendingCompanies = totalCompanies - activeCompanies;
-  const filteredCount = filteredCompanies.length;
-  const totalCompanyPages = Math.max(1, Math.ceil(filteredCompanies.length / PAGE_SIZE));
+  const filteredCount = sortedCompanies.length;
+  const totalCompanyPages = Math.max(1, Math.ceil(sortedCompanies.length / PAGE_SIZE));
   const paginatedCompanies = useMemo(() => {
     const start = (currentCompanyPage - 1) * PAGE_SIZE;
-    return filteredCompanies.slice(start, start + PAGE_SIZE);
-  }, [currentCompanyPage, filteredCompanies]);
+    return sortedCompanies.slice(start, start + PAGE_SIZE);
+  }, [currentCompanyPage, sortedCompanies]);
   const detailCompany = useMemo(
     () => (matrix?.companies ?? []).find((company) => company.company_id === detailCompanyId) ?? null,
     [detailCompanyId, matrix?.companies]
@@ -1690,58 +1943,135 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
             </div>
           )}
 
-          <div className="adm-company-list">
+          <div className="adm-company-table-wrap">
             {!matrix && !loading && (
               <div className="adm-company-empty">Sin datos. Refresca para cargar.</div>
             )}
             {matrix && filteredCompanies.length === 0 && (
               <div className="adm-company-empty">Ninguna empresa coincide con el filtro.</div>
             )}
-            {paginatedCompanies.map((company, idx) => {
-              const isActive = company.company_status === 1;
-              return (
-                <button
-                  key={company.company_id}
-                  type="button"
-                  className="adm-company-row"
-                  onClick={() => {
-                    setDetailTab('general');
-                    setDetailCompanyId(company.company_id);
-                    setDetailDrawerOpen(true);
-                  }}
-                >
-                  <span className={`adm-row-dot${isActive ? ' adm-row-dot--on' : ' adm-row-dot--off'}`} />
-                  <span className="adm-row-num">{(currentCompanyPage - 1) * PAGE_SIZE + idx + 1}</span>
-                  <span className="adm-row-main">
-                    <span className="adm-row-name">{highlightMatch(company.legal_name)}</span>
-                    {company.trade_name && <span className="adm-row-trade">{highlightMatch(company.trade_name)}</span>}
-                  </span>
-                  <span className="adm-row-ruc">{highlightMatch(company.tax_id)}</span>
-                  <span className="adm-row-meta">
-                    {company.active_vertical_name
-                      ? <span className="adm-badge adm-badge-blue">{company.active_vertical_name}</span>
-                      : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
-                    }
-                  </span>
-                  <span className="adm-row-issued" title="Comprobantes emitidos">
-                    {Number(company.issued_documents_count ?? 0).toLocaleString('es-PE')} comp.
-                  </span>
-                  <span className="adm-row-last-issued" title="Ultima emision de comprobante (Lima)">
-                    <span>{formatLastIssuedAtLabel(company.issued_last_at)}</span>
-                    {company.issued_last_at ? (
-                      <small>{formatLastIssuedAgoLabel(company.issued_last_at)}</small>
-                    ) : null}
-                  </span>
-                  <span className="adm-row-admin">
-                    {company.admin_username
-                      ? <span className="adm-row-admin-name">{company.admin_username}</span>
-                      : <span className="adm-badge adm-badge-neutral">Sin admin</span>
-                    }
-                  </span>
-                  <span className="adm-row-arrow">›</span>
-                </button>
-              );
-            })}
+            {matrix && filteredCompanies.length > 0 && (
+              <table className="adm-table adm-company-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'legal_name' ? ' is-active' : ''}`} onClick={() => handleCompanySort('legal_name')}>
+                        Empresa
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('legal_name')}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'tax_id' ? ' is-active' : ''}`} onClick={() => handleCompanySort('tax_id')}>
+                        RUC
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('tax_id')}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'active_vertical_name' ? ' is-active' : ''}`} onClick={() => handleCompanySort('active_vertical_name')}>
+                        Rubro
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('active_vertical_name')}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'company_status' ? ' is-active' : ''}`} onClick={() => handleCompanySort('company_status')}>
+                        Estado
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('company_status')}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'issued_documents_count' ? ' is-active' : ''}`} onClick={() => handleCompanySort('issued_documents_count')}>
+                        Comprobantes
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('issued_documents_count')}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'issued_last_at' ? ' is-active' : ''}`} onClick={() => handleCompanySort('issued_last_at')}>
+                        Ultima emision
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('issued_last_at')}</span>
+                      </button>
+                    </th>
+                    <th>
+                      <button type="button" className={`adm-sort-button${companySort.key === 'admin_username' ? ' is-active' : ''}`} onClick={() => handleCompanySort('admin_username')}>
+                        Admin
+                        <span className="adm-sort-indicator" aria-hidden="true">{companySortIndicator('admin_username')}</span>
+                      </button>
+                    </th>
+                    <th>Suscripcion</th>
+                    <th>Accion</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedCompanies.map((company, idx) => {
+                    const isActive = company.company_status === 1;
+                    return (
+                      <tr key={company.company_id}>
+                        <td className="adm-company-index">{(currentCompanyPage - 1) * PAGE_SIZE + idx + 1}</td>
+                        <td>
+                          <div className="adm-company-name-cell">
+                            <span className="adm-td-label">{highlightMatch(company.legal_name)}</span>
+                            {company.trade_name && <span className="adm-td-sub">{highlightMatch(company.trade_name)}</span>}
+                          </div>
+                        </td>
+                        <td>
+                          <span className="adm-row-ruc">{highlightMatch(company.tax_id)}</span>
+                        </td>
+                        <td>
+                          {company.active_vertical_name
+                            ? <span className="adm-badge adm-badge-blue">{company.active_vertical_name}</span>
+                            : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
+                          }
+                        </td>
+                        <td>
+                          <span className="adm-company-status-cell">
+                            <span className={`adm-row-dot${isActive ? ' adm-row-dot--on' : ' adm-row-dot--off'}`} />
+                            <span className={`adm-badge ${isActive ? 'adm-badge-ok' : 'adm-badge-off'}`}>{isActive ? 'Activa' : 'Inactiva'}</span>
+                          </span>
+                        </td>
+                        <td>
+                          <span className="adm-row-issued" title="Comprobantes emitidos">
+                            {Number(company.issued_documents_count ?? 0).toLocaleString('es-PE')} comp.
+                          </span>
+                        </td>
+                        <td>
+                          <span className="adm-row-last-issued" title="Ultima emision de comprobante (Lima)">
+                            <span>{formatLastIssuedAtLabel(company.issued_last_at)}</span>
+                            {company.issued_last_at ? (
+                              <small>{formatLastIssuedAgoLabel(company.issued_last_at)}</small>
+                            ) : null}
+                          </span>
+                        </td>
+                        <td>
+                          {company.admin_username
+                            ? <span className="adm-row-admin-name">{company.admin_username}</span>
+                            : <span className="adm-badge adm-badge-neutral">Sin admin</span>
+                          }
+                        </td>
+                        <td>
+                          <div className="adm-company-subscription-cell">
+                            <span className={`adm-badge ${subscriptionBadgeClass(company.subscription.alert_state)}`}>{subscriptionStateLabel(company.subscription)}</span>
+                            <span className="adm-td-sub">{formatSubscriptionDueText(company.subscription)}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="adm-company-open-btn"
+                            onClick={() => {
+                              setDetailTab('general');
+                              setDetailCompanyId(company.company_id);
+                              setDetailDrawerOpen(true);
+                            }}
+                          >
+                            Ver detalle
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
 
           {filteredCompanies.length > PAGE_SIZE && (
@@ -1796,6 +2126,46 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           </div>
         </div>
         <div className="adm-card-body">
+          <div className="adm-panel-subcard" style={{ marginBottom: '1rem' }}>
+            <div className="adm-panel-subcard__header">
+              <div>
+                <div className="adm-panel-subcard__eyebrow">Sistema</div>
+                <h4 className="adm-panel-subcard__title">Programación global de suscripciones</h4>
+                <p className="adm-panel-subcard__hint">Este ajuste define cuándo corre el resumen global y se aplica a Railway después del despliegue.</p>
+              </div>
+              <span className="adm-badge adm-badge-blue">Global</span>
+            </div>
+
+            <div className="adm-panel-subcard__grid">
+              <label>
+                Frecuencia
+                <select className="adm-select" value={subscriptionFrequency} onChange={e => setSubscriptionFrequency(e.target.value as 'DAILY' | 'WEEKLY' | 'MONTHLY')} disabled={loading}>
+                  <option value="DAILY">Diario</option>
+                  <option value="WEEKLY">Semanal</option>
+                  <option value="MONTHLY">Mensual</option>
+                </select>
+              </label>
+              <label>
+                Hora envío
+                <input className="adm-input" type="time" value={subscriptionAlertTime} onChange={e => setSubscriptionAlertTime(e.target.value)} disabled={loading} />
+              </label>
+              <label>
+                Día semanal
+                <input className="adm-input adm-input-mini" type="number" min={1} max={7} value={subscriptionWeeklyDigestDay} onChange={e => setSubscriptionWeeklyDigestDay(Number(e.target.value || 1))} disabled={loading || subscriptionFrequency === 'MONTHLY'} />
+              </label>
+              <label>
+                Día mensual
+                <input className="adm-input adm-input-mini" type="number" min={1} max={28} value={subscriptionMonthlyDigestDay} onChange={e => setSubscriptionMonthlyDigestDay(Number(e.target.value || 1))} disabled={loading || subscriptionFrequency !== 'MONTHLY'} />
+              </label>
+            </div>
+
+            <div className="adm-panel-subcard__actions">
+              <button className="adm-btn adm-btn-primary" type="button" disabled={loading} onClick={() => void saveGlobalSubscriptionSchedule()}>
+                Guardar programación global
+              </button>
+            </div>
+          </div>
+
           <div className="adm-bulk-bar">
             <span className="adm-bulk-bar-label">Ajuste masivo operativo</span>
             <input className="adm-input adm-input-mini" type="number" min={1} max={10000} value={bulkOpBranches} onChange={e => setBulkOpBranches(Number(e.target.value || 1))} disabled={loading} title="Sucursales max" />
@@ -2482,6 +2852,14 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         const isEnabled = Boolean(selectedAssign?.is_enabled);
         const resetPreview = resetPreviewByCompany[detailCompany.company_id];
         const revealedPassword = revealedPasswordByCompany[detailCompany.company_id];
+        const subscriptionDraft = subscriptionDraftByCompany[detailCompany.company_id] ?? detailCompany.subscription;
+
+        const updateSubscriptionDraft = (patch: Partial<CompanySubscriptionSummary>) => {
+          setSubscriptionDraftByCompany((prev) => ({
+            ...prev,
+            [detailCompany.company_id]: { ...(prev[detailCompany.company_id] ?? detailCompany.subscription), ...patch },
+          }));
+        };
 
         const closeDrawer = () => { setDetailDrawerOpen(false); setDetailCompanyId(null); };
 
@@ -2530,6 +2908,109 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                           : <span className="adm-badge adm-badge-neutral">Sin rubro</span>
                         }
                       </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Suscripcion</span>
+                        <span className={`adm-badge ${subscriptionBadgeClass(detailCompany.subscription.alert_state)}`}>{subscriptionStateLabel(detailCompany.subscription)}</span>
+                        <div className="adm-drawer-field-sub">{formatSubscriptionDueText(detailCompany.subscription)}</div>
+                      </div>
+                    </div>
+
+                    <div className="adm-drawer-grid">
+                      <div>
+                        <span className="adm-drawer-field-label">Ciclo</span>
+                        <select className="adm-select" value={subscriptionDraft.billing_cycle} onChange={e => updateSubscriptionDraft({ billing_cycle: e.target.value as CompanySubscriptionSummary['billing_cycle'] })} disabled={loading}>
+                          <option value="NONE">Sin configurar</option>
+                          <option value="MONTHLY">Mensual</option>
+                          <option value="ANNUAL">Anual</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Estado base</span>
+                        <select className="adm-select" value={subscriptionDraft.status} onChange={e => updateSubscriptionDraft({ status: e.target.value as CompanySubscriptionSummary['status'] })} disabled={loading}>
+                          <option value="ACTIVE">Activa</option>
+                          <option value="PAUSED">Pausada</option>
+                          <option value="CANCELED">Cancelada</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Fuente</span>
+                        <select className="adm-select" value={subscriptionDraft.source} onChange={e => updateSubscriptionDraft({ source: e.target.value as CompanySubscriptionSummary['source'] })} disabled={loading}>
+                          <option value="MANUAL">Manual</option>
+                          <option value="BRIDGE">Puente</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Alertas</span>
+                        <select className="adm-select" value={subscriptionDraft.alerts_enabled ? '1' : '0'} onChange={e => updateSubscriptionDraft({ alerts_enabled: e.target.value === '1' })} disabled={loading}>
+                          <option value="1">Activas</option>
+                          <option value="0">Pausadas</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Inicio</span>
+                        <input className="adm-input" type="date" value={subscriptionDraft.starts_at ?? ''} onChange={e => updateSubscriptionDraft({ starts_at: e.target.value || null, current_period_starts_at: e.target.value || null })} disabled={loading} />
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Vencimiento actual</span>
+                        <input className="adm-input" type="date" value={subscriptionDraft.current_period_ends_at ?? ''} onChange={e => updateSubscriptionDraft({ current_period_ends_at: e.target.value || null })} disabled={loading} />
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Avisar antes</span>
+                        <input className="adm-input adm-input-mini" type="number" min={0} max={30} value={subscriptionDraft.reminder_days_before} onChange={e => updateSubscriptionDraft({ reminder_days_before: Number(e.target.value || 0) })} disabled={loading} />
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Dias de gracia</span>
+                        <input className="adm-input adm-input-mini" type="number" min={0} max={60} value={subscriptionDraft.grace_days} onChange={e => updateSubscriptionDraft({ grace_days: Number(e.target.value || 0) })} disabled={loading} />
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Modo escalamiento</span>
+                        <select className="adm-select" value={subscriptionDraft.enforcement_mode} onChange={e => updateSubscriptionDraft({ enforcement_mode: e.target.value as CompanySubscriptionSummary['enforcement_mode'] })} disabled={loading}>
+                          <option value="NONE">Solo alertar</option>
+                          <option value="SOFT">Escalado parcial</option>
+                          <option value="HARD">Escalado fuerte</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Escalar parcial</span>
+                        <input className="adm-input adm-input-mini" type="number" min={0} max={90} value={subscriptionDraft.soft_block_days_after} onChange={e => updateSubscriptionDraft({ soft_block_days_after: Number(e.target.value || 0) })} disabled={loading} />
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Escalar fuerte</span>
+                        <input className="adm-input adm-input-mini" type="number" min={0} max={180} value={subscriptionDraft.hard_block_days_after} onChange={e => updateSubscriptionDraft({ hard_block_days_after: Number(e.target.value || 0) })} disabled={loading} />
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Correo admin</span>
+                        <select className="adm-select" value={subscriptionDraft.admin_email_enabled ? '1' : '0'} onChange={e => updateSubscriptionDraft({ admin_email_enabled: e.target.value === '1' })} disabled={loading}>
+                          <option value="1">Activo</option>
+                          <option value="0">Pausado</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Frecuencia correo</span>
+                        <select className="adm-select" value={subscriptionDraft.admin_email_frequency} onChange={e => updateSubscriptionDraft({ admin_email_frequency: e.target.value as CompanySubscriptionSummary['admin_email_frequency'] })} disabled={loading}>
+                          <option value="DAILY">1 vez al dia</option>
+                          <option value="STATE_CHANGE">Solo cambio de estado</option>
+                        </select>
+                      </div>
+                      <div>
+                        <span className="adm-drawer-field-label">Hora envio (0-23)</span>
+                        <input className="adm-input adm-input-mini" type="number" min={0} max={23} value={subscriptionDraft.admin_email_send_hour} onChange={e => updateSubscriptionDraft({ admin_email_send_hour: Number(e.target.value || 0) })} disabled={loading || subscriptionDraft.admin_email_frequency !== 'DAILY'} />
+                      </div>
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <span className="adm-drawer-field-label">Destinatarios admin (coma o ;)</span>
+                        <input className="adm-input" type="text" value={subscriptionDraft.admin_email_recipients ?? ''} onChange={e => updateSubscriptionDraft({ admin_email_recipients: e.target.value || null })} disabled={loading} placeholder="correo1@empresa.com, correo2@empresa.com" />
+                        <div className="adm-drawer-field-sub">Si se deja vacio, usa los correos ADMIN de plataforma.</div>
+                      </div>
+                      <div style={{ gridColumn: '1 / -1' }}>
+                        <span className="adm-drawer-field-label">Accion sugerida</span>
+                        <div className="adm-drawer-field-value">{detailCompany.subscription.recommended_action ?? 'Sin observaciones'}</div>
+                      </div>
+                    </div>
+
+                    <div className="adm-drawer-actions">
+                      <button className="adm-btn adm-btn-primary" type="button" disabled={loading} onClick={() => void saveCompanySubscription(detailCompany.company_id)}>
+                        Guardar suscripcion
+                      </button>
                     </div>
 
                     <div className="adm-drawer-grid">

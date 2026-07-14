@@ -13,6 +13,7 @@ import type {
   ModuleRow,
   OperationalContextResponse,
   OperationalLimitsResponse,
+  GlobalSubscriptionScheduleResponse,
   ReconcileStatsResponse,
   ResetAdminPasswordResponse,
   RevealAdminPasswordResponse,
@@ -21,6 +22,8 @@ import type {
   CompanyCommerceAdminMatrixResponse,
   CompanySunatReconcileAdminMatrixResponse,
   CompanyInventorySettingsAdminMatrixResponse,
+  CompanySubscriptionSummary,
+  CompanySubscriptionClientAlertResponse,
   InventorySettingsRecord,
 } from './types';
 
@@ -205,6 +208,29 @@ export async function updateOperationalLimits(
   });
 }
 
+export async function fetchGlobalSubscriptionSchedule(accessToken: string): Promise<GlobalSubscriptionScheduleResponse> {
+  return apiClient.request<GlobalSubscriptionScheduleResponse>('/api/appcfg/global-subscription-schedule', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+}
+
+export async function updateGlobalSubscriptionSchedule(
+  accessToken: string,
+  payload: {
+    company_subscription_alert_frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+    company_subscription_alert_time: string;
+    company_subscription_weekly_digest_day: number;
+    company_subscription_monthly_digest_day: number;
+  }
+): Promise<GlobalSubscriptionScheduleResponse> {
+  return apiClient.request<GlobalSubscriptionScheduleResponse>('/api/appcfg/global-subscription-schedule', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
 export async function fetchCommerceSettings(
   accessToken: string,
   branchId?: number | null
@@ -363,6 +389,45 @@ export async function updateCompanyRateLimitMatrixBulk(
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCompanySubscriptionAdminMatrix(
+  accessToken: string,
+  payload: {
+    company_id: number;
+    billing_cycle: CompanySubscriptionSummary['billing_cycle'];
+    status: CompanySubscriptionSummary['status'];
+    source: CompanySubscriptionSummary['source'];
+    alerts_enabled: boolean;
+    enforcement_mode: CompanySubscriptionSummary['enforcement_mode'];
+    starts_at: string | null;
+    current_period_starts_at: string | null;
+    current_period_ends_at: string | null;
+    reminder_days_before: number;
+    grace_days: number;
+    soft_block_days_after: number;
+    hard_block_days_after: number;
+    admin_email_enabled?: boolean;
+    admin_email_recipients?: string | null;
+    admin_email_frequency?: 'DAILY' | 'STATE_CHANGE';
+    admin_email_send_hour?: number;
+    notes?: string | null;
+  }
+): Promise<CompanyVerticalAdminMatrixResponse> {
+  return apiClient.request<CompanyVerticalAdminMatrixResponse>('/api/appcfg/company-subscription-admin-matrix', {
+    method: 'PUT',
+    headers: authHeaders(accessToken),
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchCompanySubscriptionAlert(
+  accessToken: string
+): Promise<CompanySubscriptionClientAlertResponse> {
+  return apiClient.request<CompanySubscriptionClientAlertResponse>('/api/appcfg/company-subscription-alert', {
+    method: 'GET',
+    headers: authHeaders(accessToken),
   });
 }
 

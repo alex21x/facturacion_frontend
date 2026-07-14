@@ -78,6 +78,17 @@ export type PlatformLimits = {
   max_companies_enabled: number;
 };
 
+export type GlobalSubscriptionSchedule = {
+  company_subscription_alert_frequency: 'DAILY' | 'WEEKLY' | 'MONTHLY';
+  company_subscription_alert_time: string;
+  company_subscription_weekly_digest_day: number;
+  company_subscription_monthly_digest_day: number;
+};
+
+export type GlobalSubscriptionScheduleResponse = {
+  schedule: GlobalSubscriptionSchedule;
+};
+
 export type CompanyOperationalLimits = {
   max_branches_enabled: number;
   max_warehouses_enabled: number;
@@ -278,6 +289,47 @@ export type CompanyVerticalAdminAssignment = {
   effective_to: string | null;
 };
 
+export type CompanySubscriptionSummary = {
+  billing_cycle: 'NONE' | 'ANNUAL' | 'MONTHLY';
+  status: 'ACTIVE' | 'PAUSED' | 'CANCELED';
+  source: 'MANUAL' | 'BRIDGE';
+  alerts_enabled: boolean;
+  enforcement_mode: 'NONE' | 'SOFT' | 'HARD';
+  starts_at: string | null;
+  current_period_starts_at: string | null;
+  current_period_ends_at: string | null;
+  reminder_days_before: number;
+  grace_days: number;
+  soft_block_days_after: number;
+  hard_block_days_after: number;
+  days_until_due: number | null;
+  days_overdue: number | null;
+  alert_state: 'UNCONFIGURED' | 'OK' | 'UPCOMING' | 'DUE_TODAY' | 'GRACE' | 'OVERDUE' | 'SOFT_BLOCK' | 'HARD_BLOCK' | 'PAUSED' | 'CANCELED';
+  recommended_action: string | null;
+  last_pre_due_alert_at: string | null;
+  last_overdue_alert_at: string | null;
+  admin_email_enabled: boolean;
+  admin_email_recipients: string | null;
+  admin_email_frequency: 'DAILY' | 'STATE_CHANGE';
+  admin_email_send_hour: number;
+  last_admin_digest_sent_on: string | null;
+  last_admin_alert_state: string | null;
+  last_admin_state_sent_at: string | null;
+  notes: string | null;
+};
+
+export type CompanySubscriptionClientAlertResponse = {
+  should_show: boolean;
+  tone: 'ok' | 'warn' | 'bad';
+  title: string;
+  detail: string;
+  state: CompanySubscriptionSummary['alert_state'];
+  due_date: string | null;
+  days_until_due: number | null;
+  days_overdue: number | null;
+  recommended_action: string | null;
+};
+
 export type CompanyVerticalAdminCompany = {
   company_id: number;
   tax_id: string | null;
@@ -294,6 +346,7 @@ export type CompanyVerticalAdminCompany = {
   assignments: CompanyVerticalAdminAssignment[];
   admin_username: string | null;
   admin_email: string | null;
+  subscription: CompanySubscriptionSummary;
 };
 
 export type CompanyVerticalAdminMatrixResponse = {

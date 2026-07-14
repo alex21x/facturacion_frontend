@@ -327,6 +327,62 @@ button:hover:not(:disabled) {
   padding: 10px 12px;
 }
 
+.subscription-alert {
+  margin-top: 10px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.subscription-alert strong {
+  display: block;
+  font-size: 0.9rem;
+  margin-bottom: 2px;
+}
+
+.subscription-alert p {
+  margin: 0;
+  font-size: 0.82rem;
+  color: inherit;
+}
+
+.subscription-alert--warn {
+  background: #fff4db;
+  border-color: #f8cf80;
+  color: #8a5a17;
+}
+
+.subscription-alert--bad {
+  background: #ffe7e7;
+  border-color: #f3b4b4;
+  color: #8f2626;
+}
+
+.subscription-alert--ok {
+  background: #eaf7ef;
+  border-color: #b9e0c4;
+  color: #2f5a3f;
+}
+
+.subscription-alert__close {
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.subscription-alert__close:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.35);
+}
+
 button.danger {
   border-color: #9a7470;
   background: #ad8682;

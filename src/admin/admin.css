@@ -404,6 +404,69 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
   padding: 1.25rem;
 }
 
+.adm-panel-subcard {
+  background: linear-gradient(180deg, #f8fbff 0%, #f4f8ff 100%);
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  padding: 1rem 1rem 1.1rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.adm-panel-subcard__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.adm-panel-subcard__eyebrow {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #1d4ed8;
+  margin-bottom: 0.2rem;
+}
+
+.adm-panel-subcard__title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.adm-panel-subcard__hint {
+  margin: 0.35rem 0 0;
+  color: #64748b;
+  font-size: 0.82rem;
+  max-width: 60ch;
+}
+
+.adm-panel-subcard__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.8rem;
+  align-items: end;
+}
+
+.adm-panel-subcard__grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.adm-panel-subcard__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 0.9rem;
+}
+
 /* ── STATS ROW ──────────────────────────────────────────── */
 .adm-stats-row {
   display: grid;
@@ -810,38 +873,91 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
 }
 
 /* ── COMPANIES COMPACT LIST ───────────────────────────── */
-.adm-company-list {
-  display: flex;
-  flex-direction: column;
+.adm-company-table-wrap {
+  overflow-x: auto;
   border: 1px solid #e2e8f0;
   border-radius: 12px;
-  overflow: hidden;
   background: #ffffff;
 }
 
-.adm-company-row {
-  display: flex;
+.adm-company-table {
+  min-width: 1080px;
+}
+
+.adm-company-table td {
+  white-space: nowrap;
+}
+
+.adm-company-table td:first-child,
+.adm-company-table th:first-child {
+  padding-left: 1.1rem;
+}
+
+.adm-company-index {
+  font-family: Consolas, Menlo, monospace;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  text-align: right;
+}
+
+.adm-company-name-cell {
+  min-width: 220px;
+}
+
+.adm-company-status-cell {
+  display: inline-flex;
   align-items: center;
-  gap: 0.75rem;
-  padding: 0.7rem 1rem;
-  border: none;
-  border-bottom: 1px solid #f1f5f9;
-  background: #ffffff;
+  gap: 0.5rem;
+}
+
+.adm-company-open-btn {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+  font-size: 0.76rem;
+  font-weight: 700;
   cursor: pointer;
-  text-align: left;
-  transition: background 0.12s;
-  min-height: 54px;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 
-.adm-company-row:last-child {
-  border-bottom: none;
+.adm-company-open-btn:hover {
+  background: #dbeafe;
+  border-color: #93c5fd;
 }
 
-.adm-company-row:hover {
-  background: #f0f7ff;
+.adm-company-subscription-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 132px;
 }
 
-/* Status dot */
+.adm-sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.adm-sort-button.is-active {
+  color: #1d4ed8;
+}
+
+.adm-sort-indicator {
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
 .adm-row-dot {
   width: 8px;
   height: 8px;
@@ -851,66 +967,19 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
 .adm-row-dot--on  { background: #10b981; box-shadow: 0 0 0 2px rgba(16,185,129,0.2); }
 .adm-row-dot--off { background: #94a3b8; }
 
-/* Row number */
-.adm-row-num {
-  font-family: Consolas, Menlo, monospace;
-  font-size: 0.7rem;
-  color: #94a3b8;
-  min-width: 1.8rem;
-  text-align: right;
-  flex-shrink: 0;
-}
-
-/* Main name + trade block */
-.adm-row-main {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0;
-  min-width: 0;
-}
-
-.adm-row-name {
-  font-family: 'Manrope', sans-serif;
-  font-size: 0.88rem;
-  font-weight: 800;
-  color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.adm-row-trade {
-  font-family: 'Plus Jakarta Sans', sans-serif;
-  font-size: 0.72rem;
-  color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* RUC */
 .adm-row-ruc {
   font-family: Consolas, Menlo, monospace;
   font-size: 0.78rem;
   color: #1e40af;
   white-space: nowrap;
-  flex-shrink: 0;
   background: #eff6ff;
   padding: 0.15rem 0.45rem;
   border-radius: 5px;
   border: 1px solid #bfdbfe;
 }
 
-/* Meta: rubro badge */
-.adm-row-meta {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-}
-
 .adm-row-issued {
-  flex-shrink: 0;
-  min-width: 96px;
+  min-width: 88px;
   text-align: center;
   font-family: Consolas, Menlo, monospace;
   font-size: 0.76rem;
@@ -923,7 +992,6 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
 }
 
 .adm-row-last-issued {
-  flex-shrink: 0;
   min-width: 132px;
   text-align: center;
   display: inline-flex;
@@ -948,31 +1016,10 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
   margin-top: 2px;
 }
 
-/* Admin username */
-.adm-row-admin {
-  flex-shrink: 0;
-  min-width: 100px;
-  display: flex;
-  align-items: center;
-}
-
 .adm-row-admin-name {
   font-family: Consolas, Menlo, monospace;
   font-size: 0.78rem;
   color: #475569;
-}
-
-/* Arrow */
-.adm-row-arrow {
-  font-size: 1.1rem;
-  color: #cbd5e1;
-  flex-shrink: 0;
-  margin-left: auto;
-  transition: color 0.12s;
-}
-
-.adm-company-row:hover .adm-row-arrow {
-  color: #2563eb;
 }
 
 .adm-link-url-block {
@@ -1294,6 +1341,11 @@ h1, h2, h3, h4, .adm-stat-value, .adm-company-card__title {
 .adm-badge-blue {
   background: #dbeafe;
   color: #1d4ed8;
+}
+
+.adm-badge-warn {
+  background: #fef3c7;
+  color: #92400e;
 }
 
 /* ── NOTICES ────────────────────────────────────────────── */
