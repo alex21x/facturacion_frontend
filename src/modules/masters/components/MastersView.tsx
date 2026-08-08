@@ -1,7 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { fetchModules } from '../../appcfg/api';
 import type { ModuleRow } from '../../appcfg/types';
-import { todayLima } from '../../../shared/utils/lima';
+import { fileNameTimestampLima } from '../../../shared/utils/lima';
 import {
   createFunctionalProfile,
   createRole,
@@ -742,7 +742,7 @@ export function MastersView({ accessToken, branchId, warehouseId, currentUserRol
   }
 
   function exportSectionData() {
-    const dateTag = todayLima();
+    const dateTag = fileNameTimestampLima();
     let fileName = `masters-${activeSection}-${dateTag}.csv`;
     let lines: string[] = [];
 

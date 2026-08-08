@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import '../../../styles/modules/sales.css';
 import { docKindLabel } from '../../../shared/utils/docKind';
-import { fmtDateLima, fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
+import { fileNameTimestampLima, fmtDateLima, fmtDateTimeFullLima, nowLimaIso, todayLima } from '../../../shared/utils/lima';
 import {
   computeLineTotals,
   computeSalesDraftAmounts,
@@ -4563,7 +4563,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           Serie: row.series,
           Numero: row.number,
           DocumentoAfectado: String(row.source_document_number ?? '').trim(),
-          FechaEmision: row.issue_at,
+          FechaEmision: formatStoredDateTime(String(row.issue_at ?? '')),
           Cliente: row.customer_name,
           TipoDocCliente: String(row.customer_doc_type ?? '-').trim() || '-',
           NroDocCliente: String(row.customer_doc_number ?? '').trim() || '-',
@@ -4586,7 +4586,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const worksheet = XLSX.utils.json_to_sheet(sheetRows);
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Ventas');
 
-      const fileName = `reporte_ventas_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      const fileName = `reporte_ventas_${fileNameTimestampLima()}.xlsx`;
       XLSX.writeFile(workbook, fileName);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo exportar XLSX';
@@ -4693,7 +4693,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
         Serie: String(row.series ?? ''),
         Numero: String(row.number ?? ''),
-        FechaEmision: String(row.issue_at ?? ''),
+        FechaEmision: formatStoredDateTime(String(row.issue_at ?? '')),
         Cliente: String(row.customer_name ?? ''),
         TipoDocCliente: String(row.customer_doc_type ?? '-').trim() || '-',
         NroDocCliente: String(row.customer_doc_number ?? '').trim() || '-',
@@ -4714,7 +4714,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const worksheet = XLSX.utils.json_to_sheet(sheetRows);
       XLSX.utils.book_append_sheet(workbook, worksheet, 'VentasDetalleProducto');
 
-      const fileName = `reporte_ventas_producto_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      const fileName = `reporte_ventas_producto_${fileNameTimestampLima()}.xlsx`;
       XLSX.writeFile(workbook, fileName);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'No se pudo exportar XLSX detalle por producto';

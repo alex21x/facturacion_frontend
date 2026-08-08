@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
+import { fileNameTimestampLima, fmtDateLima, fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   createInventoryStockEntry,
   fetchInventoryLots,
@@ -114,25 +114,6 @@ function fmtDateTime(value: string | null | undefined): string {
 
 function fmtDate(value: string | null | undefined): string {
   return fmtDateLima(value);
-}
-
-function fileNameTimestampLima(): string {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/Lima',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  }).formatToParts(now);
-
-  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-  const period = (get('dayPeriod') || 'AM').toUpperCase();
-
-  return `${get('year')}-${get('month')}-${get('day')}_${get('hour')}-${get('minute')}-${get('second')}_${period}`;
 }
 
 const EXPORT_KEY_LABELS: Record<string, string> = {

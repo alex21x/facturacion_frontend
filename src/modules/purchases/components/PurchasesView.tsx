@@ -12,6 +12,7 @@ import {
 import type { InventoryLotRow, InventoryProduct, InventoryStockRow } from '../../inventory/types';
 import { createStockEntry, exportPurchasesCsv, exportPurchasesJson, fetchPurchasesLookups, fetchPurchasesReport, fetchSupplierAutocomplete, fetchSuppliersCatalog, importSuppliersBulk, receivePurchaseOrder, resolveSupplierByDocument, updateStockEntry, type SupplierBulkImportRow } from '../api';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
+import { fileNameTimestampLima } from '../../../shared/utils/lima';
 import { fetchCompanyProfile } from '../../company/api';
 import type { CompanyProfile } from '../../company/types';
 import {
@@ -576,7 +577,7 @@ export function PurchasesView({
       const workbook = XLSX.utils.book_new();
       const worksheet = XLSX.utils.json_to_sheet(sheetRows);
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Proveedores');
-      XLSX.writeFile(workbook, `proveedores_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+      XLSX.writeFile(workbook, `proveedores_${fileNameTimestampLima()}.xlsx`);
       setMessage(`Exportación completada: ${rows.length} proveedores.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo exportar proveedores.');
@@ -2091,7 +2092,7 @@ export function PurchasesView({
       const worksheet = XLSX.utils.json_to_sheet(sheetRows);
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Compras');
 
-      const fileName = `reporte_compras_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+      const fileName = `reporte_compras_${fileNameTimestampLima()}.xlsx`;
       XLSX.writeFile(workbook, fileName);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo exportar el reporte de compras');

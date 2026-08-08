@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
+import { fileNameTimestampLima } from '../../../shared/utils/lima';
 import '../customers.css';
 
 type CustomerRow = {
@@ -682,7 +683,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       const workbook = XLSX.utils.book_new();
       const worksheet = XLSX.utils.json_to_sheet(exportRows);
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Clientes');
-      XLSX.writeFile(workbook, `clientes_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`);
+      XLSX.writeFile(workbook, `clientes_${fileNameTimestampLima()}.xlsx`);
       setMessage(`Exportación completada: ${data.length} clientes.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo exportar clientes.');

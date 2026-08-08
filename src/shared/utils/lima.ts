@@ -43,6 +43,23 @@ export function nowLimaIso(): string {
   return `${pick('year')}-${pick('month')}-${pick('day')}T${pick('hour')}:${pick('minute')}:${pick('second')}-05:00`;
 }
 
+/** Returns a Windows-safe timestamp for downloaded filenames in Lima time. */
+export function fileNameTimestampLima(): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }).formatToParts(new Date());
+  const pick = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+
+  return `${pick('year')}-${pick('month')}-${pick('day')}_${pick('hour')}-${pick('minute')}-${pick('second')}_${pick('dayPeriod').toUpperCase()}`;
+}
+
 /**
  * Returns a Lima-aware Date object representing "N days ago from now in Lima".
  * Safe to use with todayLima() arithmetic; do NOT call .toISOString() on the result.

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import './CashView.css';
-import { fmtDateTimeLima } from '../../../shared/utils/lima';
+import { fileNameTimestampLima, fmtDateTimeLima } from '../../../shared/utils/lima';
 import {
   closeCashSession,
   createCashMovement,
@@ -359,8 +359,8 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
       { Campo: 'Sesion', Valor: `#${detail.session.id}` },
       { Campo: 'Caja', Valor: detail.session.cash_register_name ?? detail.session.cash_register_code ?? '-' },
       { Campo: 'Usuario', Valor: detail.session.user_name ?? '-' },
-      { Campo: 'Apertura', Valor: detail.session.opened_at ?? '' },
-      { Campo: 'Cierre', Valor: detail.session.closed_at ?? '' },
+      { Campo: 'Apertura', Valor: fmtDateTimeLima(detail.session.opened_at) },
+      { Campo: 'Cierre', Valor: fmtDateTimeLima(detail.session.closed_at) },
       { Campo: 'Saldo Inicial', Valor: Number(detail.session.opening_balance ?? 0) },
       { Campo: 'Entradas', Valor: Number(detail.summary.total_in ?? 0) },
       { Campo: 'Salidas', Valor: Number(detail.summary.total_out ?? 0) },
@@ -385,7 +385,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
       ReferenciaTipo: row.ref_type ?? '',
       ReferenciaId: row.ref_id ?? '',
       Usuario: row.user_name ?? '-',
-      FechaHora: row.movement_at ?? '',
+      FechaHora: fmtDateTimeLima(row.movement_at),
     }));
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(movementRows), 'Movimientos');
 
@@ -404,7 +404,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
         .filter((part) => part !== '')
         .join(' | '),
       Total: Number(doc.total ?? 0),
-      FechaHora: doc.created_at,
+      FechaHora: fmtDateTimeLima(doc.created_at),
     }));
     XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(documentRows), 'Comprobantes');
 
@@ -466,7 +466,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     }
 
     const filePrefix = detailMode === 'DETAILED' ? 'reporte_caja_detallado' : 'reporte_caja_general';
-    const fileName = `${filePrefix}_${new Date().toISOString().replace(/[:.]/g, '-')}.xlsx`;
+    const fileName = `${filePrefix}_${fileNameTimestampLima()}.xlsx`;
     XLSX.writeFile(workbook, fileName);
   }
 

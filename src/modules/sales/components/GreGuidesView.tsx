@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { HtmlPreviewDialog } from '../../../shared/components/HtmlPreviewDialog';
-import { fmtDateTimeFullLima } from '../../../shared/utils/lima';
+import { fileNameTimestampLima, fmtDateTimeFullLima } from '../../../shared/utils/lima';
 import { fetchSalesInventoryProducts, type InventoryProduct } from '../api/facade';
 import {
   cancelGreGuide,
@@ -566,22 +566,6 @@ export function GreGuidesView({ accessToken, branchId, traceabilityEnabled = fal
         setLookups(DEFAULT_LOOKUPS);
         setPayload((prev) => ({ ...prev, series: '' }));
       });
-  };
-
-  const fileNameTimestampLima = () => {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Lima',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    }).formatToParts(new Date());
-
-    const pick = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
-    return `${pick('year')}-${pick('month')}-${pick('day')}_${pick('hour')}-${pick('minute')}-${pick('second')}`;
   };
 
   const handleExportExcel = async () => {
