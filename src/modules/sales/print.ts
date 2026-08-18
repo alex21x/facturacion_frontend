@@ -466,7 +466,7 @@ function findMetaStringValue(
   for (const key of keys) {
     const candidate = record[key];
     if (typeof candidate === 'string' && candidate.trim() !== '') {
-      return candidate.trim();
+      return normalizeMetaScalar(candidate);
     }
 
     if (candidate && typeof candidate === 'object') {
@@ -491,7 +491,7 @@ function findMetaStringValue(
 
 function extractFirstMetaScalar(value: unknown): string {
   if (typeof value === 'string') {
-    return value.trim();
+    return normalizeMetaScalar(value);
   }
 
   if (typeof value === 'number' || typeof value === 'boolean') {
@@ -508,6 +508,27 @@ function extractFirstMetaScalar(value: unknown): string {
   }
 
   return '';
+}
+
+function normalizeMetaScalar(value: string): string {
+  const normalized = value.trim();
+  if (normalized === '') {
+    return '';
+  }
+
+  if ((normalized.startsWith('{') && normalized.endsWith('}')) || (normalized.startsWith('[') && normalized.endsWith(']'))) {
+    try {
+      const decoded = JSON.parse(normalized) as unknown;
+      const scalar = extractFirstMetaScalar(decoded);
+      if (scalar !== '') {
+        return scalar;
+      }
+    } catch {
+      return normalized;
+    }
+  }
+
+  return normalized;
 }
 
 function resolveSunatPrintData(metadata: Record<string, unknown>, docKind: PrintableSalesDocument['documentKind']) {
