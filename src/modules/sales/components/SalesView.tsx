@@ -1256,6 +1256,19 @@ function formatStoredDateTime(value: string): string {
   return fmtDateTimeFullLima(raw);
 }
 
+function formatStoredDateOnly(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '-';
+
+  const pgMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})[ T](?:\d{2}):(?:\d{2})(?::\d{2})?[+-]\d{2}(?::?\d{2})?$/);
+  if (pgMatch) {
+    const [, year, month, day] = pgMatch;
+    return `${day}/${month}/${year}`;
+  }
+
+  return fmtDateLima(raw);
+}
+
 function stockToneClass(stock: number): 'stock-chip--danger' | 'stock-chip--warn' | 'stock-chip--ok' {
   if (!Number.isFinite(stock) || stock <= 0) {
     return 'stock-chip--danger';
@@ -4563,7 +4576,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           Serie: row.series,
           Numero: row.number,
           DocumentoAfectado: String(row.source_document_number ?? '').trim(),
-          FechaEmision: formatStoredDateTime(String(row.issue_at ?? '')),
+          FechaEmision: formatStoredDateOnly(String(row.issue_at ?? '')),
           Cliente: row.customer_name,
           TipoDocCliente: String(row.customer_doc_type ?? '-').trim() || '-',
           NroDocCliente: String(row.customer_doc_number ?? '').trim() || '-',
@@ -4693,7 +4706,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         Documento: String(row.document_kind_label ?? row.document_kind ?? ''),
         Serie: String(row.series ?? ''),
         Numero: String(row.number ?? ''),
-        FechaEmision: formatStoredDateTime(String(row.issue_at ?? '')),
+        FechaEmision: formatStoredDateOnly(String(row.issue_at ?? '')),
         Cliente: String(row.customer_name ?? ''),
         TipoDocCliente: String(row.customer_doc_type ?? '-').trim() || '-',
         NroDocCliente: String(row.customer_doc_number ?? '').trim() || '-',
