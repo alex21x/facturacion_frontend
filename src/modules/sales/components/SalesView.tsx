@@ -2836,7 +2836,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           return;
         }
 
-        const rows = await fetchCustomerAutocomplete(accessToken, queryText);
+        const rows = await fetchCustomerAutocomplete(accessToken, queryText, { branchId });
         setReportCustomerSuggestions(rows.slice(0, 12));
       } catch {
         setReportCustomerSuggestions([]);
@@ -2844,7 +2844,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     }, 220);
 
     return () => clearTimeout(timer);
-  }, [accessToken, documentFiltersDraft.customer, reportCustomerInputFocused, salesWorkspaceMode]);
+  }, [accessToken, branchId, documentFiltersDraft.customer, reportCustomerInputFocused, salesWorkspaceMode]);
 
   useEffect(() => {
     if (!workshopMultiVehicleEnabled || salesWorkspaceMode !== 'REPORT') {

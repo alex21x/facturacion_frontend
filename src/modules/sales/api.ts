@@ -248,11 +248,15 @@ export async function fetchTopProducts(
 
 export async function fetchCustomerAutocomplete(
   accessToken: string,
-  queryText: string
+  queryText: string,
+  context?: { branchId?: number | null }
 ): Promise<SalesCustomerSuggestion[]> {
   const query = new URLSearchParams();
   query.set('q', queryText);
   query.set('limit', '12');
+  if (context?.branchId) {
+    query.set('branch_id', String(context.branchId));
+  }
 
   const response = await apiClient.request<{ data: SalesCustomerSuggestion[] }>(
     `/api/sales/customers/autocomplete?${query.toString()}`,
