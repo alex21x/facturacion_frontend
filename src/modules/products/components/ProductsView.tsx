@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiClient } from '../../../shared/api/client';
-import { fetchInventoryProducts, importInventoryProductsBulkWithChunking, type InventoryBulkImportRow } from '../../inventory/api';
+import { fetchInventoryProducts, fetchInventoryStock, importInventoryProductsBulkWithChunking, type InventoryBulkImportRow } from '../../inventory/api';
 import type { InventoryProduct } from '../../inventory/types';
 import '../products.css';
 
@@ -328,6 +328,7 @@ export function ProductsView({
   defaultNatureFilter = 'ALL',
 }: ProductsViewProps) {
   const [rows, setRows] = useState<InventoryProduct[]>([]);
+  const [stockByProductId, setStockByProductId] = useState<Map<number, number>>(new Map());
   const [units, setUnits] = useState<ProductLookup[]>([]);
   const [categories, setCategories] = useState<ProductLookup[]>([]);
   const [lines, setLines] = useState<ProductMasterEntry[]>([]);
@@ -440,20 +441,24 @@ export function ProductsView({
     return selectedLineInactive || selectedBrandInactive || selectedLocationInactive || selectedWarrantyInactive;
   }, [form.line_id, form.brand_id, form.location_id, form.warranty_id, lines, brands, locations, warranties]);
 
-  async function loadProducts() {
+  async function loadProducts(searchOverride?: string) {
     setLoading(true);
     setMessage('');
 
     try {
-      const [data, lookups, masters] = await Promise.all([
+      const searchValue = (searchOverride ?? search).trim();
+      const normalizedSearch = searchValue.match(/^\[([^\]]+)\]\s+.+$/)?.[1] ?? searchValue;
+      const [data, stockRows, lookups, masters] = await Promise.all([
         fetchInventoryProducts(accessToken, {
-          search: search.trim() || undefined,
+          search: normalizedSearch || undefined,
           status: status === 'all' ? null : Number(status),
         }),
+        fetchInventoryStock(accessToken),
         fetchProductLookups(accessToken),
         fetchProductMasters(accessToken),
       ]);
       setRows(data);
+      setStockByProductId(new Map(stockRows.map((row) => [row.product_id, Number(row.stock ?? 0)])));
       setUnits(lookups.units ?? []);
       setCategories(lookups.categories ?? []);
       setCanManageProducts(lookups.permissions?.can_manage_products !== false);
@@ -1248,10 +1253,11 @@ export function ProductsView({
                         event.preventDefault();
                         const selected = searchSuggestions[searchActiveIndex >= 0 ? searchActiveIndex : 0];
                         if (selected) {
+                          const selectedSearch = selected.sku ?? selected.name;
                           setSearch(selected.sku ? `[${selected.sku}] ${selected.name}` : selected.name);
                           setSearchSuggestOpen(false);
                           setSearchSuggestions([]);
-                          void loadProducts();
+                          void loadProducts(selectedSearch);
                         }
                         return;
                       }
@@ -1283,10 +1289,11 @@ export function ProductsView({
                         className={`suggest-item ${index === searchActiveIndex ? 'active' : ''}`}
                         onMouseDown={(e) => {
                           e.preventDefault();
+                          const selectedSearch = row.sku ?? row.name;
                           setSearch(row.sku ? `[${row.sku}] ${row.name}` : row.name);
                           setSearchSuggestOpen(false);
                           setSearchSuggestions([]);
-                          void loadProducts();
+                          void loadProducts(selectedSearch);
                         }}
                       >
                         <strong>{row.name}</strong>
@@ -1333,6 +1340,7 @@ export function ProductsView({
                   <th>Línea</th>
                   <th>Marca</th>
                   <th>Unidad</th>
+                  <th>Stock</th>
                   <th>Precio Venta</th>
                   <th>Costo comercial</th>
                   <th>Estado</th>
@@ -1349,6 +1357,7 @@ export function ProductsView({
                     <td>{row.line_name ?? '-'}</td>
                     <td>{row.brand_name ?? '-'}</td>
                     <td>{row.unit_code ?? row.unit_name ?? '-'}</td>
+                    <td>{(stockByProductId.get(row.id) ?? 0).toFixed(3)}</td>
                     <td>{row.sale_price}</td>
                     <td>{row.cost_price}</td>
                     <td>{Number(row.status) === 1 ? 'ACTIVO' : 'INACTIVO'}</td>
@@ -1384,7 +1393,7 @@ export function ProductsView({
                 ))}
                 {paginatedProducts.length === 0 && (
                   <tr>
-                    <td colSpan={11}>No hay registros para el filtro actual.</td>
+                    <td colSpan={12}>No hay registros para el filtro actual.</td>
                   </tr>
                 )}
               </tbody>

@@ -3893,8 +3893,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
 
   function updateDraftItem(
     index: number,
-    field: 'qty' | 'unitPrice' | 'discountTotal' | 'isFreeOperation',
-    value: number | boolean
+    field: 'description' | 'unitId' | 'qty' | 'unitPrice' | 'discountTotal' | 'isFreeOperation',
+    value: string | number | boolean | null
   ) {
     setCart((prev) =>
       prev.map((row, i) => {
@@ -7534,7 +7534,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   Cantidad
                   <input
                     type="number"
-                    step="0.001"
+                    step="1"
+                    min="1"
                     value={form.qty}
                     onChange={(e) => setForm((prev) => ({ ...prev, qty: Number(e.target.value) }))}
                   />
@@ -7566,7 +7567,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   Precio unitario
                   <input
                     type="number"
-                    step="0.01"
+                    step="1"
+                    min="0"
                     value={form.unitPrice}
                     onChange={(e) => setForm((prev) => ({ ...prev, unitPrice: Number(e.target.value) }))}
                     onKeyDown={handleQuickAddItem}
@@ -7655,7 +7657,15 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                         return (
                           <tr key={`${item.productId}-${item.lotId}-${index}`}>
                             <td>{index + 1}</td>
-                            <td>{item.description}</td>
+                            <td>
+                              {item.isManual ? (
+                                <input
+                                  className="cell-input sales-cart-cell-input"
+                                  value={item.description}
+                                  onChange={(e) => updateDraftItem(index, 'description', e.target.value)}
+                                />
+                              ) : item.description}
+                            </td>
                             <td>
                               {item.isManual || !item.productId
                                 ? '-'
@@ -7664,14 +7674,29 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                                     return <span className={`stock-chip ${stockToneClass(stock)}`}>{stock.toFixed(3)}</span>;
                                   })()}
                             </td>
-                            <td className="sales-col-unit">{unitLabelForPrint(lookups?.units ?? null, item.unitId ?? null)}</td>
+                            <td className="sales-col-unit">
+                              {item.isManual ? (
+                                <select
+                                  className="cell-input sales-cart-cell-input"
+                                  value={item.unitId ?? ''}
+                                  onChange={(e) => updateDraftItem(index, 'unitId', e.target.value ? Number(e.target.value) : null)}
+                                >
+                                  <option value="">Seleccionar unidad</option>
+                                  {(lookups?.units ?? []).map((unit) => (
+                                    <option key={unit.id} value={unit.id}>
+                                      {unit.code} - {unit.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : unitLabelForPrint(lookups?.units ?? null, item.unitId ?? null)}
+                            </td>
                             <td>{item.taxLabel}</td>
                             <td className="sales-col-qty">
                               <input
                                 className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
                                 type="number"
-                                step="0.001"
-                                min="0.001"
+                                step="1"
+                                min="1"
                                 value={item.qty}
                                 onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
                               />
@@ -7680,8 +7705,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                               <input
                                 className="cell-input sales-cart-cell-input sales-cart-cell-input--price"
                                 type="number"
-                                step="0.01"
-                                min="0.01"
+                                step="1"
+                                min="0"
                                 value={item.unitPrice}
                                 onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
                               />
