@@ -1507,6 +1507,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [reportCustomerSuggestions, setReportCustomerSuggestions] = useState<SalesCustomerSuggestion[]>([]);
   const [reportCustomerVehicles, setReportCustomerVehicles] = useState<SalesCustomerVehicle[]>([]);
   const [loadingReportCustomerVehicles, setLoadingReportCustomerVehicles] = useState(false);
+  const [reportSelectedPlate, setReportSelectedPlate] = useState('');
   const tributaryReportFiltersEnabled = documentViewFilter === 'TRIBUTARY';
 
   const documentKindLabelMap = useMemo(() => {
@@ -2879,7 +2880,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           }
 
           if (!prev.customerVehicleId) {
-            return prev;
+            const normalizedPlate = reportSelectedPlate.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+            if (!normalizedPlate) {
+              return prev;
+            }
+
+            const matchingVehicle = activeRows.find((row) => (
+              String(row.plate ?? '').replace(/[^A-Z0-9]/gi, '').toUpperCase() === normalizedPlate
+            ));
+
+            return matchingVehicle ? { ...prev, customerVehicleId: String(matchingVehicle.id) } : prev;
           }
 
           const hasCurrent = activeRows.some((row) => String(row.id) === String(prev.customerVehicleId));
@@ -2898,7 +2908,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           setLoadingReportCustomerVehicles(false);
         }
       });
-  }, [accessToken, documentFiltersDraft.customerId, salesWorkspaceMode, workshopMultiVehicleEnabled]);
+  }, [accessToken, documentFiltersDraft.customerId, reportSelectedPlate, salesWorkspaceMode, workshopMultiVehicleEnabled]);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -4433,6 +4443,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setReportCustomerSuggestions([]);
     setReportCustomerVehicles([]);
     setReportCustomerInputFocused(false);
+    setReportSelectedPlate('');
     setDocumentFiltersDraft(initialDocumentAdvancedFilters);
     setDocumentFiltersApplied(initialDocumentAdvancedFilters);
     setDocumentsPage(1);
@@ -4471,6 +4482,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       customerId: String(customer.id),
       customerVehicleId: '',
     }));
+    setReportSelectedPlate(String(customer.plate ?? '').trim());
   }
 
   async function handleExportDocumentsExcel() {
@@ -8315,6 +8327,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   onChange={(event) => {
                     const nextValue = event.target.value;
                     setReportCustomerInputFocused(true);
+                    setReportSelectedPlate('');
                     setDocumentFiltersDraft((prev) => ({
                       ...prev,
                       customer: nextValue,
