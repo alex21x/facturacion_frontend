@@ -6603,7 +6603,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       )}
       {salesWorkspaceMode === 'SELL' && canUseSellWorkspace && (
         <>
-      <form className="sales-form" onSubmit={handleSubmit}>
+      <form className="sales-form" noValidate onSubmit={handleSubmit}>
         <div className="sales-grid-head">
           <label>
             Tipo de comprobante
@@ -7564,7 +7564,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   Precio unitario
                   <input
                     type="number"
-                    step="1"
+                    step="any"
                     min="0"
                     value={form.unitPrice}
                     onChange={(e) => setForm((prev) => ({ ...prev, unitPrice: Number(e.target.value) }))}
@@ -7720,7 +7720,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                               <input
                                 className="cell-input sales-cart-cell-input sales-cart-cell-input--price"
                                 type="number"
-                                step="1"
+                                step="any"
                                 min="0"
                                 value={item.unitPrice}
                                 onChange={(e) => updateDraftItem(index, 'unitPrice', Number(e.target.value))}
