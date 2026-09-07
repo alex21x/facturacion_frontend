@@ -3910,6 +3910,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     );
   }
 
+  function bumpDraftItemQuantity(index: number, delta: number) {
+    setCart((prev) =>
+      prev.map((row, i) => (
+        i === index
+          ? { ...row, qty: Math.max(1, Number(row.qty || 0) + delta) }
+          : row
+      ))
+    );
+  }
+
   function updateCreditInstallment(index: number, patch: Partial<NonNullable<CreateDocumentForm['creditInstallments']>[number]>) {
     setForm((prev) => ({
       ...prev,
@@ -7534,20 +7544,38 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   Cantidad
                   <input
                     type="number"
-                    step="1"
+                    step="any"
                     min="1"
                     value={form.qty}
                     onChange={(e) => setForm((prev) => ({ ...prev, qty: Number(e.target.value) }))}
                   />
                 </label>
-
-                {isTributaryDocument && (
-                  <label className="sales-field-igv">
-                    Tipo de IGV
-                    <select
-                      value={form.taxCategoryId ?? ''}
-                      onChange={(e) =>
-                        setForm((prev) => ({
+                              <div className="sales-qty-stepper">
+                                <button
+                                  type="button"
+                                  className="sales-qty-stepper__button"
+                                  onClick={() => bumpDraftItemQuantity(index, -1)}
+                                  aria-label="Disminuir cantidad"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
+                                  type="number"
+                                  step="any"
+                                  min="1"
+                                  value={item.qty}
+                                  onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
+                                />
+                                <button
+                                  type="button"
+                                  className="sales-qty-stepper__button"
+                                  onClick={() => bumpDraftItemQuantity(index, 1)}
+                                  aria-label="Aumentar cantidad"
+                                >
+                                  +
+                                </button>
+                              </div>
                           ...prev,
                           taxCategoryId: e.target.value ? Number(e.target.value) : null,
                         }))
