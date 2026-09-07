@@ -7073,7 +7073,22 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       setForm((prev) => ({ ...prev, noteAffectedDocumentId: value }));
                       if (value) {
                         void chooseReferenceDocument(value);
-                      } else {
+                      }
+                    }}
+                  >
+                    <option value="">Seleccionar documento</option>
+                    {referenceDocuments.map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {docKindLabelResolved(row.document_kind)} {row.series}-{String(row.number).padStart(6, '0')}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="sales-field-customer-meta">
+                  Motivo de nota
+                  <select
+                    value={form.noteReasonCode ?? ''}
                     onChange={(e) => setForm((prev) => ({ ...prev, noteReasonCode: e.target.value }))}
                   >
                     <option value="">Seleccionar tipo</option>
@@ -7524,36 +7539,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     onChange={(e) => setForm((prev) => ({ ...prev, qty: Number(e.target.value) }))}
                   />
                 </label>
-                              <div className="sales-qty-stepper">
-                                <button
-                                  type="button"
-                                  className="sales-qty-stepper__button"
-                                  onClick={() => bumpDraftItemQuantity(index, -1)}
-                                  aria-label="Disminuir cantidad"
-                                >
-                                  -
-                                </button>
-                                <input
-                                  className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
-                                  type="number"
-                                  step="any"
-                                  min="1"
-                                  value={item.qty}
-                                  onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
-                                />
-                                <button
-                                  type="button"
-                                  className="sales-qty-stepper__button"
-                                  onClick={() => bumpDraftItemQuantity(index, 1)}
-                                  aria-label="Aumentar cantidad"
-                                >
-                                  +
-                                </button>
-                              </div>
-                          ...prev,
-                          taxCategoryId: e.target.value ? Number(e.target.value) : null,
-                        }))
-                      }
+
+                {isTributaryDocument && (
+                  <label className="sales-field-igv">
+                    Tipo de IGV
+                    <select
+                      value={form.taxCategoryId ?? ''}
+                      onChange={(e) => setForm((prev) => ({
+                        ...prev,
+                        taxCategoryId: e.target.value ? Number(e.target.value) : null,
+                      }))}
                     >
                       <option value="">Seleccionar tipo IGV</option>
                       {(lookups?.tax_categories ?? []).map((row) => (
