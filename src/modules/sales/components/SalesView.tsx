@@ -7074,32 +7074,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       if (value) {
                         void chooseReferenceDocument(value);
                       } else {
-                        setCart([]);
-                      }
-                    }}
-                    disabled={loadingReferenceDocument || !form.customerId}
-                  >
-                    <option value="">Seleccionar comprobante</option>
-                    {referenceDocuments.map((row) => {
-                      const sourceTotal = Number(row.total ?? 0);
-                      const appliedTotal = isCreditNote
-                        ? Number(row.applied_credit_total ?? 0)
-                        : Number(row.applied_debit_total ?? 0);
-                      const remainingTotal = Math.max(0, sourceTotal - appliedTotal);
-
-                      return (
-                        <option key={row.id} value={row.id}>
-                          {docKindLabelResolved(row.document_kind)} {row.series}-{String(row.number).padStart(6, '0')} | Disponible: {remainingTotal.toFixed(2)}
-                        </option>
-                      );
-                    })}
-                  </select>
-                </label>
-
-                <label className="sales-field-address">
-                  Tipo de {isCreditNote ? 'nota de credito' : 'nota de debito'}
-                  <select
-                    value={form.noteReasonCode ?? ''}
                     onChange={(e) => setForm((prev) => ({ ...prev, noteReasonCode: e.target.value }))}
                   >
                     <option value="">Seleccionar tipo</option>
@@ -7720,14 +7694,32 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             </td>
                             <td>{item.taxLabel}</td>
                             <td className="sales-col-qty">
-                              <input
-                                className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
-                                type="number"
-                                step="1"
-                                min="1"
-                                value={item.qty}
-                                onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
-                              />
+                              <div className="sales-qty-stepper">
+                                <button
+                                  type="button"
+                                  className="sales-qty-stepper__button"
+                                  onClick={() => bumpDraftItemQuantity(index, -1)}
+                                  aria-label="Disminuir cantidad"
+                                >
+                                  -
+                                </button>
+                                <input
+                                  className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
+                                  type="number"
+                                  step="any"
+                                  min="1"
+                                  value={item.qty}
+                                  onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
+                                />
+                                <button
+                                  type="button"
+                                  className="sales-qty-stepper__button"
+                                  onClick={() => bumpDraftItemQuantity(index, 1)}
+                                  aria-label="Aumentar cantidad"
+                                >
+                                  +
+                                </button>
+                              </div>
                             </td>
                             <td className="sales-col-price">
                               <input
