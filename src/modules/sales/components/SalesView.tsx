@@ -187,6 +187,36 @@ const initialDocumentAdvancedFilters: DocumentAdvancedFilters = {
   sunatStatus: '',
 };
 
+function readStoredDocumentFilters(): DocumentAdvancedFilters {
+  if (typeof window === 'undefined') {
+    return { ...initialDocumentAdvancedFilters };
+  }
+
+  try {
+    const raw = window.localStorage.getItem(SALES_REPORT_FILTERS_STORAGE_KEY);
+    if (!raw) {
+      return { ...initialDocumentAdvancedFilters };
+    }
+
+    const parsed = JSON.parse(raw) as Partial<DocumentAdvancedFilters>;
+    return {
+      customer: typeof parsed.customer === 'string' ? parsed.customer : '',
+      customerId: typeof parsed.customerId === 'string' ? parsed.customerId : '',
+      customerVehicleId: typeof parsed.customerVehicleId === 'string' ? parsed.customerVehicleId : '',
+      documentKind: typeof parsed.documentKind === 'string' ? parsed.documentKind : '',
+      sourceOrigin: parsed.sourceOrigin === 'RESTAURANT' ? 'RESTAURANT' : '',
+      issueDateFrom: typeof parsed.issueDateFrom === 'string' ? parsed.issueDateFrom : '',
+      issueDateTo: typeof parsed.issueDateTo === 'string' ? parsed.issueDateTo : '',
+      series: typeof parsed.series === 'string' ? parsed.series : '',
+      number: typeof parsed.number === 'string' ? parsed.number : '',
+      status: typeof parsed.status === 'string' ? parsed.status : '',
+      sunatStatus: typeof parsed.sunatStatus === 'string' ? parsed.sunatStatus : '',
+    };
+  } catch {
+    return { ...initialDocumentAdvancedFilters };
+  }
+}
+
 function resolveConversionFactor(config: ProductCommercialConfig | null, selectedUnitId: number | null): number {
   if (!selectedUnitId) {
     return 1;
@@ -1471,36 +1501,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     loading: boolean;
     error: string;
   }>(null);
-  const [documentFiltersDraft, setDocumentFiltersDraft] = useState<DocumentAdvancedFilters>(() => {
-    if (typeof window === 'undefined') {
-      return initialDocumentAdvancedFilters;
-    }
-
-    try {
-      const raw = window.localStorage.getItem(SALES_REPORT_FILTERS_STORAGE_KEY);
-      if (!raw) {
-        return initialDocumentAdvancedFilters;
-      }
-
-      const parsed = JSON.parse(raw) as Partial<DocumentAdvancedFilters>;
-      return {
-        customer: typeof parsed.customer === 'string' ? parsed.customer : '',
-        customerId: typeof parsed.customerId === 'string' ? parsed.customerId : '',
-        customerVehicleId: typeof parsed.customerVehicleId === 'string' ? parsed.customerVehicleId : '',
-        documentKind: typeof parsed.documentKind === 'string' ? parsed.documentKind : '',
-        sourceOrigin: parsed.sourceOrigin === 'RESTAURANT' ? 'RESTAURANT' : '',
-        issueDateFrom: typeof parsed.issueDateFrom === 'string' ? parsed.issueDateFrom : '',
-        issueDateTo: typeof parsed.issueDateTo === 'string' ? parsed.issueDateTo : '',
-        series: typeof parsed.series === 'string' ? parsed.series : '',
-        number: typeof parsed.number === 'string' ? parsed.number : '',
-        status: typeof parsed.status === 'string' ? parsed.status : '',
-        sunatStatus: typeof parsed.sunatStatus === 'string' ? parsed.sunatStatus : '',
-      };
-    } catch {
-      return initialDocumentAdvancedFilters;
-    }
-  });
-  const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(initialDocumentAdvancedFilters);
+  const [documentFiltersDraft, setDocumentFiltersDraft] = useState<DocumentAdvancedFilters>(readStoredDocumentFilters);
+  const [documentFiltersApplied, setDocumentFiltersApplied] = useState<DocumentAdvancedFilters>(readStoredDocumentFilters);
   const [exportingDocuments, setExportingDocuments] = useState(false);
   const [processingBulkSunatAnnulment, setProcessingBulkSunatAnnulment] = useState(false);
   const [reportCustomerInputFocused, setReportCustomerInputFocused] = useState(false);
@@ -3907,16 +3909,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           [field]: value,
         };
       })
-    );
-  }
-
-  function bumpDraftItemQuantity(index: number, delta: number) {
-    setCart((prev) =>
-      prev.map((row, i) => (
-        i === index
-          ? { ...row, qty: Math.max(1, Number(row.qty || 0) + delta) }
-          : row
-      ))
     );
   }
 
@@ -7689,32 +7681,14 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                             </td>
                             <td>{item.taxLabel}</td>
                             <td className="sales-col-qty">
-                              <div className="sales-qty-stepper">
-                                <button
-                                  type="button"
-                                  className="sales-qty-stepper__button"
-                                  onClick={() => bumpDraftItemQuantity(index, -1)}
-                                  aria-label="Disminuir cantidad"
-                                >
-                                  -
-                                </button>
-                                <input
-                                  className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
-                                  type="number"
-                                  step="any"
-                                  min="1"
-                                  value={item.qty}
-                                  onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
-                                />
-                                <button
-                                  type="button"
-                                  className="sales-qty-stepper__button"
-                                  onClick={() => bumpDraftItemQuantity(index, 1)}
-                                  aria-label="Aumentar cantidad"
-                                >
-                                  +
-                                </button>
-                              </div>
+                              <input
+                                className="cell-input sales-cart-cell-input sales-cart-cell-input--qty"
+                                type="number"
+                                step="any"
+                                min="1"
+                                value={item.qty}
+                                onChange={(e) => updateDraftItem(index, 'qty', Number(e.target.value))}
+                              />
                             </td>
                             <td className="sales-col-price">
                               <input
