@@ -495,7 +495,7 @@ export function ProductsView({
         const result = await fetchInventoryProducts(accessToken, {
           search: query,
           status: status === 'all' ? null : Number(status),
-          limit: 10,
+          limit: 100,
           autocomplete: true,
         });
         if (!cancelled) {

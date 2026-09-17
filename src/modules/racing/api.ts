@@ -170,7 +170,7 @@ export async function fetchInventoryProductAutocomplete(
 ): Promise<InventoryProductsResponse> {
   const query = new URLSearchParams();
   query.set('autocomplete', '1');
-  query.set('limit', '20');
+  query.set('limit', '100');
   if (search.trim() !== '') {
     query.set('search', search.trim());
   }

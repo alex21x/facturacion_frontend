@@ -650,7 +650,7 @@ export function InventoryView({
           search: query,
           warehouseId: warehouseId ?? undefined,
           status: 1,
-          limit: 12,
+          limit: 100,
           autocomplete: true,
         });
 
@@ -695,7 +695,7 @@ export function InventoryView({
         const rows = await fetchInventoryProducts(accessToken, {
           search: query,
           status: 1,
-          limit: 12,
+          limit: 100,
           autocomplete: true,
         });
 
