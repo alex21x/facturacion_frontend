@@ -557,9 +557,10 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
       return;
     }
 
+    // 30s balances real-time freshness against /api/cash/movements query cost (see idx_cash_movements_company_*_movement_at).
     const timer = setInterval(() => {
       void loadCurrentSession();
-    }, 12000);
+    }, 30000);
 
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
