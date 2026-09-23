@@ -468,6 +468,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [search, setSearch] = useState('');
+  const [selectedSearchValue, setSelectedSearchValue] = useState<string | null>(null);
   const [status, setStatus] = useState<'all' | '1' | '0'>('1');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<CustomerFormState>(EMPTY_FORM);
@@ -494,7 +495,13 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     return rows.slice(start, start + PAGE_SIZE);
   }, [rows, page]);
   const searchHints = useMemo(() => {
-    const suggestions = new Set<string>();
+    const suggestions = new Map<string, string>();
+
+    const addSuggestion = (label: string, value: string) => {
+      if (label && value) {
+        suggestions.set(label, value);
+      }
+    };
 
     rows.forEach((row) => {
       const doc = (row.doc_number ?? '').trim();
@@ -504,25 +511,25 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
       const phone = (row.phone ?? '').trim();
 
       if (doc) {
-        suggestions.add(doc);
+        addSuggestion(doc, doc);
       }
       if (doc && name) {
-        suggestions.add(`${doc} - ${name}`);
+        addSuggestion(`${doc} - ${name}`, doc);
       } else if (name) {
-        suggestions.add(name);
+        addSuggestion(name, name);
       }
       if (trade && normalizeImportText(trade) !== normalizeImportText(name)) {
-        suggestions.add(trade);
+        addSuggestion(trade, trade);
       }
       if (plate) {
-        suggestions.add(plate);
+        addSuggestion(plate, plate);
       }
       if (phone) {
-        suggestions.add(phone);
+        addSuggestion(phone, phone);
       }
     });
 
-    return Array.from(suggestions).slice(0, 120);
+    return Array.from(suggestions, ([label, value]) => ({ label, value })).slice(0, 120);
   }, [rows]);
   const visibleSearchHints = useMemo(() => {
     const query = normalizeImportText(search);
@@ -531,7 +538,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     }
 
     return searchHints
-      .filter((item) => normalizeImportText(item).includes(query))
+      .filter((item) => normalizeImportText(item.label).includes(query))
       .slice(0, 12);
   }, [search, searchHints]);
 
@@ -544,7 +551,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
     setMessage('');
 
     try {
-      const searchText = (forcedSearch ?? search).trim();
+      const searchText = (forcedSearch ?? selectedSearchValue ?? search).trim();
       const data = await fetchCustomers(accessToken, {
         q: searchText || undefined,
         status: status === 'all' ? null : Number(status),
@@ -1055,6 +1062,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
+              setSelectedSearchValue(null);
               setSearchFocused(true);
             }}
             autoComplete="off"
@@ -1074,7 +1082,7 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
             <div className="suggest-box suggest-box--customer customers-search-suggest">
               {visibleSearchHints.map((item) => (
                 <button
-                  key={item}
+                  key={item.label}
                   type="button"
                   className="suggest-item"
                   onMouseDown={(event) => {
@@ -1082,12 +1090,13 @@ export function CustomersView({ accessToken }: CustomersViewProps) {
                     event.stopPropagation();
                   }}
                   onClick={() => {
-                    setSearch(item);
+                    setSearch(item.label);
+                    setSelectedSearchValue(item.value);
                     setSearchFocused(false);
-                    window.setTimeout(() => void loadCustomers(item), 0);
+                    window.setTimeout(() => void loadCustomers(item.value), 0);
                   }}
                 >
-                  <strong>{item}</strong>
+                  <strong>{item.label}</strong>
                 </button>
               ))}
             </div>
