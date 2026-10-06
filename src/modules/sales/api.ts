@@ -918,6 +918,9 @@ export async function createCommercialDocument(accessToken: string, form: Create
       : null,
     customer_address: form.customerAddress?.trim() || null,
     customer_phone: form.customerPhone?.trim() || null,
+    vehicle_odometer_km: form.customerVehicleId && String(form.vehicleOdometerKm ?? '').trim() !== ''
+      ? Number(String(form.vehicleOdometerKm).replace(/\D+/g, ''))
+      : null,
     source_document_id: form.noteAffectedDocumentId ?? null,
     note_reason_code: form.noteReasonCode?.trim() || null,
     has_detraccion: form.hasDetraccion ?? false,

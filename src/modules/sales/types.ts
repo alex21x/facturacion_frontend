@@ -490,6 +490,7 @@ export type CreateDocumentForm = {
   documentKindId?: number | null;
   customerId: number;
   customerVehicleId?: number | null;
+  vehicleOdometerKm?: string;
   currencyId: number;
   paymentMethodId: number;
   productId: number | null;

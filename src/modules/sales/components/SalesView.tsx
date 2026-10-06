@@ -367,6 +367,7 @@ const initialForm: CreateDocumentForm = {
   documentKind: 'RECEIPT',
   customerId: 0,
   customerVehicleId: null,
+  vehicleOdometerKm: '',
   currencyId: 1,
   paymentMethodId: 0,
   productId: null,
@@ -5228,6 +5229,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       const normalizedDocumentMetadata = {
         customer_address: form.customerAddress?.trim() || null,
         customer_phone: form.customerPhone?.trim() || null,
+        vehicle_odometer_km: workshopMultiVehicleEnabled && form.customerVehicleId && String(form.vehicleOdometerKm ?? '').trim() !== ''
+          ? Number(String(form.vehicleOdometerKm).replace(/\D+/g, ''))
+          : null,
         discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
         has_detraccion: form.hasDetraccion ?? false,
         detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
@@ -5465,6 +5469,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             vehicle_plate: workshopMultiVehicleEnabled ? (selectedVehicle?.plate ?? null) : null,
             vehicle_brand: workshopMultiVehicleEnabled ? (selectedVehicle?.brand ?? null) : null,
             vehicle_model: workshopMultiVehicleEnabled ? (selectedVehicle?.model ?? null) : null,
+            vehicle_odometer_km: workshopMultiVehicleEnabled && selectedVehicle && String(form.vehicleOdometerKm ?? '').trim() !== ''
+              ? Number(String(form.vehicleOdometerKm).replace(/\D+/g, ''))
+              : null,
             sunat_operation_type_code: (form.hasDetraccion || form.hasRetencion || form.hasPercepcion)
               ? (form.sunatOperationTypeCode || selectedSunatOperationType?.code || null)
               : null,
@@ -6143,6 +6150,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         documentKind: noteKind,
         customerId: Number(details.customerId ?? 0),
         customerVehicleId: toOptionalNumber(details.customerVehicleId ?? details.metadata?.customer_vehicle_id),
+        vehicleOdometerKm: String(details.metadata?.vehicle_odometer_km ?? '').replace(/\D+/g, ''),
         currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
@@ -6292,6 +6300,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         documentKind: details.documentKind,
         customerId: Number(details.customerId ?? prev.customerId ?? 0),
         customerVehicleId: toOptionalNumber(details.customerVehicleId ?? details.metadata?.customer_vehicle_id),
+        vehicleOdometerKm: String(details.metadata?.vehicle_odometer_km ?? '').replace(/\D+/g, ''),
         currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
@@ -6755,6 +6764,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 + Nuevo
               </button>
             </div>
+          )}
+
+          {workshopMultiVehicleEnabled && (
+            <label className="sales-field-address">
+              Kilometraje actual
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={7}
+                value={form.vehicleOdometerKm ?? ''}
+                disabled={!form.customerVehicleId}
+                onChange={(e) => setForm((prev) => ({ ...prev, vehicleOdometerKm: e.target.value.replace(/\D+/g, '') }))}
+                placeholder="Kilometraje del vehículo (km)"
+              />
+            </label>
           )}
 
           <label className="sales-field-address">

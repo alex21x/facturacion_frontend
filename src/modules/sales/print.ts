@@ -322,7 +322,7 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
 function resolveVehiclePrintData(
   metadata: Record<string, unknown>,
   doc?: PrintableSalesDocument,
-): { plate: string; brand: string; model: string } {
+): { plate: string; brand: string; model: string; odometer: string } {
   const plate = String(
     doc?.metadata?.vehiclePlateSnapshot
     ?? (doc as unknown as Record<string, unknown> | undefined)?.vehiclePlateSnapshot
@@ -343,7 +343,10 @@ function resolveVehiclePrintData(
     ?? ''
   ).trim();
 
-  return { plate, brand, model };
+  const odometerDigits = String(metadata.vehicle_odometer_km ?? '').replace(/\D+/g, '');
+  const odometer = odometerDigits !== '' ? `${Number(odometerDigits).toLocaleString('en-US')} km` : '';
+
+  return { plate, brand, model, odometer };
 }
 
 function paymentBrandsFooterHtml(size: 'A4' | '80mm'): string {
@@ -794,6 +797,7 @@ export function buildCommercialDocumentA4Html(
               <p class="kv"><b>Razon Social:</b> ${escapeHtml(doc.customerName || '-')}</p>
               <p class="kv"><b>Direccion:</b> ${escapeHtml(doc.customerAddress || '-')}</p>
               ${vehiclePrint.plate ? `<p class="kv"><b>Vehiculo:</b> ${escapeHtml(vehiclePrint.plate)}${vehiclePrint.brand || vehiclePrint.model ? ` (${escapeHtml([vehiclePrint.brand, vehiclePrint.model].filter((x) => x !== '').join(' '))})` : ''}</p>` : ''}
+              ${vehiclePrint.odometer ? `<p class="kv"><b>Kilometraje:</b> ${escapeHtml(vehiclePrint.odometer)}</p>` : ''}
               <p class="kv"><b>Fecha Emision:</b> ${formatDateTime(doc.issueDate)}</p>
               <p class="kv"><b>Tipo Moneda:</b> ${escapeHtml(doc.currencyCode)}</p>
             </article>
@@ -1253,6 +1257,10 @@ export function buildCommercialDocument80mmHtml(
             ${vehiclePrint.plate ? `<div class="info-row">
               <div class="info-label">Vehículo:</div>
               <div class="info-value">${escapeHtml(vehiclePrint.plate)}${vehiclePrint.brand || vehiclePrint.model ? ` (${escapeHtml([vehiclePrint.brand, vehiclePrint.model].filter((x) => x !== '').join(' '))})` : ''}</div>
+            </div>` : ''}
+            ${vehiclePrint.odometer ? `<div class="info-row">
+              <div class="info-label">Kilometraje:</div>
+              <div class="info-value">${escapeHtml(vehiclePrint.odometer)}</div>
             </div>` : ''}
           </div>
 
