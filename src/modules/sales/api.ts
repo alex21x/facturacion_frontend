@@ -921,6 +921,9 @@ export async function createCommercialDocument(accessToken: string, form: Create
     vehicle_odometer_km: form.customerVehicleId && String(form.vehicleOdometerKm ?? '').trim() !== ''
       ? Number(String(form.vehicleOdometerKm).replace(/\D+/g, ''))
       : null,
+    vehicle_next_odometer_km: form.customerVehicleId && String(form.vehicleNextOdometerKm ?? '').trim() !== ''
+      ? Number(String(form.vehicleNextOdometerKm).replace(/\D+/g, ''))
+      : null,
     source_document_id: form.noteAffectedDocumentId ?? null,
     note_reason_code: form.noteReasonCode?.trim() || null,
     has_detraccion: form.hasDetraccion ?? false,

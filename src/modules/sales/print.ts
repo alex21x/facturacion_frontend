@@ -322,7 +322,7 @@ function resolvePrintableCompanyProfile(source: PrintableSalesDocument | CashRep
 function resolveVehiclePrintData(
   metadata: Record<string, unknown>,
   doc?: PrintableSalesDocument,
-): { plate: string; brand: string; model: string; odometer: string } {
+): { plate: string; brand: string; model: string; odometer: string; nextOdometer: string } {
   const plate = String(
     doc?.metadata?.vehiclePlateSnapshot
     ?? (doc as unknown as Record<string, unknown> | undefined)?.vehiclePlateSnapshot
@@ -345,8 +345,10 @@ function resolveVehiclePrintData(
 
   const odometerDigits = String(metadata.vehicle_odometer_km ?? '').replace(/\D+/g, '');
   const odometer = odometerDigits !== '' ? `${Number(odometerDigits).toLocaleString('en-US')} km` : '';
+  const nextOdometerDigits = String(metadata.vehicle_next_odometer_km ?? '').replace(/\D+/g, '');
+  const nextOdometer = nextOdometerDigits !== '' ? `${Number(nextOdometerDigits).toLocaleString('en-US')} km` : '';
 
-  return { plate, brand, model, odometer };
+  return { plate, brand, model, odometer, nextOdometer };
 }
 
 function paymentBrandsFooterHtml(size: 'A4' | '80mm'): string {
@@ -798,6 +800,7 @@ export function buildCommercialDocumentA4Html(
               <p class="kv"><b>Direccion:</b> ${escapeHtml(doc.customerAddress || '-')}</p>
               ${vehiclePrint.plate ? `<p class="kv"><b>Vehiculo:</b> ${escapeHtml(vehiclePrint.plate)}${vehiclePrint.brand || vehiclePrint.model ? ` (${escapeHtml([vehiclePrint.brand, vehiclePrint.model].filter((x) => x !== '').join(' '))})` : ''}</p>` : ''}
               ${vehiclePrint.odometer ? `<p class="kv"><b>Kilometraje:</b> ${escapeHtml(vehiclePrint.odometer)}</p>` : ''}
+              ${vehiclePrint.nextOdometer ? `<p class="kv"><b>Prox. Kilometraje:</b> ${escapeHtml(vehiclePrint.nextOdometer)}</p>` : ''}
               <p class="kv"><b>Fecha Emision:</b> ${formatDateTime(doc.issueDate)}</p>
               <p class="kv"><b>Tipo Moneda:</b> ${escapeHtml(doc.currencyCode)}</p>
             </article>
@@ -1261,6 +1264,10 @@ export function buildCommercialDocument80mmHtml(
             ${vehiclePrint.odometer ? `<div class="info-row">
               <div class="info-label">Kilometraje:</div>
               <div class="info-value">${escapeHtml(vehiclePrint.odometer)}</div>
+            </div>` : ''}
+            ${vehiclePrint.nextOdometer ? `<div class="info-row">
+              <div class="info-label">Prox. Km:</div>
+              <div class="info-value">${escapeHtml(vehiclePrint.nextOdometer)}</div>
             </div>` : ''}
           </div>
 

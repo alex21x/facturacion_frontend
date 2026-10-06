@@ -491,6 +491,7 @@ export type CreateDocumentForm = {
   customerId: number;
   customerVehicleId?: number | null;
   vehicleOdometerKm?: string;
+  vehicleNextOdometerKm?: string;
   currencyId: number;
   paymentMethodId: number;
   productId: number | null;
