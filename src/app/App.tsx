@@ -29,6 +29,7 @@ type ModuleTab =
   | 'home'
   | 'cash'
   | 'racing-ops'
+  | 'ai-agent'
   | 'restaurant-orders'
   | 'comandas'
   | 'tables'
@@ -67,6 +68,7 @@ const QUICK_ACCESS_PRIORITY: ModuleTab[] = [
   'home',
   'sales',
   'racing-ops',
+  'ai-agent',
   'cash',
   'purchases',
   'inventory',
@@ -110,6 +112,7 @@ const RecipeEditorView = lazy(() => import('../modules/restaurant/components/Rec
 const loadSalesView = () => import('../modules/sales/components/SalesView');
 const CashView = lazy(() => loadCashView().then((m) => ({ default: m.CashView })));
 const RacingOperationsView = lazy(() => import('../modules/racing/components/RacingOperationsView').then((m) => ({ default: m.RacingOperationsView })));
+const AiAgentView = lazy(() => import('../modules/ai-agent/components/AiAgentView').then((m) => ({ default: m.AiAgentView })));
 const SalesView = lazy(() => loadSalesView().then((m) => ({ default: m.SalesView })));
 const DailySummaryView = lazy(() => import('../modules/sales/components/DailySummaryView').then((m) => ({ default: m.DailySummaryView })));
 const GreGuidesView = lazy(() => import('../modules/sales/components/GreGuidesView').then((m) => ({ default: m.GreGuidesView })));
@@ -193,6 +196,19 @@ const MENU_ITEMS: Array<{
     icon: (
       <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
         <path d="M3 14h2l2-4h9l2 4h3M7 14h10M8 10l1-3h6l1 3M7 17a1.5 1.5 0 1 0 0 .01M17 17a1.5 1.5 0 1 0 0 .01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: 'ai-agent',
+    group: 'operacion',
+    kicker: 'Automatizacion',
+    label: 'Agente IA',
+    hint: 'Crear pedidos por texto o audio',
+    moduleCode: 'SALES',
+    icon: (
+      <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 3a7 7 0 0 0-7 7v3a3 3 0 0 0 3 3h1v-5H7m5-8a7 7 0 0 1 7 7v3a3 3 0 0 1-3 3h-1v-5h2M9 20h6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
     ),
   },
@@ -1630,6 +1646,13 @@ export function App() {
                 )}
                 {activeTab === 'racing-ops' && (
                   <RacingOperationsView accessToken={session.accessToken} />
+                )}
+                {activeTab === 'ai-agent' && (
+                  <AiAgentView
+                    accessToken={session.accessToken}
+                    branchId={selectedBranchId}
+                    warehouseId={selectedWarehouseId}
+                  />
                 )}
                 {activeTab === 'restaurant-orders' && (
                   <RestaurantOrderView
