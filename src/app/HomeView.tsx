@@ -34,12 +34,7 @@ import quickSunatExceptionsImg from '../assets/quickhome/icons/sunat-exceptions.
 import quickTablesImg from '../assets/quickhome/icons/tables.png';
 
 // ── types (local, not exported — only used in this component) ─────────────────
-type ModuleTab =
-  | 'home' | 'cash' | 'racing-ops' | 'restaurant-orders' | 'comandas' | 'tables'
-  | 'restaurant-recipes' | 'sales' | 'daily-summary' | 'gre-guides'
-  | 'sunat-exceptions' | 'inventory' | 'purchases' | 'reports'
-  | 'restaurant-menu' | 'restaurant-supplies' | 'products' | 'customers'
-  | 'masters' | 'appcfg' | 'company';
+type ModuleTab = string;
 
 type MenuGroup = 'operacion' | 'abastecimiento' | 'catalogo' | 'relaciones' | 'administracion';
 
@@ -104,8 +99,15 @@ type HomeViewProps = {
   branchId: number | null;
   warehouseId: number | null;
   canViewBusinessPulse: boolean;
-  quickAccessItems: QuickAccessItem[];
-  onTabSelect: (tab: ModuleTab) => void;
+  quickAccessItems: Array<{
+    id: string;
+    group: MenuGroup;
+    kicker: string;
+    label: string;
+    hint: string;
+    icon: React.ReactNode;
+  }>;
+  onTabSelect: (tab: string) => void;
 };
 
 // ── component ─────────────────────────────────────────────────────────────────
