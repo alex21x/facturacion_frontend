@@ -365,6 +365,8 @@ export type CompanyRateLimitMatrixCompany = {
   requests_per_minute_read: number;
   requests_per_minute_write: number;
   requests_per_minute_reports: number;
+  response_delay_enabled: boolean;
+  response_delay_ms: number;
   plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
   last_preset_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | null;
   updated_at: string | null;
@@ -375,6 +377,7 @@ export type CompanyRateLimitMatrixResponse = {
     requests_per_minute_read: number;
     requests_per_minute_write: number;
     requests_per_minute_reports: number;
+    max_response_delay_ms: number;
   };
   presets: Array<{
     code: 'BASIC' | 'PRO' | 'ENTERPRISE';

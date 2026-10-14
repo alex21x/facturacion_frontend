@@ -362,6 +362,8 @@ export async function updateCompanyRateLimitMatrix(
     requests_per_minute_read: number;
     requests_per_minute_write: number;
     requests_per_minute_reports: number;
+    response_delay_enabled: boolean;
+    response_delay_ms: number;
     plan_code?: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
     preset_code?: 'BASIC' | 'PRO' | 'ENTERPRISE';
   }

@@ -283,6 +283,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
     requests_per_minute_read: number;
     requests_per_minute_write: number;
     requests_per_minute_reports: number;
+    response_delay_enabled: boolean;
+    response_delay_ms: number;
     plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
   }>>({});
   const [searchText, setSearchText]               = useState('');
@@ -490,6 +492,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
       requests_per_minute_read: number;
       requests_per_minute_write: number;
       requests_per_minute_reports: number;
+      response_delay_enabled: boolean;
+      response_delay_ms: number;
       plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
     }> = {};
     for (const company of rateResult.companies) {
@@ -498,6 +502,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         requests_per_minute_read: company.requests_per_minute_read,
         requests_per_minute_write: company.requests_per_minute_write,
         requests_per_minute_reports: company.requests_per_minute_reports,
+        response_delay_enabled: company.response_delay_enabled,
+        response_delay_ms: company.response_delay_ms,
         plan_code: company.plan_code,
       };
     }
@@ -964,6 +970,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
         requests_per_minute_read: draft.requests_per_minute_read,
         requests_per_minute_write: draft.requests_per_minute_write,
         requests_per_minute_reports: draft.requests_per_minute_reports,
+        response_delay_enabled: draft.response_delay_enabled,
+        response_delay_ms: draft.response_delay_ms,
         plan_code: draft.plan_code,
         preset_code: draft.plan_code !== 'CUSTOM' ? draft.plan_code : undefined,
       });
@@ -974,6 +982,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           requests_per_minute_read: number;
           requests_per_minute_write: number;
           requests_per_minute_reports: number;
+          response_delay_enabled: boolean;
+          response_delay_ms: number;
           plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
         }> = {};
         for (const company of result.companies) {
@@ -982,6 +992,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
             requests_per_minute_read: company.requests_per_minute_read,
             requests_per_minute_write: company.requests_per_minute_write,
             requests_per_minute_reports: company.requests_per_minute_reports,
+            response_delay_enabled: company.response_delay_enabled,
+            response_delay_ms: company.response_delay_ms,
             plan_code: company.plan_code,
           };
         }
@@ -1024,6 +1036,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           requests_per_minute_read: number;
           requests_per_minute_write: number;
           requests_per_minute_reports: number;
+          response_delay_enabled: boolean;
+          response_delay_ms: number;
           plan_code: 'BASIC' | 'PRO' | 'ENTERPRISE' | 'CUSTOM';
         }> = {};
         for (const company of result.companies) {
@@ -1032,6 +1046,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
             requests_per_minute_read: company.requests_per_minute_read,
             requests_per_minute_write: company.requests_per_minute_write,
             requests_per_minute_reports: company.requests_per_minute_reports,
+            response_delay_enabled: company.response_delay_enabled,
+            response_delay_ms: company.response_delay_ms,
             plan_code: company.plan_code,
           };
         }
@@ -2241,6 +2257,9 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
           </div>
         </div>
         <div className="adm-card-body">
+          <p className="adm-td-sub">
+            La demora agrega latencia por solicitud; no limita el ancho de banda. Las suscripciones pagadas activas y al día no reciben demora.
+          </p>
           <div className="adm-bulk-bar">
             <span className="adm-bulk-bar-label">Ajuste masivo de límites</span>
             <select
@@ -2320,6 +2339,7 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                   <th>Lectura/min</th>
                   <th>Escritura/min</th>
                   <th>Reportes/min</th>
+                  <th>Demora demo</th>
                   <th>Límite</th>
                   <th>Guardar</th>
                 </tr>
@@ -2331,6 +2351,8 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                     requests_per_minute_read: rateMatrix?.defaults.requests_per_minute_read ?? 3600,
                     requests_per_minute_write: rateMatrix?.defaults.requests_per_minute_write ?? 2400,
                     requests_per_minute_reports: rateMatrix?.defaults.requests_per_minute_reports ?? 900,
+                    response_delay_enabled: false,
+                    response_delay_ms: 0,
                     plan_code: 'PRO' as const,
                   };
 
@@ -2410,6 +2432,45 @@ export function CompanyControlView({ accessToken, onUnauthorized }: Props) {
                           }))}
                           disabled={loading}
                         />
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <select
+                            className="adm-select"
+                            value={draft.response_delay_enabled ? '1' : '0'}
+                            onChange={e => setRateDraftByCompany(prev => ({
+                              ...prev,
+                              [company.company_id]: {
+                                ...draft,
+                                response_delay_enabled: e.target.value === '1',
+                              },
+                            }))}
+                            disabled={loading}
+                            aria-label={`Estado de demora para ${company.legal_name}`}
+                          >
+                            <option value="0">Sin demora</option>
+                            <option value="1">Aplicar demora</option>
+                          </select>
+                          <input
+                            className="adm-input adm-input-mini"
+                            type="number"
+                            min={0}
+                            max={rateMatrix?.defaults.max_response_delay_ms ?? 0}
+                            step={100}
+                            value={draft.response_delay_ms}
+                            onChange={e => setRateDraftByCompany(prev => ({
+                              ...prev,
+                              [company.company_id]: {
+                                ...draft,
+                                response_delay_ms: Number(e.target.value || 0),
+                              },
+                            }))}
+                            disabled={loading || !draft.response_delay_enabled}
+                            aria-label={`Demora en milisegundos para ${company.legal_name}`}
+                            title="Milisegundos agregados por solicitud"
+                          />
+                          <span className="adm-td-sub">ms por solicitud</span>
+                        </div>
                       </td>
                       <td>
                         <select
