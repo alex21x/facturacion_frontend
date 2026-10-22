@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "."
+		},
+		{
+			"path": "../facturacion_app"
 		}
 	],
 	"settings": {}

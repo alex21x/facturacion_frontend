@@ -1666,6 +1666,7 @@ export function App() {
                   <CustomerCollectionsView
                     accessToken={session.accessToken}
                     branchId={selectedBranchId}
+                    cashRegisterId={selectedCashRegisterId}
                   />
                 )}
                 {activeTab === 'supplier-payments' && (

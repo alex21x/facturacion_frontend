@@ -353,6 +353,22 @@ function resolveCustomerProfilePrice(
 
 const TODAY = todayLima();
 
+function creditDueDateFrom(issueDate: string): string {
+  const [year, month, day] = issueDate.split('-').map(Number);
+  if (![year, month, day].every(Number.isInteger)) {
+    return issueDate;
+  }
+
+  const dueDate = new Date(year, month - 1, day);
+  dueDate.setDate(dueDate.getDate() + 30);
+
+  return [
+    dueDate.getFullYear(),
+    String(dueDate.getMonth() + 1).padStart(2, '0'),
+    String(dueDate.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
 function createCreditInstallmentRow(dueDate: string, amount = 0, observation = '') {
   return {
     amount: Number(amount.toFixed(2)),
@@ -400,11 +416,25 @@ const initialForm: CreateDocumentForm = {
   splitPayments: [],
   advanceAmount: 0,
   globalDiscountAmount: 0,
+  globalDiscountPercent: 0,
   draftLineDiscount: 0,
   draftIsFreeOperation: false,
   qty: 1,
   unitPrice: 0,
 };
+
+function resolveGlobalDiscountPercent(discountAmount: number, items: SalesDraftItem[]): number {
+  const discountableAmount = items.reduce((total, item) => {
+    const line = computeSalesDraftAmounts(item);
+    return total + line.subtotal + line.tax - line.discountTotal;
+  }, 0);
+
+  if (discountableAmount <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.max((discountAmount / discountableAmount) * 100, 0), 100);
+}
 
 const TRIBUTARY_DOCUMENTS: CreateDocumentForm['documentKind'][] = [
   'INVOICE',
@@ -1488,6 +1518,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     };
   }>(null);
   const [creditPlanModalOpen, setCreditPlanModalOpen] = useState(false);
+  const [paymentMethodsModalOpen, setPaymentMethodsModalOpen] = useState(false);
   const [convertPreviewModal, setConvertPreviewModal] = useState<null | {
     source: CommercialDocumentListItem;
     targetDocumentKind: 'INVOICE' | 'RECEIPT' | 'SALES_ORDER';
@@ -1540,6 +1571,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const [seriesExpanded, setSeriesExpanded] = useState(false);
   const [cashierDefaultApplied, setCashierDefaultApplied] = useState(false);
   const [showModeSummaryDetails, setShowModeSummaryDetails] = useState(false);
+  const [showSunatReminder, setShowSunatReminder] = useState(true);
   const [showRuntimeConfig, setShowRuntimeConfig] = useState(false);
   const [priceTaxMode, setPriceTaxMode] = useState<PriceTaxMode>('INCLUSIVE');
   const [editingDocumentId, setEditingDocumentId] = useState<number | null>(null);
@@ -2110,32 +2142,49 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   const itemDiscountTotal = useMemo(() => {
     return cart.reduce((acc, item) => acc + computeSalesDraftAmounts(item).discountTotal, 0);
   }, [cart]);
+  const globalDiscountBase = Math.max(subtotal + taxTotal - itemDiscountTotal, 0);
   const globalDiscountAmount = useMemo(() => {
     if (!salesGlobalDiscountEnabled) {
       return 0;
     }
 
-    return Math.min(
-      Math.max(Number(form.globalDiscountAmount ?? 0), 0),
-      Math.max(subtotal + taxTotal - itemDiscountTotal, 0)
-    );
-  }, [form.globalDiscountAmount, itemDiscountTotal, salesGlobalDiscountEnabled, subtotal, taxTotal]);
+    const discountPercent = Math.min(Math.max(Number(form.globalDiscountPercent ?? 0), 0), 100);
+    return globalDiscountBase * (discountPercent / 100);
+  }, [form.globalDiscountPercent, globalDiscountBase, salesGlobalDiscountEnabled]);
   const grandTotal = useMemo(() => Math.max(subtotal + taxTotal - itemDiscountTotal - globalDiscountAmount, 0), [globalDiscountAmount, itemDiscountTotal, subtotal, taxTotal]);
+  const paymentRowsForForm = useMemo(() => {
+    const configuredPayments = form.splitPayments ?? [];
+    if (configuredPayments.length > 0) {
+      return configuredPayments;
+    }
+
+    return [{
+      paymentMethodId: Number(form.paymentMethodId ?? 0),
+      amount: form.isCreditSale ? 0 : grandTotal,
+    }];
+  }, [form.isCreditSale, form.paymentMethodId, form.splitPayments, grandTotal]);
   const normalizedSplitPayments = useMemo(() => {
-    return (form.splitPayments ?? [])
+    return paymentRowsForForm
       .map((row) => ({
         paymentMethodId: Number(row.paymentMethodId ?? 0),
         amount: Number(row.amount ?? 0),
       }))
       .filter((row) => row.paymentMethodId > 0 && row.amount > 0);
-  }, [form.splitPayments]);
+  }, [paymentRowsForForm]);
   const splitPaymentsTotal = useMemo(
     () => normalizedSplitPayments.reduce((acc, row) => acc + Number(row.amount), 0),
     [normalizedSplitPayments]
   );
+  const paymentMethodsSummary = useMemo(() => normalizedSplitPayments
+    .map((row) => {
+      const name = lookups?.payment_methods.find((method) => method.id === row.paymentMethodId)?.name ?? 'Método';
+      return `${name} ${Number(row.amount).toFixed(2)}`;
+    }), [lookups?.payment_methods, normalizedSplitPayments]);
   const creditInstallments = form.creditInstallments ?? [];
   const normalizedAdvanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
-  const cappedAdvanceAmount = Math.min(normalizedAdvanceAmount, grandTotal);
+  const cappedAdvanceAmount = form.isCreditSale
+    ? 0
+    : Math.min(normalizedAdvanceAmount, grandTotal);
   const creditPendingTotal = Math.max(0, Number((grandTotal - cappedAdvanceAmount).toFixed(2)));
   const creditInstallmentsTotal = creditInstallments.reduce((acc, row) => acc + Number(row.amount ?? 0), 0);
   const creditObservationCount = creditInstallments.filter((row) => String(row.observation ?? '').trim() !== '').length;
@@ -2147,6 +2196,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
   }, [lookups?.payment_methods, form.paymentMethodId]);
 
   const isInvoiceDocument = effectiveDocumentKindBase === 'INVOICE';
+  const isCommercialPreDocument = effectiveDocumentKindBase === 'QUOTATION' || effectiveDocumentKindBase === 'SALES_ORDER';
   const selectedDetractionService = useMemo(() => {
     if (!isInvoiceDocument || !form.hasDetraccion || !form.detraccionServiceCode) {
       return null;
@@ -2347,18 +2397,17 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
     setForm((prev) => ({
       ...prev,
       creditInstallments: [createCreditInstallmentRow(
-        prev.dueDate || prev.issueDate || TODAY,
-        Math.max(0, grandTotal - Math.max(0, Number(prev.advanceAmount ?? 0)))
+        creditDueDateFrom(prev.issueDate || TODAY),
+        Math.max(0, grandTotal)
       )],
     }));
   }, [form.isCreditSale, form.creditInstallments, grandTotal]);
 
   useEffect(() => {
-    if (form.isCreditSale) {
-      return;
-    }
-
     setCreditPlanModalOpen(false);
+    if (form.isCreditSale) {
+      setPaymentMethodsModalOpen(false);
+    }
   }, [form.isCreditSale]);
 
   const canAddDraftItem = useMemo(() => {
@@ -3303,6 +3352,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       ...prev,
       customerId: customer.id,
       customerVehicleId: null,
+      vehicleOdometerKm: '',
+      vehicleNextOdometerKm: '',
       customerQuery: `${customer.doc_number ?? 'SIN-DOC'} - ${customer.name}`,
       customerAddress: customer.address ?? '',
       customerPhone: customer.phone ?? '',
@@ -4585,7 +4636,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           TipoDocCliente: String(row.customer_doc_type ?? '-').trim() || '-',
           NroDocCliente: String(row.customer_doc_number ?? '').trim() || '-',
           Vehiculo: formatReportDocumentVehicle(row),
-          FormaPago: row.payment_method_name ?? 'Sin metodo de pago',
+          'Medio de pago': row.payment_method_name ?? 'Sin medio de pago',
           Estado: commercialStatusLabel(row.status),
           EstadoSunat: String(row.sunat_status ?? ''),
           EstadoBajaSunat: String(row.sunat_void_status ?? ''),
@@ -4715,7 +4766,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         TipoDocCliente: String(row.customer_doc_type ?? '-').trim() || '-',
         NroDocCliente: String(row.customer_doc_number ?? '').trim() || '-',
         Vehiculo: formatReportDocumentVehicle(row as CommercialDocumentProductDetailRow),
-        FormaPago: String(row.payment_method_name ?? ''),
+        'Medio de pago': String(row.payment_method_name ?? 'Sin medio de pago'),
         Estado: String(row.status_label ?? row.status ?? ''),
         EstadoSunat: String(row.sunat_status ?? ''),
         EstadoBajaSunat: String(row.sunat_void_status ?? ''),
@@ -5107,7 +5158,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         return;
       }
 
-      const computedAdvance = advancesEnabled ? Math.min(Math.max(0, Number(form.advanceAmount ?? 0)), grandTotal) : 0;
+      const computedAdvance = !form.isCreditSale && advancesEnabled
+        ? Math.min(Math.max(0, Number(form.advanceAmount ?? 0)), grandTotal)
+        : 0;
       if (form.isCreditSale) {
         const installments = (form.creditInstallments ?? []).map((row) => ({
           amount: Number(row.amount ?? 0),
@@ -5237,6 +5290,18 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           ? Number(String(form.vehicleNextOdometerKm).replace(/\D+/g, ''))
           : null,
         discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
+        discount_percent: globalDiscountAmount > 0
+          ? Math.min(Math.max(Number(form.globalDiscountPercent ?? 0), 0), 100)
+          : 0,
+        payment_breakdown: form.isCreditSale
+          ? []
+          : effectiveDocumentKind === 'QUOTATION'
+            ? normalizedSplitPayments.map((row) => ({
+                payment_method_id: row.paymentMethodId,
+                amount: Number(row.amount.toFixed(2)),
+                status: 'PENDING',
+              }))
+            : undefined,
         has_detraccion: form.hasDetraccion ?? false,
         detraccion_service_code: form.hasDetraccion ? (form.detraccionServiceCode ?? null) : null,
         has_retencion: form.hasRetencion ?? false,
@@ -5256,8 +5321,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             }))
           : [],
         credit_total: form.isCreditSale ? Number(creditPendingTotal.toFixed(2)) : 0,
-        has_advance: advancesEnabled && cappedAdvanceAmount > 0,
-        advance_amount: advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
+        has_advance: !form.isCreditSale && advancesEnabled && cappedAdvanceAmount > 0,
+        advance_amount: !form.isCreditSale && advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
       };
 
       if (editingDocumentId) {
@@ -5318,7 +5383,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           customer_id: Number(form.customerId),
           customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
           currency_id: Number(form.currencyId),
-          payment_method_id: Number(form.paymentMethodId),
+          payment_method_id: form.isCreditSale ? null : Number(form.paymentMethodId),
           due_at: form.dueDate || null,
           notes: form.notes?.trim() || undefined,
           metadata: normalizedDocumentMetadata,
@@ -5365,9 +5430,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         status: targetStatus,
         noteAffectedDocumentId: form.noteAffectedDocumentId ?? null,
         noteReasonCode: form.noteReasonCode ?? '',
-        splitPayments: salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER'
-          ? normalizedSplitPayments
-          : [],
+        splitPayments: paymentRowsForForm,
         items: payloadItems,
         branchId,
         warehouseId,
@@ -5424,6 +5487,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           exoneradaTotal: printTotals.exoneradaTotal,
           metadata: {
             discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
+            discount_percent: globalDiscountAmount > 0
+              ? Math.min(Math.max(Number(form.globalDiscountPercent ?? 0), 0), 100)
+              : 0,
             table_label: selectedRestaurantTable?.name ?? null,
             source_document_id: form.noteAffectedDocumentId ?? null,
             source_document_kind: selectedReferenceDocument?.document_kind ?? null,
@@ -5452,7 +5518,9 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             percepcion_account_number: lookups?.percepcion_account?.account_number ?? null,
             percepcion_bank_name: lookups?.percepcion_account?.bank_name ?? null,
             payment_condition: form.isCreditSale ? 'CREDITO' : 'CONTADO',
-            payment_breakdown: salesOrderMultiPaymentEnabled
+            payment_breakdown: form.isCreditSale
+              ? []
+              : salesOrderMultiPaymentEnabled
               ? normalizedSplitPayments.map((row) => ({
                   payment_method_id: row.paymentMethodId,
                   amount: Number(row.amount.toFixed(2)),
@@ -5467,8 +5535,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 }))
               : [],
             credit_total: form.isCreditSale ? Number(creditPendingTotal.toFixed(2)) : 0,
-            has_advance: advancesEnabled && cappedAdvanceAmount > 0,
-            advance_amount: advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
+            has_advance: !form.isCreditSale && advancesEnabled && cappedAdvanceAmount > 0,
+            advance_amount: !form.isCreditSale && advancesEnabled ? Number(cappedAdvanceAmount.toFixed(2)) : 0,
             customer_vehicle_id: workshopMultiVehicleEnabled ? (form.customerVehicleId ?? null) : null,
             vehicle_plate: workshopMultiVehicleEnabled ? (selectedVehicle?.plate ?? null) : null,
             vehicle_brand: workshopMultiVehicleEnabled ? (selectedVehicle?.brand ?? null) : null,
@@ -5556,6 +5624,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         productQuery: '',
         unitId: null,
         lotId: null,
+        vehicleOdometerKm: '',
+        vehicleNextOdometerKm: '',
         isManualItem: false,
         manualDescription: '',
         hasDetraccion: false,
@@ -6297,6 +6367,16 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           amount: Number(Number(row.amount ?? 0).toFixed(2)),
         }))
         .filter((row) => row.paymentMethodId > 0 && row.amount > 0);
+      const metadataCreditInstallments = Array.isArray(details.metadata?.credit_installments)
+        ? details.metadata.credit_installments as Array<Record<string, unknown>>
+        : [];
+      const resolvedCreditInstallments = metadataCreditInstallments
+        .map((row) => ({
+          amount: Number(row.amount ?? 0),
+          dueDate: String(row.due_at ?? row.dueDate ?? '').slice(0, 10),
+          observation: String(row.notes ?? row.observation ?? ''),
+        }))
+        .filter((row) => row.amount > 0 && row.dueDate !== '');
 
       const resolvedSplitPayments = splitPaymentsFromDetails.length > 0
         ? splitPaymentsFromDetails
@@ -6312,6 +6392,8 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         vehicleNextOdometerKm: String(details.metadata?.vehicle_next_odometer_km ?? '').replace(/\D+/g, ''),
         currencyId: Number(details.currencyId ?? prev.currencyId ?? 1),
         paymentMethodId: Number(details.paymentMethodId ?? prev.paymentMethodId ?? 1),
+        isCreditSale: String(details.metadata?.payment_condition ?? '').toUpperCase() === 'CREDITO',
+        creditInstallments: resolvedCreditInstallments,
         customerQuery: `${details.customerDocNumber ?? 'SIN-DOC'} - ${details.customerName ?? 'Cliente'}`,
         customerAddress: details.customerAddress ?? '',
         customerPhone: details.customerPhone ?? '',
@@ -6319,7 +6401,11 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
         issueDate: details.issueDate ? String(details.issueDate).slice(0, 10) : prev.issueDate,
         dueDate: details.dueDate ? String(details.dueDate).slice(0, 10) : '',
         series: details.series ?? prev.series,
-        globalDiscountAmount: Number((details.metadata?.discount_total ?? 0) || 0),
+        globalDiscountAmount: 0,
+        globalDiscountPercent: resolveGlobalDiscountPercent(
+          Number((details.metadata?.discount_total ?? 0) || 0),
+          editableItems
+        ),
         productId: null,
         productQuery: '',
         lotId: null,
@@ -6589,15 +6675,28 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
       )}
 
       {(salesWorkspaceMode === 'SELL' || salesWorkspaceMode === 'REPORT') && (
-        <aside className="sales-sunat-reminder-fixed" role="note" aria-live="polite">
-          <strong className="sales-sunat-reminder-fixed__title">Recordatorio SUNAT</strong>
-          <span>
-            Estado final correcto: <strong className="sales-sunat-status sales-sunat-status--accepted">Aceptado</strong>.
-            Si se anula: <strong className="sales-sunat-status sales-sunat-status--cancelled">Anulado</strong>.
-            En boletas, la anulación termina al enviar/consultar ticket en Resumen Diario.
-            Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
-          </span>
-        </aside>
+        showSunatReminder ? (
+          <aside className="sales-sunat-reminder-fixed" role="note" aria-live="polite">
+            <div className="sales-sunat-reminder-fixed__header">
+              <strong className="sales-sunat-reminder-fixed__title">Recordatorio SUNAT</strong>
+              <button type="button" onClick={() => setShowSunatReminder(false)}>Ocultar</button>
+            </div>
+            <span>
+              Estado final correcto: <strong className="sales-sunat-status sales-sunat-status--accepted">Aceptado</strong>.
+              Si se anula: <strong className="sales-sunat-status sales-sunat-status--cancelled">Anulado</strong>.
+              En boletas, la anulación termina al enviar/consultar ticket en Resumen Diario.
+              Si SUNAT no responde repetidamente, valida en consulta SUNAT y fuerza estado desde SUNAT Excepciones.
+            </span>
+          </aside>
+        ) : (
+          <button
+            type="button"
+            className="sales-sunat-reminder-show"
+            onClick={() => setShowSunatReminder(true)}
+          >
+            Mostrar recordatorio SUNAT
+          </button>
+        )
       )}
 
       {message && <p className="notice">{message}</p>}
@@ -6671,19 +6770,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </select>
           </label>
 
-          <label>
-            Metodo de pago
-            <select
-              value={form.paymentMethodId}
-              disabled={salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser}
-              onChange={(e) => setForm((prev) => ({ ...prev, paymentMethodId: Number(e.target.value) }))}
+          <label className="sales-field-address sales-payment-method-trigger">
+            Medios de pago
+            <button
+              type="button"
+              className="sales-payment-trigger-button"
+              disabled={loading || form.isCreditSale}
+              title={form.isCreditSale ? 'No aplica para una venta al crédito' : undefined}
+              onClick={() => setPaymentMethodsModalOpen(true)}
             >
-              {(lookups?.payment_methods ?? []).map((row) => (
-                <option key={row.id} value={row.id}>
-                  {row.name}
-                </option>
-              ))}
-            </select>
+              {form.isCreditSale
+                ? 'No aplica en venta al crédito'
+                : normalizedSplitPayments.length > 0
+                ? `${normalizedSplitPayments.length === 1 ? paymentMethodsSummary[0] : `${normalizedSplitPayments.length} medios seleccionados`} · ${splitPaymentsTotal.toFixed(2)}`
+                : 'Agregar medios de pago'}
+            </button>
           </label>
         </div>
 
@@ -6748,7 +6849,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   disabled={loadingCustomerVehicles || Number(form.customerId) <= 0 || customerVehicles.length === 0}
                   onChange={(e) => {
                     const nextId = e.target.value ? Number(e.target.value) : null;
-                    setForm((prev) => ({ ...prev, customerVehicleId: nextId }));
+                    setForm((prev) => ({
+                      ...prev,
+                      customerVehicleId: nextId,
+                      vehicleOdometerKm: '',
+                      vehicleNextOdometerKm: '',
+                    }));
                   }}
                 >
                   <option value="">
@@ -6785,7 +6891,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   maxLength={7}
                   value={form.vehicleOdometerKm ?? ''}
                   disabled={!form.customerVehicleId}
-                  onChange={(e) => setForm((prev) => ({ ...prev, vehicleOdometerKm: e.target.value.replace(/\D+/g, '') }))}
+                  onChange={(e) => setForm((prev) => ({
+                    ...prev,
+                    vehicleOdometerKm: e.target.value.replace(/\D+/g, ''),
+                  }))}
                   placeholder="Kilometraje actual"
                 />
               </label>
@@ -6797,7 +6906,10 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                   maxLength={7}
                   value={form.vehicleNextOdometerKm ?? ''}
                   disabled={!form.customerVehicleId}
-                  onChange={(e) => setForm((prev) => ({ ...prev, vehicleNextOdometerKm: e.target.value.replace(/\D+/g, '') }))}
+                  onChange={(e) => setForm((prev) => ({
+                    ...prev,
+                    vehicleNextOdometerKm: e.target.value.replace(/\D+/g, ''),
+                  }))}
                   placeholder="Próximo kilometraje"
                 />
               </label>
@@ -6855,7 +6967,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
           </label>
         </div>
 
-        <details className="sales-meta-collapse" open={isNoteDocument || form.isCreditSale || form.hasDetraccion || form.hasRetencion || form.hasPercepcion || (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER') || (salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER')}>
+        <details className="sales-meta-collapse" open={isNoteDocument || form.isCreditSale || form.hasDetraccion || form.hasRetencion || form.hasPercepcion || (isRestaurantVertical && effectiveDocumentKind === 'SALES_ORDER')}>
           <summary className="sales-meta-collapse-summary">Datos adicionales</summary>
           <div className="sales-grid-meta sales-grid-meta-secondary">
             <div className="sales-igv-toggle-row">
@@ -6901,87 +7013,6 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </label>
             )}
 
-            {salesOrderMultiPaymentEnabled && effectiveDocumentKind === 'SALES_ORDER' && (
-              <div className="sales-field-address" style={{ display: 'grid', gap: 8 }}>
-                <strong>Pagos por método</strong>
-                {(form.splitPayments ?? []).map((row, index) => (
-                  <div key={`split-payment-${index}`} style={{ display: 'grid', gap: 8, gridTemplateColumns: 'minmax(160px, 1fr) 130px auto' }}>
-                    <select
-                      value={Number(row.paymentMethodId ?? 0)}
-                      onChange={(event) => {
-                        const nextMethodId = Number(event.target.value || 0);
-                        setForm((prev) => ({
-                          ...prev,
-                          splitPayments: (prev.splitPayments ?? []).map((entry, entryIndex) => (
-                            entryIndex === index
-                              ? { ...entry, paymentMethodId: nextMethodId }
-                              : entry
-                          )),
-                        }));
-                      }}
-                    >
-                      <option value={0}>Seleccionar método</option>
-                      {(lookups?.payment_methods ?? []).map((method) => (
-                        <option key={`split-method-${method.id}`} value={method.id}>{method.name}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="number"
-                      min={0}
-                      step="0.01"
-                      value={row.amount ?? 0}
-                      onChange={(event) => {
-                        const nextAmount = Number(event.target.value || 0);
-                        setForm((prev) => ({
-                          ...prev,
-                          splitPayments: (prev.splitPayments ?? []).map((entry, entryIndex) => (
-                            entryIndex === index
-                              ? { ...entry, amount: nextAmount }
-                              : entry
-                          )),
-                        }));
-                      }}
-                    />
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      onClick={() => {
-                        setForm((prev) => ({
-                          ...prev,
-                          splitPayments: (prev.splitPayments ?? []).filter((_, entryIndex) => entryIndex !== index),
-                        }));
-                      }}
-                    >
-                      Quitar
-                    </button>
-                  </div>
-                ))}
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="btn-mini"
-                    onClick={() => {
-                      setForm((prev) => ({
-                        ...prev,
-                        splitPayments: [
-                          ...(prev.splitPayments ?? []),
-                          {
-                            paymentMethodId: Number(form.paymentMethodId ?? 0),
-                            amount: 0,
-                          },
-                        ],
-                      }));
-                    }}
-                  >
-                    + Agregar pago
-                  </button>
-                  <small>
-                    Total pagos: {splitPaymentsTotal.toFixed(2)} / Total documento: {grandTotal.toFixed(2)}
-                  </small>
-                </div>
-              </div>
-            )}
-
             {isTributaryDocument && (
               <label className="sales-field-due-date">
                 Envío SUNAT
@@ -7003,12 +7034,12 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               </label>
             )}
 
-            {(effectiveDocumentKindBase === 'INVOICE' || effectiveDocumentKindBase === 'RECEIPT') && (
+            {(effectiveDocumentKindBase === 'INVOICE' || effectiveDocumentKindBase === 'RECEIPT' || isCommercialPreDocument) && (
               <div className="sales-tributary-slot">
-                <details className="sales-tributary-panel sales-credit-summary-panel">
+                <details className="sales-tributary-panel sales-credit-summary-panel" open={isCommercialPreDocument}>
                   <summary className="sales-tributary-summary sales-credit-summary-bar">
                     <div className="sales-credit-summary-left">
-                      <span className="sales-tributary-title">Condición de pago SUNAT</span>
+                      <span className="sales-tributary-title">{isCommercialPreDocument ? 'Condición de pago' : 'Condición de pago SUNAT'}</span>
                       <span className={`sales-tributary-chip ${form.isCreditSale ? 'is-active' : ''}`}>
                         {form.isCreditSale ? 'Crédito' : 'Contado'}
                       </span>
@@ -7018,7 +7049,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       {form.isCreditSale && creditObservationCount > 0 && (
                         <span className="sales-tributary-chip is-soft">Obs. {creditObservationCount}</span>
                       )}
-                      {advancesEnabled && cappedAdvanceAmount > 0 && (
+                      {!form.isCreditSale && advancesEnabled && cappedAdvanceAmount > 0 && (
                         <span className="sales-tributary-chip is-soft">Anticipo {selectedCurrency?.symbol ?? ''} {cappedAdvanceAmount.toFixed(2)}</span>
                       )}
                     </div>
@@ -7047,12 +7078,13 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                           setForm((prev) => ({
                             ...prev,
                             isCreditSale: checked,
+                            advanceAmount: checked ? 0 : prev.advanceAmount,
                             creditInstallments: checked
                               ? (prev.creditInstallments && prev.creditInstallments.length > 0
                                 ? prev.creditInstallments
                                 : [createCreditInstallmentRow(
-                                    prev.dueDate || prev.issueDate || TODAY,
-                                    Math.max(0, grandTotal - Math.max(0, Number(prev.advanceAmount ?? 0)))
+                                    creditDueDateFrom(prev.issueDate || TODAY),
+                                    Math.max(0, grandTotal)
                                   )])
                               : [],
                           }));
@@ -7063,7 +7095,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                       <span>Venta al crédito</span>
                     </label>
 
-                    {advancesEnabled && (
+                    {!form.isCreditSale && advancesEnabled && (
                       <label className="sales-tributary-field">
                         <span>Anticipo aplicado</span>
                         <input
@@ -7816,14 +7848,21 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               {salesGlobalDiscountEnabled && (
                 <label className="sales-summary-input sales-summary-input-discount">
                   <span>Descuento global</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    value={form.globalDiscountAmount ?? 0}
-                    onChange={(e) => setForm((prev) => ({ ...prev, globalDiscountAmount: Number(e.target.value) }))}
-                    placeholder="0.00"
-                  />
+                  <div className="sales-percent-input">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="100"
+                      value={form.globalDiscountPercent ?? 0}
+                      onChange={(e) => setForm((prev) => ({
+                        ...prev,
+                        globalDiscountPercent: Math.min(Math.max(Number(e.target.value || 0), 0), 100),
+                      }))}
+                      placeholder="0"
+                    />
+                    <span aria-hidden="true">%</span>
+                  </div>
                 </label>
               )}
               <article>
@@ -8573,7 +8612,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
               <th>Fecha emision</th>
               <th>Cliente</th>
               {workshopMultiVehicleEnabled && <th>Vehículo</th>}
-              <th>Forma de pago</th>
+              <th>Medio de pago</th>
               <th>Conversiones</th>
               <th>Estado</th>
               <th>Total</th>
@@ -8649,7 +8688,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                 <td>{row.created_at ? formatStoredDateTime(row.created_at) : (row.issue_at ? formatStoredDateTime(row.issue_at) : '-')}</td>
                 <td>{row.customer_name}</td>
                 {workshopMultiVehicleEnabled && <td>{formatReportDocumentVehicle(row) || '-'}</td>}
-                <td>{row.payment_method_name ?? 'Sin metodo de pago'}</td>
+                <td>{row.payment_method_name ?? 'Sin medio de pago'}</td>
                 <td>
                     {(row.document_kind === 'QUOTATION' || row.document_kind === 'SALES_ORDER') ? (
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', alignItems: 'flex-start' }}>
@@ -9681,6 +9720,121 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
             </div>
           </div>
         </>
+      )}
+
+      {paymentMethodsModalOpen && (
+        <div
+          role="presentation"
+          className="sales-payment-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setPaymentMethodsModalOpen(false);
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="sales-payment-methods-title"
+            className="sales-payment-modal"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                setPaymentMethodsModalOpen(false);
+              }
+            }}
+          >
+            <header className="sales-payment-modal-header">
+              <div>
+                <h2 id="sales-payment-methods-title">Medios de Pago</h2>
+                <p>
+                  {form.isCreditSale ? 'Distribuye el anticipo entre uno o más medios.' : 'Distribuye el total del comprobante entre uno o más medios.'}
+                </p>
+              </div>
+              <button type="button" className="sales-payment-modal-close" onClick={() => setPaymentMethodsModalOpen(false)} aria-label="Cerrar">
+                Cerrar
+              </button>
+            </header>
+
+            <div className="sales-payment-modal-rows">
+              {paymentRowsForForm.map((row, index) => (
+                <div key={`payment-dialog-row-${index}`} className="sales-payment-modal-row">
+                  <label className="sales-payment-modal-field">
+                    <span>Medio</span>
+                    <select
+                      value={Number(row.paymentMethodId ?? 0)}
+                      disabled={salesFlowMode === 'SELLER_TO_CASHIER' && !isCashierUser}
+                      onChange={(event) => {
+                        const nextMethodId = Number(event.target.value || 0);
+                        setForm((prev) => ({
+                          ...prev,
+                          paymentMethodId: index === 0 ? nextMethodId : prev.paymentMethodId,
+                          splitPayments: paymentRowsForForm.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, paymentMethodId: nextMethodId } : entry
+                          )),
+                        }));
+                      }}
+                    >
+                      <option value={0}>Seleccionar medio</option>
+                      {(lookups?.payment_methods ?? []).map((method) => (
+                        <option key={`dialog-payment-method-${method.id}`} value={method.id}>{method.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="sales-payment-modal-field">
+                    <span>Monto</span>
+                    <input
+                      type="number"
+                      min={0}
+                      step="0.01"
+                      value={row.amount ?? 0}
+                      onChange={(event) => {
+                        const amount = Number(event.target.value || 0);
+                        setForm((prev) => ({
+                          ...prev,
+                          splitPayments: paymentRowsForForm.map((entry, entryIndex) => (
+                            entryIndex === index ? { ...entry, amount } : entry
+                          )),
+                        }));
+                      }}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="sales-payment-remove-button"
+                    disabled={paymentRowsForForm.length <= 1}
+                    onClick={() => setForm((prev) => ({
+                      ...prev,
+                      splitPayments: paymentRowsForForm.filter((_, entryIndex) => entryIndex !== index),
+                    }))}
+                  >
+                    Quitar
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <footer className="sales-payment-modal-footer">
+              <div className="sales-payment-modal-summary">
+                <button
+                  type="button"
+                  className="sales-payment-add-button"
+                  onClick={() => setForm((prev) => ({
+                    ...prev,
+                    splitPayments: [...paymentRowsForForm, { paymentMethodId: Number(form.paymentMethodId ?? 0), amount: 0 }],
+                  }))}
+                >
+                  + Agregar medio
+                </button>
+                <div className={`sales-payment-assigned ${Math.abs(splitPaymentsTotal - (form.isCreditSale ? cappedAdvanceAmount : grandTotal)) <= 0.01 ? 'is-balanced' : 'is-pending'}`}>
+                  Asignado: {splitPaymentsTotal.toFixed(2)} / {form.isCreditSale ? `Anticipo máximo ${grandTotal.toFixed(2)}` : `Total ${grandTotal.toFixed(2)}`}
+                </div>
+              </div>
+              <button type="button" className="sales-payment-apply-button" onClick={() => setPaymentMethodsModalOpen(false)}>
+                Aplicar
+              </button>
+            </footer>
+          </section>
+        </div>
       )}
 
       {convertPreviewModal && (

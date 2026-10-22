@@ -156,6 +156,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
       'QUOTATION',
       'CREDIT_NOTE',
       'DEBIT_NOTE',
+      'CUSTOMER_CREDIT_PAYMENT',
     ].includes(normalized);
   }
 
@@ -214,6 +215,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     const labels: Record<string, string> = {
       MANUAL: 'Manual',
       COMMERCIAL_DOCUMENT: 'Comprobante',
+      CUSTOMER_CREDIT_PAYMENT: 'Cobro de crédito',
       RECEIPT: 'Boleta',
       INVOICE: 'Factura',
       SALE: 'Venta',
@@ -234,6 +236,10 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
   function formatReferenceValue(m: CashMovement): string {
     if (m.reference_label && m.reference_label.trim() !== '') {
       return m.reference_label;
+    }
+
+    if (m.ref_type?.toUpperCase() === 'CUSTOMER_CREDIT_PAYMENT' && m.description?.trim()) {
+      return m.description;
     }
 
     if (m.ref_type && ['COMMERCIAL_DOCUMENT', 'RECEIPT', 'INVOICE'].includes(m.ref_type.toUpperCase())) {
@@ -1326,7 +1332,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
 
                   {closeResponse.sales_by_payment_method && closeResponse.sales_by_payment_method.length > 0 && (
                     <div style={{ marginTop: '1rem' }}>
-                      <h5>Ventas por Tipo de Pago</h5>
+                      <h5>Ventas y Cobranzas por Medio de Pago</h5>
                       <table style={{ width: '100%', fontSize: '0.9rem', marginTop: '0.5rem' }}>
                         <thead>
                           <tr style={{ borderBottom: '2px solid var(--color-muted)' }}>

@@ -171,10 +171,12 @@
 
 .sales-sunat-reminder-fixed {
   position: fixed;
-  right: 16px;
-  top: 142px;
-  width: min(330px, 28vw);
+  top: 10px;
+  left: 50%;
+  width: min(420px, calc(100vw - 24px));
+  max-width: 100%;
   z-index: 38;
+  transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -187,7 +189,43 @@
   box-shadow: 0 12px 24px rgba(31, 122, 69, 0.14);
   font-size: 0.79rem;
   line-height: 1.4;
-  pointer-events: none;
+}
+
+.sales-sunat-reminder-fixed__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.sales-sunat-reminder-fixed__header button,
+.sales-sunat-reminder-show {
+  width: auto;
+  max-width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #a7d2b5;
+  border-radius: 7px;
+  background: #fff;
+  color: #1f6b47;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.sales-sunat-reminder-fixed__header button:hover:not(:disabled),
+.sales-sunat-reminder-show:hover:not(:disabled) {
+  border-color: #65a77b;
+  background: #eaf9ef;
+}
+
+.sales-sunat-reminder-show {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  z-index: 38;
+  transform: translateX(-50%);
 }
 
 .sales-sunat-reminder-fixed__title {
@@ -238,11 +276,6 @@
     min-width: 185px;
   }
 
-  .sales-sunat-reminder-fixed {
-    position: static;
-    width: 100%;
-    margin: 0.35rem 0 0.45rem;
-  }
 }
 
 .sales-grid-row-item.has-line-tools.tax-on .sales-field-qty {
@@ -606,6 +639,308 @@
 
 .sales-vehicle-modal-field--last {
   margin-bottom: 0.95rem;
+}
+
+.sales-form .sales-grid-head {
+  grid-template-columns: minmax(0, 1.1fr) repeat(2, minmax(0, 1fr)) minmax(0, 1.1fr);
+}
+
+.sales-payment-method-trigger {
+  align-content: start;
+  justify-items: stretch;
+  grid-column: auto;
+}
+
+.sales-payment-trigger-button {
+  width: 100%;
+  max-width: 100%;
+  min-height: 2.4rem;
+  padding: 0.55rem 0.85rem;
+  border: 1px solid #a8bbb2;
+  border-radius: 9px;
+  background: #edf3f0;
+  color: #315345;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+button.sales-payment-trigger-button:hover:not(:disabled) {
+  border-color: #779487;
+  background: #e3ede8;
+}
+
+.sales-percent-input {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.sales-percent-input input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sales-percent-input > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.5rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8f8f5;
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+
+.sales-payment-trigger-button:focus-visible,
+.sales-payment-modal button:focus-visible,
+.sales-payment-modal select:focus-visible,
+.sales-payment-modal input:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(95, 127, 114, 0.2);
+}
+
+.sales-payment-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 3400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(15, 23, 42, 0.56);
+  backdrop-filter: blur(3px);
+}
+
+.sales-payment-modal {
+  width: min(620px, 100%);
+  max-height: min(88dvh, 760px);
+  overflow: auto;
+  padding: clamp(1rem, 3vw, 1.5rem);
+  border: 1px solid #d9e2dc;
+  border-top: 4px solid #5f7f72;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 26px 72px rgba(15, 23, 42, 0.28);
+}
+
+.sales-payment-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.sales-payment-modal-header h2 {
+  margin: 0;
+  color: #17251f;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.sales-payment-modal-header p {
+  margin: 0.35rem 0 0;
+  color: #64756d;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.sales-payment-modal-close,
+.sales-payment-remove-button,
+.sales-payment-add-button,
+.sales-payment-apply-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  min-height: 2.35rem;
+  padding: 0.48rem 0.78rem;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.sales-payment-modal-close,
+.sales-payment-remove-button {
+  border-color: #d7e0db;
+  background: #f5f8f6;
+  color: #455d51;
+}
+
+.sales-payment-modal-close:hover:not(:disabled),
+.sales-payment-remove-button:hover:not(:disabled) {
+  border-color: #a8bbb2;
+  background: #eaf1ed;
+}
+
+.sales-payment-modal-rows {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.sales-payment-modal-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(118px, 0.42fr) auto;
+  gap: 0.7rem;
+  align-items: end;
+  padding: 0.8rem;
+  border: 1px solid #e3eae6;
+  border-radius: 12px;
+  background: #f9fbfa;
+}
+
+.sales-payment-modal-field {
+  display: grid;
+  min-width: 0;
+  gap: 0.38rem;
+  color: #52655b;
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.sales-payment-modal-field select,
+.sales-payment-modal-field input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.65rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid #cbd8d0;
+  border-radius: 9px;
+  background: #fff;
+  color: #18251f;
+  font: inherit;
+  font-size: 0.88rem;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.sales-payment-modal-field select:focus,
+.sales-payment-modal-field input:focus {
+  border-color: #78998a;
+}
+
+.sales-payment-modal-field select:disabled,
+.sales-payment-modal-field input:disabled {
+  background: #eef2ef;
+  color: #718078;
+  cursor: not-allowed;
+}
+
+.sales-payment-remove-button {
+  min-width: 4.5rem;
+  min-height: 2.65rem;
+}
+
+.sales-payment-remove-button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
+.sales-payment-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5ebe7;
+}
+
+.sales-payment-modal-summary {
+  display: grid;
+  justify-items: start;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.sales-payment-add-button {
+  border-color: #c9d8d0;
+  background: #f1f6f3;
+  color: #315345;
+}
+
+.sales-payment-add-button:hover {
+  border-color: #9bb4a7;
+  background: #e5eee9;
+}
+
+.sales-payment-assigned {
+  font-size: 0.8rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.sales-payment-assigned.is-balanced {
+  color: #168044;
+}
+
+.sales-payment-assigned.is-pending {
+  color: #a35d0a;
+}
+
+.sales-payment-apply-button {
+  min-width: 6rem;
+  min-height: 2.55rem;
+  border-color: #557868;
+  background: #5f7f72;
+  color: #fff;
+}
+
+.sales-payment-apply-button:hover {
+  border-color: #456756;
+  background: #4e705f;
+}
+
+@media (max-width: 560px) {
+  .sales-payment-modal-backdrop {
+    align-items: flex-end;
+    padding: 0.6rem;
+  }
+
+  .sales-payment-modal {
+    width: 100%;
+    max-height: min(90dvh, 760px);
+    border-radius: 16px;
+  }
+
+  .sales-payment-modal-row {
+    grid-template-columns: minmax(0, 1fr) minmax(88px, 0.55fr);
+    gap: 0.6rem;
+    padding: 0.7rem;
+  }
+
+  .sales-payment-remove-button {
+    grid-column: 2;
+    justify-self: end;
+    min-height: 2.2rem;
+  }
+
+  .sales-payment-modal-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sales-payment-modal-summary {
+    width: 100%;
+  }
+
+  .sales-payment-apply-button {
+    width: 100%;
+  }
 }
 
 .sales-vehicle-modal-actions {

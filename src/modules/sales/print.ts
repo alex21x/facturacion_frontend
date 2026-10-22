@@ -50,8 +50,51 @@ export type PrintableSalesDocument = {
   exoneradaTotal: number;
   company?: PrintableCompanyProfile | null;
   metadata?: Record<string, unknown> | null;
+  payments?: Array<{
+    payment_method_id?: number | null;
+    payment_method_name?: string | null;
+    amount: number;
+    status?: string;
+  }>;
   items: PrintableSalesItem[];
 };
+
+function resolvePaymentPrintRows(doc: PrintableSalesDocument): Array<{ method: string; amount: number }> {
+  const metadata = (doc.metadata ?? {}) as Record<string, unknown>;
+  const rows = Array.isArray(metadata.payment_breakdown)
+    ? metadata.payment_breakdown as Array<Record<string, unknown>>
+    : [];
+  const issued = String(doc.status ?? '').toUpperCase() === 'ISSUED';
+  const persistedPayments = (doc.payments ?? [])
+    .filter((payment) => String(payment.status ?? 'PENDING').toUpperCase() === 'PAID' && Number(payment.amount) > 0)
+    .map((payment) => ({
+      method: String(payment.payment_method_name ?? doc.paymentMethodName ?? 'Método de pago').trim(),
+      amount: Number(payment.amount),
+    }));
+  const metadataPayments = rows
+    .filter((row) => {
+      const status = String(row.status ?? (issued ? 'PAID' : 'PENDING')).toUpperCase();
+      return status !== 'CANCELED' && (!issued || status === 'PAID') && Number(row.amount ?? 0) > 0;
+    })
+    .map((row) => ({
+      method: String(row.payment_method_name ?? row.method_name ?? doc.paymentMethodName ?? 'Método de pago').trim(),
+      amount: Number(row.amount ?? 0),
+    }));
+  const normalized = persistedPayments.length > 0 ? persistedPayments : metadataPayments;
+
+  if (normalized.length > 0) {
+    return normalized;
+  }
+
+  const isCreditCondition = String(metadata.payment_condition ?? '').toUpperCase() === 'CREDITO';
+  const fallbackAmount = isCreditCondition
+    ? Number(metadata.advance_amount ?? 0)
+    : doc.grandTotal;
+
+  return doc.paymentMethodName && fallbackAmount > 0
+    ? [{ method: doc.paymentMethodName, amount: fallbackAmount }]
+    : [];
+}
 
 export type PrintableCompanyProfile = {
   taxId?: string | null;
@@ -92,6 +135,23 @@ function formatDateTime(value: string | null | undefined): string {
 
 function formatMoney(amount: number): string {
   return Number(amount || 0).toFixed(2);
+}
+
+function resolveGlobalDiscountPercent(
+  metadata: Record<string, unknown>,
+  discountAmount: number,
+  discountableAmount: number,
+): number {
+  const savedPercent = Number(metadata.discount_percent ?? metadata.global_discount_percent);
+  if (Number.isFinite(savedPercent) && savedPercent > 0) {
+    return Math.min(savedPercent, 100);
+  }
+
+  if (discountableAmount <= 0) {
+    return 0;
+  }
+
+  return Math.min(Math.max((discountAmount / discountableAmount) * 100, 0), 100);
 }
 
 function normalizeCurrencyName(currencyCode: string | null | undefined): string {
@@ -652,8 +712,15 @@ export function buildCommercialDocumentA4Html(
 
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
   const vehiclePrint = resolveVehiclePrintData(metaData, doc);
+  const paymentRows = resolvePaymentPrintRows(doc);
+  const paymentCondition = String(metaData.payment_condition ?? 'CONTADO').toUpperCase() === 'CREDITO' ? 'Crédito' : 'Contado';
   const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
+  const globalDiscountPercent = resolveGlobalDiscountPercent(
+    metaData,
+    globalDiscountTotal,
+    Math.max(doc.subtotal + doc.taxTotal - itemDiscountTotal, 0),
+  );
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
   const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
   const detraccionAmount = Number(metaData.detraccion_amount ?? 0);
@@ -807,7 +874,8 @@ export function buildCommercialDocumentA4Html(
             <article>
               <p class="kv"><b>Documento:</b> ${escapeHtml(doc.customerDocNumber || '-')}</p>
               <p class="kv"><b>Fecha Venc.:</b> ${formatDate(doc.dueDate)}</p>
-              <p class="kv"><b>Metodo Pago:</b> ${escapeHtml(doc.paymentMethodName || '-')}</p>
+              <p class="kv"><b>Condición de pago:</b> ${paymentCondition}</p>
+              ${paymentRows.map((payment) => `<p class="kv"><b>${paymentRows.length > 1 ? 'Método de pago' : 'Método de pago'}:</b> ${escapeHtml(payment.method)} · ${doc.currencySymbol} ${formatMoney(payment.amount)}</p>`).join('')}
               <p class="kv"><b>Ref:</b> ${doc.id}</p>
             </article>
           </section>
@@ -843,7 +911,8 @@ export function buildCommercialDocumentA4Html(
 
           <section class="summary">
             <article>
-              <p class="payment">FORMA PAGO: ${escapeHtml(doc.paymentMethodName || '-')}</p>
+              <p class="payment">CONDICIÓN DE PAGO: ${paymentCondition}</p>
+              ${paymentRows.map((payment) => `<p class="payment">${escapeHtml(payment.method)}: ${doc.currencySymbol} ${formatMoney(payment.amount)}</p>`).join('')}
               <p class="payment">${escapeHtml(totalInWords)}</p>
             </article>
             <article class="amounts">
@@ -854,7 +923,7 @@ export function buildCommercialDocumentA4Html(
                   ${showTributaryBreakdown && doc.exoneradaTotal > 0 ? `<tr><td class="label">Op. Exoneradas:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.exoneradaTotal)}</td></tr>` : ''}
                   ${showTributaryBreakdown && doc.taxTotal > 0 ? `<tr><td class="label">IGV:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</td></tr>` : ''}
                   ${showItemDiscount && itemDiscountTotal > 0 ? `<tr><td class="label">Descuento por item:</td><td class="value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</td></tr>` : ''}
-                  ${globalDiscountTotal > 0 ? `<tr><td class="label">Descuento global:</td><td class="value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</td></tr>` : ''}
+                  ${globalDiscountTotal > 0 ? `<tr><td class="label">Descuento global (${formatMoney(globalDiscountPercent)}%):</td><td class="value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</td></tr>` : ''}
                   ${tributaryRows}
                   <tr class="total-row"><td class="label">Total a Pagar:</td><td class="value">${doc.currencySymbol} ${formatMoney(doc.grandTotal)}</td></tr>
                 </tbody>
@@ -927,8 +996,15 @@ export function buildCommercialDocument80mmHtml(
 
   const itemDiscountTotal = doc.items.reduce((acc, item) => acc + Number(item.discountTotal ?? 0), 0);
   const metaData = (doc.metadata ?? {}) as Record<string, unknown>;
+  const paymentRows = resolvePaymentPrintRows(doc);
+  const paymentCondition = String(metaData.payment_condition ?? 'CONTADO').toUpperCase() === 'CREDITO' ? 'Crédito' : 'Contado';
   const vehiclePrint = resolveVehiclePrintData(metaData, doc);
   const globalDiscountTotal = Number(metaData.discount_total ?? metaData.global_discount_total ?? 0);
+  const globalDiscountPercent = resolveGlobalDiscountPercent(
+    metaData,
+    globalDiscountTotal,
+    Math.max(doc.subtotal + doc.taxTotal - itemDiscountTotal, 0),
+  );
   const sunatOpCode = String(metaData.sunat_operation_type_code ?? '').trim();
   const sunatOpName = String(metaData.sunat_operation_type_name ?? '').trim();
   const detraccionAmount = Number(metaData.detraccion_amount ?? 0);
@@ -1313,7 +1389,7 @@ export function buildCommercialDocument80mmHtml(
               <div class="summary-value">${doc.currencySymbol} ${formatMoney(doc.taxTotal)}</div>
             </div>` : ''}
             ${showItemDiscount && itemDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. item:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(itemDiscountTotal)}</div></div>` : ''}
-            ${globalDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. global:</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</div></div>` : ''}
+            ${globalDiscountTotal > 0 ? `<div class="summary-row"><div class="summary-label">Dscto. global (${formatMoney(globalDiscountPercent)}%):</div><div class="summary-value">-${doc.currencySymbol} ${formatMoney(globalDiscountTotal)}</div></div>` : ''}
             ${showTributaryBreakdown && sunatOpCode ? `<div class="summary-row"><div class="summary-label">Op. SUNAT:</div><div class="summary-value">${escapeHtml(sunatOpCode)}${sunatOpName ? ` - ${escapeHtml(sunatOpName)}` : ''}</div></div>` : ''}
             ${showTributaryBreakdown && detraccionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Detraccion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(detraccionAmount)} (${formatMoney(detraccionRate)}%)</div></div>` : ''}
             ${showTributaryBreakdown && retencionAmount > 0 ? `<div class="summary-row"><div class="summary-label">Retencion:</div><div class="summary-value">${doc.currencySymbol} ${formatMoney(retencionAmount)} (${formatMoney(retencionRate)}%)</div></div>` : ''}
@@ -1329,7 +1405,8 @@ export function buildCommercialDocument80mmHtml(
           </div>
 
           <div class="footer">
-            <div class="footer-item">Forma Pago: ${escapeHtml(doc.paymentMethodName || '-')}</div>
+            <div class="footer-item">Condición de pago: ${paymentCondition}</div>
+            ${paymentRows.map((payment) => `<div class="footer-item">${escapeHtml(payment.method)}: ${doc.currencySymbol} ${formatMoney(payment.amount)}</div>`).join('')}
             ${(sunatPrint.signature || observations)
               ? `<div class="sunat-ticket">
                   ${sunatPrint.signature ? `<div class="line"><strong>Firma:</strong> ${escapeHtml(sunatPrint.signature)}</div>` : ''}
@@ -2226,5 +2303,3 @@ export function openCashReportPrintA4(data: CashReportPrintData): void {
   printWindow.document.close();
   printWindow.focus();
 }
-
-

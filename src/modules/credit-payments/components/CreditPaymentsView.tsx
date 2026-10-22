@@ -14,7 +14,7 @@ import {
   updateCustomerPayment,
   updateSupplierPayment,
 } from '../api';
-import { nowLimaIso } from '../../../shared/utils/lima';
+import { fmtDateLima, nowLimaIso } from '../../../shared/utils/lima';
 import type {
   CreditDocumentPayment,
   CreditDocumentRow,
@@ -27,6 +27,7 @@ type CreditPaymentsMode = 'CUSTOMER' | 'SUPPLIER';
 type CreditPaymentsViewProps = {
   accessToken: string;
   branchId: number | null;
+  cashRegisterId?: number | null;
   mode: CreditPaymentsMode;
 };
 
@@ -82,7 +83,7 @@ function documentLabel(row: Pick<CreditDocumentRow, 'document_kind' | 'document_
   return row.document_kind_label?.trim() || row.document_kind;
 }
 
-export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymentsViewProps) {
+export function CreditPaymentsView({ accessToken, branchId, cashRegisterId = null, mode }: CreditPaymentsViewProps) {
   const [rows, setRows] = useState<CreditDocumentRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -202,6 +203,7 @@ export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymen
       payment_method_id: form.payment_method_id,
       amount: Number(form.amount),
       status: form.status,
+      ...(mode === 'CUSTOMER' ? { cash_register_id: cashRegisterId } : {}),
       paid_at: form.paid_at || null,
       due_at: form.due_at || null,
       notes: form.notes || null,
@@ -244,7 +246,7 @@ export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymen
     setError(null);
     try {
       const nextDetail = mode === 'CUSTOMER'
-        ? await deleteCustomerPayment(accessToken, selectedDocument.id, paymentId)
+        ? await deleteCustomerPayment(accessToken, selectedDocument.id, paymentId, cashRegisterId)
         : await deleteSupplierPayment(accessToken, selectedDocument.id, paymentId);
       setDetail(nextDetail);
       setViewPayment((prev) => (prev?.id === paymentId ? null : prev));
@@ -325,6 +327,7 @@ export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymen
           <thead>
             <tr>
               <th>Comprobante</th>
+              <th>Fecha comprobante</th>
               <th>{counterpartLabel}</th>
               <th>Total</th>
               <th>Pagado</th>
@@ -336,12 +339,13 @@ export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymen
           <tbody>
             {!loading && rows.length === 0 && (
               <tr>
-                <td colSpan={7}>Sin comprobantes en este filtro.</td>
+                <td colSpan={8}>Sin comprobantes en este filtro.</td>
               </tr>
             )}
             {rows.map((row) => (
               <tr key={row.id} className={row.payment_status === 'CANCELED' ? 'credit-row-canceled' : 'credit-row-pending'}>
                 <td>{documentLabel(row)} {row.series}-{row.number}</td>
+                <td>{fmtDateLima(row.issue_at)}</td>
                 <td>{row.counterpart_name}</td>
                 <td>S/ {row.total_amount.toFixed(2)}</td>
                 <td>S/ {row.paid_amount.toFixed(2)}</td>
@@ -459,11 +463,22 @@ export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymen
                 </div>
 
                 <div className="credit-form-actions">
-                  <button type="button" className="credit-button credit-button--primary" disabled={savingPayment || supplierModuleDisabled} onClick={() => void submitPayment()}>
+                  <button
+                    type="button"
+                    className="credit-button credit-button--primary"
+                    disabled={savingPayment || supplierModuleDisabled || (mode === 'CUSTOMER' && form.status === 'PAID' && !cashRegisterId)}
+                    onClick={() => void submitPayment()}
+                  >
                     {form.id ? 'Actualizar Pago' : 'Guardar Pago'}
                   </button>
                   <button type="button" className="credit-button credit-button--secondary" disabled={savingPayment || supplierModuleDisabled} onClick={resetForm}>Limpiar</button>
                 </div>
+                {mode === 'CUSTOMER' && form.status === 'PAID' && (
+                  <p className="notice">
+                    Los cobros pagados requieren una caja abierta
+                    {cashRegisterId ? ` (caja seleccionada: ${cashRegisterId}).` : '. Selecciona una caja para continuar.'}
+                  </p>
+                )}
 
                 <div className="table-shell">
                   <table className="sales-table credit-payments-table">
@@ -489,9 +504,17 @@ export function CreditPaymentsView({ accessToken, branchId, mode }: CreditPaymen
                           <td>{payment.status}</td>
                           <td>{payment.paid_at ?? '-'}</td>
                           <td>
-                            <button type="button" disabled={supplierModuleDisabled} onClick={() => editPayment(payment)}>Editar</button>
+                            <button
+                              type="button"
+                              disabled={supplierModuleDisabled || (mode === 'CUSTOMER' && payment.status.toUpperCase() === 'PAID' && !cashRegisterId)}
+                              onClick={() => editPayment(payment)}
+                            >Editar</button>
                             <button type="button" onClick={() => setViewPayment(payment)}>Ver detalle</button>
-                            <button type="button" disabled={supplierModuleDisabled} onClick={() => void removePayment(payment.id)}>Eliminar</button>
+                            <button
+                              type="button"
+                              disabled={supplierModuleDisabled || (mode === 'CUSTOMER' && payment.status.toUpperCase() === 'PAID' && !cashRegisterId)}
+                              onClick={() => void removePayment(payment.id)}
+                            >Eliminar</button>
                           </td>
                         </tr>
                       ))}

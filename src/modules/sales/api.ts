@@ -851,13 +851,26 @@ export async function createCommercialDocument(accessToken: string, form: Create
     };
   });
 
-  const total = items.reduce((acc, item) => acc + Number(item.total), 0);
   const globalDiscountAmount = Math.max(0, Number(form.globalDiscountAmount ?? 0));
+  const itemsTotal = items.reduce((acc, item) => acc + Number(item.total), 0);
+  const total = Number(Math.max(itemsTotal - globalDiscountAmount, 0).toFixed(2));
   const targetStatus = form.status ?? ((form.documentKind === 'SALES_ORDER' || form.documentKind === 'QUOTATION') ? 'DRAFT' : 'ISSUED');
   const isPreDocument = targetStatus !== 'ISSUED';
   const advanceAmount = Math.max(0, Number(form.advanceAmount ?? 0));
-  const hasAdvance = advanceAmount > 0;
-  const pendingCreditTotal = Math.max(0, Number((total - advanceAmount).toFixed(2)));
+  const configuredPayments = (form.isCreditSale ? [] : (form.splitPayments ?? []))
+    .map((row) => ({
+      payment_method_id: Number(row.paymentMethodId ?? 0),
+      amount: Number(Number(row.amount ?? 0).toFixed(2)),
+    }))
+    .filter((row) => row.payment_method_id > 0 && row.amount > 0);
+  const paymentRows = form.isCreditSale
+    ? []
+    : configuredPayments.length > 0
+      ? configuredPayments
+      : [{ payment_method_id: Number(form.paymentMethodId), amount: total }];
+  const resolvedAdvanceAmount = form.isCreditSale ? 0 : advanceAmount;
+  const hasAdvance = resolvedAdvanceAmount > 0;
+  const pendingCreditTotal = Math.max(0, Number((total - resolvedAdvanceAmount).toFixed(2)));
 
   const normalizedInstallments = (form.creditInstallments ?? [])
     .map((row) => ({
@@ -869,42 +882,29 @@ export async function createCommercialDocument(accessToken: string, form: Create
 
   const payments = isPreDocument
     ? []
-    : (form.documentKind === 'SALES_ORDER' && (form.splitPayments?.length ?? 0) > 0)
-      ? form.splitPayments!
-        .map((row) => ({
-          payment_method_id: Number(row.paymentMethodId),
-          amount: Number(Number(row.amount ?? 0).toFixed(2)),
-          status: 'PAID' as const,
-          paid_at: nowInLimaIso(),
-        }))
-        .filter((row) => row.payment_method_id > 0 && row.amount > 0)
-      : form.isCreditSale
+    : form.isCreditSale
       ? [
-          ...(hasAdvance
-            ? [{
-                payment_method_id: Number(form.paymentMethodId),
-                amount: Number(advanceAmount.toFixed(2)),
-                status: 'PAID',
-                paid_at: nowInLimaIso(),
-                notes: 'Anticipo aplicado en emisión',
-              }]
-            : []),
+          ...paymentRows.map((row) => ({
+            payment_method_id: row.payment_method_id,
+            amount: row.amount,
+            status: 'PAID' as const,
+            paid_at: nowInLimaIso(),
+            notes: 'Anticipo aplicado en emisión',
+          })),
           ...normalizedInstallments.map((row) => ({
             payment_method_id: Number(form.paymentMethodId),
             amount: Number(row.amount.toFixed(2)),
             due_at: row.dueDate,
-            status: 'PENDING',
+            status: 'PENDING' as const,
             notes: row.observation || null,
           })),
         ]
-      : [
-          {
-            payment_method_id: Number(form.paymentMethodId),
-            amount: total,
-            status: 'PAID',
-            paid_at: nowInLimaIso(),
-          },
-        ];
+      : paymentRows.map((row) => ({
+          payment_method_id: row.payment_method_id,
+          amount: row.amount,
+          status: 'PAID' as const,
+          paid_at: nowInLimaIso(),
+        }));
 
   const metadataBase = {
     defer_sunat_send: form.receiptSendMode === 'NO_SEND',
@@ -944,8 +944,18 @@ export async function createCommercialDocument(accessToken: string, form: Create
       : [],
     credit_total: form.isCreditSale ? Number(pendingCreditTotal.toFixed(2)) : 0,
     has_advance: hasAdvance,
-    advance_amount: hasAdvance ? Number(advanceAmount.toFixed(2)) : 0,
+    advance_amount: hasAdvance ? Number(resolvedAdvanceAmount.toFixed(2)) : 0,
+    payment_breakdown: form.isCreditSale ? [] : paymentRows
+      .filter((row) => row.amount > 0)
+      .map((row) => ({
+        payment_method_id: row.payment_method_id,
+        amount: row.amount,
+        status: isPreDocument ? 'PENDING' : 'PAID',
+      })),
     discount_total: globalDiscountAmount > 0 ? Number(globalDiscountAmount.toFixed(2)) : 0,
+    discount_percent: globalDiscountAmount > 0
+      ? Math.min(Math.max(Number(form.globalDiscountPercent ?? 0), 0), 100)
+      : 0,
   };
 
   const requestBodyBase = {
@@ -960,7 +970,7 @@ export async function createCommercialDocument(accessToken: string, form: Create
       customer_id: Number(form.customerId),
       customer_vehicle_id: form.customerVehicleId ? Number(form.customerVehicleId) : null,
       currency_id: Number(form.currencyId),
-      payment_method_id: Number(form.paymentMethodId),
+      payment_method_id: form.isCreditSale ? null : Number(form.paymentMethodId),
       notes: form.notes?.trim() || null,
       metadata: metadataBase,
       status: targetStatus,

@@ -4202,13 +4202,15 @@ th {
   width: min(860px, 96vw);
   max-height: 88vh;
   overflow: auto;
-  border: 1px solid #ded4c3;
-  border-radius: 16px;
-  background: linear-gradient(180deg, #fffdfa 0%, #f7f3eb 100%);
-  box-shadow: 0 28px 70px rgba(15, 23, 42, 0.34);
-  padding: 18px;
+  border: 1px solid #d8dfd9;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(226, 239, 229, 0.72), transparent 34%),
+    linear-gradient(180deg, #ffffff 0%, #f7faf7 100%);
+  box-shadow: 0 30px 80px rgba(15, 35, 25, 0.3);
+  padding: 22px;
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .sales-credit-modal-header {
@@ -4216,29 +4218,32 @@ th {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #e3e9e3;
 }
 
 .sales-credit-modal-header h3 {
   margin: 0;
-  font-size: 1rem;
-  color: #433726;
+  font-size: 1.14rem;
+  color: #263b2e;
 }
 
 .sales-credit-modal-header p {
   margin: 4px 0 0;
   font-size: 0.82rem;
-  color: #6f624f;
+  color: #647568;
 }
 
 .sales-credit-modal-close {
-  border-color: #cfbfa3;
-  background: #fff7ea;
-  color: #6f5a3b;
+  border-color: #c3d2c6;
+  border-radius: 9px;
+  background: #f5faf6;
+  color: #405d49;
 }
 
 .sales-credit-modal-close:hover:not(:disabled) {
-  border-color: #c7b18b;
-  background: #f8eedc;
+  border-color: #9db9a4;
+  background: #eaf4ec;
 }
 
 .sales-credit-modal-summary {
@@ -4246,6 +4251,10 @@ th {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  padding: 10px 12px;
+  border: 1px solid #e1e9e2;
+  border-radius: 12px;
+  background: rgba(246, 250, 246, 0.9);
 }
 
 .sales-credit-installment-list {
@@ -4255,11 +4264,12 @@ th {
 
 .sales-credit-installment-card {
   display: grid;
-  gap: 0.7rem;
-  padding: 0.8rem 0.9rem;
-  border: 1px solid #e0d5bf;
-  border-radius: 12px;
-  background: linear-gradient(180deg, #fffdf8 0%, #f7f3ea 100%);
+  gap: 0.85rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #d9e4da;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #ffffff 0%, #f5f9f5 100%);
+  box-shadow: 0 5px 16px rgba(36, 67, 45, 0.06);
 }
 
 .sales-credit-installment-head {
@@ -4276,14 +4286,14 @@ th {
 }
 
 .sales-credit-installment-index {
-  font-size: 0.82rem;
+  font-size: 0.88rem;
   font-weight: 700;
-  color: #4f4535;
+  color: #31533b;
 }
 
 .sales-credit-installment-caption {
   font-size: 0.73rem;
-  color: #7a6e59;
+  color: #718174;
 }
 
 .sales-credit-installment-grid {
@@ -4295,35 +4305,64 @@ th {
 
 .sales-credit-installment-field {
   display: grid;
-  gap: 0.24rem;
+  gap: 0.38rem;
+  min-width: 0;
+  color: #45594a;
+  font-size: 0.78rem;
+  font-weight: 650;
 }
 
 .sales-credit-installment-field.is-wide {
   grid-column: 1 / -1;
 }
 
+.sales-credit-installment-field input,
 .sales-credit-installment-field textarea {
   width: 100%;
   min-width: 0;
-  border: 1px solid #d7cfbf;
-  border-radius: 8px;
-  padding: 9px 10px;
-  resize: vertical;
+  max-width: 100%;
+  min-height: 44px;
+  border: 1px solid #cbd8cd;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #26372b;
   font: inherit;
-  background: #fffefa;
+  font-weight: 500;
+  background: #ffffff;
+  box-shadow: inset 0 1px 2px rgba(24, 45, 29, 0.04);
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+
+.sales-credit-installment-field textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.sales-credit-installment-field input:hover,
+.sales-credit-installment-field textarea:hover {
+  border-color: #9db6a1;
+  background: #fcfffc;
+}
+
+.sales-credit-installment-field input:focus,
+.sales-credit-installment-field textarea:focus {
+  border-color: #648c6c;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(100, 140, 108, 0.17);
 }
 
 .sales-credit-installment-remove {
-  border-color: #cfbfa3;
-  background: #fffaf0;
-  color: #6f5a3b;
+  border-color: #d7e0d8;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #536b57;
   white-space: nowrap;
   padding-inline: 0.9rem;
 }
 
 .sales-credit-installment-remove:hover:not(:disabled) {
-  border-color: #c7b18b;
-  background: #f7eedf;
+  border-color: #b5cbb8;
+  background: #f0f7f1;
 }
 
 .sales-credit-installment-toolbar {
@@ -4341,12 +4380,14 @@ th {
 
 .sales-credit-installment-help {
   font-size: 0.74rem;
-  color: #736756;
+  color: #718174;
 }
 
 .sales-credit-modal-footer {
   display: flex;
   justify-content: flex-end;
+  padding-top: 4px;
+  border-top: 1px solid #e3e9e3;
 }
 
 .sales-tributary-preview span {
@@ -6151,6 +6192,12 @@ th {
   }
 }
 
+@media (max-width: 900px) {
+  .sales-credit-installment-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 860px) {
   .sales-credit-summary-bar,
   .sales-credit-summary-left,
@@ -6172,6 +6219,15 @@ th {
     grid-template-columns: 1fr;
   }
 
+  .sales-credit-modal-header {
+    flex-direction: column;
+  }
+
+  .sales-credit-modal-header .sales-credit-modal-close {
+    width: auto;
+    align-self: flex-end;
+  }
+
   .sales-credit-config-button,
   .sales-credit-total-pill,
   .sales-credit-installment-remove,
@@ -6186,6 +6242,38 @@ th {
 
   .sales-credit-modal-footer {
     justify-content: stretch;
+  }
+}
+
+@media (max-width: 480px) {
+  .sales-credit-modal-backdrop {
+    align-items: flex-end;
+    padding: 8px;
+  }
+
+  .sales-credit-modal {
+    width: 100%;
+    max-height: 92vh;
+    border-radius: 18px;
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .sales-credit-modal-header h3 {
+    font-size: 1.05rem;
+  }
+
+  .sales-credit-modal-header p {
+    font-size: 0.76rem;
+    line-height: 1.4;
+  }
+
+  .sales-credit-installment-card {
+    padding: 0.85rem;
+  }
+
+  .sales-credit-installment-caption {
+    line-height: 1.4;
   }
 }
 

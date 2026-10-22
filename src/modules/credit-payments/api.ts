@@ -93,8 +93,9 @@ export async function updateCustomerPayment(accessToken: string, documentId: num
   });
 }
 
-export async function deleteCustomerPayment(accessToken: string, documentId: number, paymentId: number): Promise<CreditPaymentsDetail> {
-  return apiClient.request<CreditPaymentsDetail>(`/api/sales/credit-payments/documents/${documentId}/payments/${paymentId}`, {
+export async function deleteCustomerPayment(accessToken: string, documentId: number, paymentId: number, cashRegisterId: number | null): Promise<CreditPaymentsDetail> {
+  const suffix = buildQuery({ cash_register_id: cashRegisterId });
+  return apiClient.request<CreditPaymentsDetail>(`/api/sales/credit-payments/documents/${documentId}/payments/${paymentId}?${suffix}`, {
     method: 'DELETE',
     headers: authHeaders(accessToken),
   });

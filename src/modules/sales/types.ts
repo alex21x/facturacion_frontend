@@ -530,6 +530,7 @@ export type CreateDocumentForm = {
   }>;
   advanceAmount?: number;
   globalDiscountAmount?: number;
+  globalDiscountPercent?: number;
   draftLineDiscount?: number;
   draftIsFreeOperation?: boolean;
   qty: number;
