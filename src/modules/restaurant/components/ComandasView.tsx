@@ -105,6 +105,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
   const [bootstrap, setBootstrap] = useState<RestaurantBootstrapResponse | null>(null);
   const [recipesValidationEnabled, setRecipesValidationEnabled] = useState<boolean | null>(null);
   const [sellerToCashierMode, setSellerToCashierMode] = useState(false);
+  const [quickSaleEnabled, setQuickSaleEnabled] = useState(false);
 
   // View tab: comandas board vs cobros del turno
   const [activeTab, setActiveTab] = useState<'comandas' | 'cobros'>('comandas');
@@ -224,11 +225,13 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
         if (!cancelled) {
           setRecipesValidationEnabled(Boolean(data.restaurant_recipes_enabled));
           setSellerToCashierMode(Boolean(data.sales_seller_to_cashier_enabled));
+          setQuickSaleEnabled(Boolean(data.restaurant_quick_sale_enabled));
         }
       } catch {
         if (!cancelled) {
           setRecipesValidationEnabled(false);
           setSellerToCashierMode(false);
+          setQuickSaleEnabled(false);
         }
       }
     })();
@@ -398,7 +401,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
 
   function openCheckout(row: ComandaRow) {
     setCheckoutTarget(row);
-    setCheckoutDocKind(sellerToCashierMode ? 'SALES_ORDER' : 'RECEIPT');
+    setCheckoutDocKind(quickSaleEnabled || sellerToCashierMode ? 'SALES_ORDER' : 'RECEIPT');
     setCheckoutSeries('');
     setCheckoutSeriesOptions([]);
     setCheckoutPaymentMethodId('');
@@ -675,7 +678,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
     const k = (docKind ?? '').toUpperCase();
     if (k === 'INVOICE') return 'Factura';
     if (k === 'RECEIPT') return 'Boleta';
-    if (k === 'SALES_ORDER') return 'Nota de pedido';
+    if (k === 'SALES_ORDER') return 'Pedido de Venta';
     if (k === 'CREDIT_NOTE' || k.startsWith('CREDIT_NOTE_')) return 'N. Crédito';
     return docKind;
   }
@@ -794,7 +797,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
               <strong style={{ fontSize: '1.5rem', color: '#1d4ed8' }}>{new Intl.NumberFormat('es-PE', { style: 'currency', currency: 'PEN' }).format(cobrosTotal)}</strong>
             </div>
             <div style={{ flex: 1, minWidth: 140, background: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 12, padding: '12px 18px' }}>
-              <p style={{ fontSize: '0.72rem', color: '#7c3aed', fontWeight: 600, marginBottom: 2 }}>Nota de pedido (caja)</p>
+              <p style={{ fontSize: '0.72rem', color: '#7c3aed', fontWeight: 600, marginBottom: 2 }}>Pedido de Venta (caja)</p>
               <strong style={{ fontSize: '1.5rem', color: '#7c3aed' }}>{cobros.filter(d => (d.document_kind ?? '').toUpperCase() === 'SALES_ORDER').length}</strong>
             </div>
           </div>
@@ -1286,7 +1289,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
                   className={`cko-kind-btn ${checkoutDocKind === 'SALES_ORDER' ? 'cko-kind-btn--active' : ''}`}
                   onClick={() => setCheckoutDocKind('SALES_ORDER')}
                 >
-                  Nota de pedido
+                  Pedido de Venta
                 </button>
                 <button
                   type="button"
@@ -1308,7 +1311,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
             {/* Hint informativo solo cuando el default es caja independiente */}
             {sellerToCashierMode && checkoutDocKind === 'SALES_ORDER' && (
               <p style={{ fontSize: '0.78rem', color: '#7a6f63', margin: '0 0 10px', lineHeight: 1.5 }}>
-                Nota de pedido: queda en la cola de caja para que el cajero emita el comprobante final.
+                Pedido de Venta: queda en la cola de caja para que el cajero emita el comprobante final.
               </p>
             )}
 
@@ -1335,7 +1338,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
 
             {!checkoutSeriesLoading && checkoutSeriesOptions.length === 0 && (
               <p className="cko-error">
-                No hay series activas para {checkoutDocKind === 'RECEIPT' ? 'boleta' : checkoutDocKind === 'INVOICE' ? 'factura' : 'nota de pedido'} en esta sucursal.
+                No hay series activas para {checkoutDocKind === 'RECEIPT' ? 'boleta' : checkoutDocKind === 'INVOICE' ? 'factura' : 'Pedido de Venta'} en esta sucursal.
                 Configura una en Maestros &gt; Series.
               </p>
             )}
@@ -1412,7 +1415,7 @@ export function ComandasView({ accessToken, branchId, warehouseId, cashRegisterI
               onClick={() => void submitCheckout()}
             >
               {checkoutBusy ? 'Procesando...' : (
-                checkoutDocKind === 'SALES_ORDER' ? 'Emitir Nota de pedido'
+                checkoutDocKind === 'SALES_ORDER' ? 'Emitir Pedido de Venta'
                 : checkoutDocKind === 'RECEIPT' ? 'Emitir Boleta'
                 : 'Emitir Factura'
               )}

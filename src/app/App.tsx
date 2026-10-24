@@ -3,6 +3,7 @@ import { apiClient } from '../shared/api/client';
 import { login, logout } from '../modules/auth/api';
 import { LoginForm } from '../modules/auth/components/LoginForm';
 import { fetchCompanySubscriptionAlert, fetchFeatureToggles, fetchOperationalContext } from '../modules/appcfg/api';
+import { fetchRestaurantBootstrap } from '../modules/restaurant/api';
 import type { OperationalContextResponse } from '../modules/appcfg/types';
 import {
   clearAuthSession,
@@ -668,6 +669,7 @@ export function App() {
   const [isContextLoading, setIsContextLoading] = useState(false);
   const [isSessionDetailsOpen, setIsSessionDetailsOpen] = useState(false);
   const [salesFlowMode, setSalesFlowMode] = useState<SalesFlowMode>('DIRECT_CASHIER');
+  const [restaurantQuickSaleEnabled, setRestaurantQuickSaleEnabled] = useState(false);
   const [taxTraceabilityEnabled, setTaxTraceabilityEnabled] = useState(false);
   const [activeVertical, setActiveVertical] = useState<OperationalContextResponse['active_vertical'] | null>(null);
   const [businessPulseRange, setBusinessPulseRange] = useState<BusinessPulseRange>('DAY');
@@ -693,6 +695,28 @@ export function App() {
   const operationalContextScope = session
     ? `${authScope}:${session.user.company_id}:${session.user.id}:${session.deviceId}`
     : null;
+
+  useEffect(() => {
+    if (activeVertical?.code?.toUpperCase() !== 'RESTAURANT' || !selectedBranchId || !session?.accessToken) {
+      setRestaurantQuickSaleEnabled(false);
+      return;
+    }
+
+    let cancelled = false;
+    void fetchRestaurantBootstrap(session.accessToken, {
+      branchId: selectedBranchId,
+      warehouseId: selectedWarehouseId,
+      mode: 'orders_minimal',
+    }).then((bootstrap) => {
+      if (!cancelled) setRestaurantQuickSaleEnabled(Boolean(bootstrap.restaurant_quick_sale_enabled));
+    }).catch(() => {
+      if (!cancelled) setRestaurantQuickSaleEnabled(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeVertical?.code, selectedBranchId, selectedWarehouseId, session?.accessToken]);
 
   useEffect(() => {
     hasHydratedOperationalContextRef.current = false;
@@ -928,6 +952,10 @@ export function App() {
         return false;
       }
 
+      if (item.id === 'comandas' && restaurantQuickSaleEnabled) {
+        return false;
+      }
+
       if (
         salesFlowMode === 'SELLER_TO_CASHIER'
         && isSellerUser
@@ -957,11 +985,18 @@ export function App() {
     activeVertical?.code,
     session?.user?.permissions,
     shouldHideCashModule,
+    restaurantQuickSaleEnabled,
     salesFlowMode,
     isSellerUser,
     isCashierUser,
     isAdminUser,
   ]);
+
+  useEffect(() => {
+    if (activeTab === 'comandas' && restaurantQuickSaleEnabled) {
+      setActiveTab('restaurant-orders');
+    }
+  }, [activeTab, restaurantQuickSaleEnabled]);
 
   const filteredMenuItems = useMemo(() => {
     const query = menuSearch.trim().toLowerCase();
@@ -1206,10 +1241,6 @@ export function App() {
 
       if (selectedWarehouseId !== nextWarehouseId) {
         setSelectedWarehouseId(nextWarehouseId);
-      }
-
-      if (selectedCashRegisterId !== null) {
-        setSelectedCashRegisterId(null);
       }
 
       return;
@@ -1683,6 +1714,7 @@ export function App() {
                     accessToken={session.accessToken}
                     branchId={selectedBranchId}
                     warehouseId={selectedWarehouseId}
+                    cashRegisterId={selectedCashRegisterId}
                   />
                 )}
                 {activeTab === 'comandas' && (

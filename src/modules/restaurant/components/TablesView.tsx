@@ -67,6 +67,7 @@ export function TablesView({ accessToken, branchId }: Props) {
   const [newCode, setNewCode] = useState('');
   const [newName, setNewName] = useState('');
   const [newCapacity, setNewCapacity] = useState(4);
+  const [editingTableId, setEditingTableId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [showEmptyZones, setShowEmptyZones] = useState(false);
   const [zoneFocus, setZoneFocus] = useState<RestaurantTableStatus | 'ALL'>('ALL');
@@ -142,12 +143,23 @@ export function TablesView({ accessToken, branchId }: Props) {
     setLoading(true);
     setMessage('');
     try {
-      await createRestaurantTable(accessToken, {
-        branch_id: branchId,
+      const payload = {
         code: newCode.trim().toUpperCase(),
         name: newName.trim(),
         capacity: Math.max(1, Number(newCapacity)),
-      });
+      };
+
+      if (editingTableId !== null) {
+        await updateRestaurantTable(accessToken, editingTableId, payload);
+        setRows((prev) => prev.map((row) => (
+          row.id === editingTableId ? { ...row, ...payload } : row
+        )));
+        setMessage('Mesa actualizada correctamente.');
+      } else {
+        await createRestaurantTable(accessToken, { branch_id: branchId, ...payload });
+        setMessage('Mesa creada correctamente.');
+      }
+      setEditingTableId(null);
       setNewCode('');
       setNewName('');
       setNewCapacity(4);
@@ -157,6 +169,21 @@ export function TablesView({ accessToken, branchId }: Props) {
     } finally {
       setLoading(false);
     }
+  }
+
+  function startEditTable(row: RestaurantTableRow) {
+    setEditingTableId(row.id);
+    setNewCode(row.code);
+    setNewName(row.name);
+    setNewCapacity(row.capacity);
+    setMessage('');
+  }
+
+  function cancelEditTable() {
+    setEditingTableId(null);
+    setNewCode('');
+    setNewName('');
+    setNewCapacity(4);
   }
 
   async function changeStatus(id: number, status: RestaurantTableStatus) {
@@ -240,8 +267,8 @@ export function TablesView({ accessToken, branchId }: Props) {
       <div className="restaurant-layout">
         <form className="restaurant-create-card" onSubmit={handleCreate}>
           <div className="restaurant-create-card__head">
-            <h4>Nueva mesa</h4>
-            <p>Alta rapida para salon, terraza o barra.</p>
+            <h4>{editingTableId === null ? 'Nueva mesa' : 'Editar mesa'}</h4>
+            <p>{editingTableId === null ? 'Alta rapida para salon, terraza o barra.' : 'Corrige codigo, nombre o capacidad.'}</p>
           </div>
           <label className="restaurant-field">
             <span>Codigo</span>
@@ -255,7 +282,16 @@ export function TablesView({ accessToken, branchId }: Props) {
             <span>Capacidad</span>
             <input className="restaurant-input" type="number" min={1} max={30} value={newCapacity} onChange={(e) => setNewCapacity(Number(e.target.value || 1))} required />
           </label>
-          <button type="submit" className="restaurant-primary-btn" disabled={loading || !branchId}>Crear mesa</button>
+          <div className="restaurant-create-card__actions">
+            <button type="submit" className="restaurant-primary-btn" disabled={loading || !branchId}>
+              {editingTableId === null ? 'Crear mesa' : 'Guardar cambios'}
+            </button>
+            {editingTableId !== null && (
+              <button type="button" className="restaurant-ghost-btn" onClick={cancelEditTable} disabled={loading}>
+                Cancelar
+              </button>
+            )}
+          </div>
         </form>
 
         <div className="restaurant-content-card">
@@ -381,6 +417,7 @@ export function TablesView({ accessToken, branchId }: Props) {
                           </div>
 
                           <div className="restaurant-table-card__actions">
+                            <button type="button" className="restaurant-stage-btn restaurant-stage-btn--edit" disabled={busyId === row.id || loading} onClick={() => startEditTable(row)}>Editar</button>
                             <button type="button" className="restaurant-stage-btn restaurant-stage-btn--free" disabled={busyId === row.id || row.status === 'AVAILABLE'} onClick={() => void changeStatus(row.id, 'AVAILABLE')}>Disponible</button>
                             <button type="button" className="restaurant-stage-btn restaurant-stage-btn--prep" disabled={busyId === row.id || row.status === 'OCCUPIED'} onClick={() => void changeStatus(row.id, 'OCCUPIED')}>Ocupada</button>
                             <button type="button" className="restaurant-stage-btn restaurant-stage-btn--reserved" disabled={busyId === row.id || row.status === 'RESERVED'} onClick={() => void changeStatus(row.id, 'RESERVED')}>Reservar</button>

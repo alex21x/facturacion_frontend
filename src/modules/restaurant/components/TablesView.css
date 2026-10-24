@@ -73,6 +73,12 @@
   top: 10px;
 }
 
+.restaurant-panel--tables .restaurant-create-card__actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
 .restaurant-panel--tables .restaurant-create-card__head {
   display: grid;
   gap: 2px;
@@ -248,19 +254,27 @@
 }
 
 .restaurant-panel--tables .restaurant-table-card--available {
-  box-shadow: inset 0 0 0 1px rgba(56, 161, 105, 0.08);
+  border-color: #86cda3;
+  background: linear-gradient(180deg, #f4fff7, #e8f8ed);
+  box-shadow: inset 0 0 0 1px rgba(34, 138, 74, 0.12);
 }
 
 .restaurant-panel--tables .restaurant-table-card--occupied {
-  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.09);
+  border-color: #8bbcf2;
+  background: linear-gradient(180deg, #f2f8ff, #e2efff);
+  box-shadow: inset 0 0 0 1px rgba(37, 99, 180, 0.14);
 }
 
 .restaurant-panel--tables .restaurant-table-card--reserved {
-  box-shadow: inset 0 0 0 1px rgba(217, 119, 6, 0.1);
+  border-color: #efb873;
+  background: linear-gradient(180deg, #fff9ed, #ffedd5);
+  box-shadow: inset 0 0 0 1px rgba(180, 83, 9, 0.14);
 }
 
 .restaurant-panel--tables .restaurant-table-card--disabled {
-  opacity: 0.78;
+  border-color: #b8bec6;
+  background: linear-gradient(180deg, #f5f6f7, #e5e7eb);
+  opacity: 0.84;
 }
 
 .restaurant-panel--tables .restaurant-table-card__head {

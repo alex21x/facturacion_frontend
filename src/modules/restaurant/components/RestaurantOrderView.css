@@ -127,6 +127,7 @@
   border-radius: 10px;
   cursor: pointer;
   text-align: center;
+  position: relative;
   transition: box-shadow 0.15s, transform 0.1s;
 }
 
@@ -180,6 +181,50 @@
 .ro-table-card__status--occupied  { color: #1d4ed8; }
 .ro-table-card__status--reserved  { color: #d97706; }
 .ro-table-card__status--disabled  { color: #9ca3af; }
+
+.ro-table-card__order-count {
+  color: #7c3aed;
+  font-size: 0.55rem;
+  font-weight: 800;
+}
+
+.ro-table-card__orders-tooltip {
+  position: absolute;
+  z-index: 60;
+  left: 50%;
+  bottom: calc(100% + 7px);
+  display: grid;
+  gap: 3px;
+  min-width: 190px;
+  padding: 7px 8px;
+  border: 1px solid #d8c8b5;
+  border-radius: 9px;
+  background: #2f2a25;
+  color: #fff;
+  font-size: 0.62rem;
+  line-height: 1.25;
+  text-align: left;
+  box-shadow: 0 8px 18px rgba(31, 23, 15, 0.22);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.ro-table-card:hover .ro-table-card__orders-tooltip,
+.ro-table-card:focus-visible .ro-table-card__orders-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.ro-table-card__orders-tooltip > span {
+  display: grid;
+  gap: 2px;
+}
+
+.ro-table-card__orders-tooltip > span > span {
+  color: #f7eee3;
+}
 
 .ro-order-form {
   display: grid;
@@ -676,10 +721,11 @@
 
 .ro-orders-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(250px, 320px));
+  justify-content: center;
   gap: 8px;
-  max-height: calc(100vh - 260px);
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   padding-right: 2px;
 }
 
@@ -745,6 +791,55 @@
   padding-left: 6px;
   max-height: 33px;
   overflow: hidden;
+}
+
+.ro-payment-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.ro-payment-status--draft,
+.ro-payment-status--approved {
+  color: #9a3412;
+  background: #ffedd5;
+  border: 1px solid #fdba74;
+}
+
+.ro-payment-status--issued {
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #86efac;
+}
+
+.ro-payment-status--void,
+.ro-payment-status--canceled {
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fca5a5;
+}
+
+.ro-order-card__quick-payment {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.ro-order-card__quick-payment .restaurant-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.ro-order-card__quick-payment .restaurant-primary-btn {
+  flex: 0 0 auto;
+  min-height: 38px;
+  padding: 0 11px;
 }
 
 .ro-order-card__preview {

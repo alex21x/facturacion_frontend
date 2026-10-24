@@ -76,6 +76,7 @@ export type RestaurantBootstrapResponse = {
   active_igv_rate_percent: number;
   restaurant_price_includes_igv: boolean;
   restaurant_recipes_enabled?: boolean;
+  restaurant_quick_sale_enabled?: boolean;
   sales_seller_to_cashier_enabled?: boolean;
   document_kind_ids?: Partial<Record<'SALES_ORDER' | 'INVOICE' | 'RECEIPT', number>>;
   series_numbers: RestaurantSeriesNumber[];
@@ -153,7 +154,7 @@ export type CreateRestaurantOrderPayload = {
 };
 
 export type CheckoutRestaurantOrderPayload = {
-  /** 'SALES_ORDER' (Nota de pedido para caja), 'INVOICE' or 'RECEIPT' */
+  /** 'SALES_ORDER' (Pedido de Venta existente), 'INVOICE' or 'RECEIPT' */
   target_document_kind: 'SALES_ORDER' | 'INVOICE' | 'RECEIPT';
   /** Series to use; backend auto-resolves when omitted */
   series?: string | null;

@@ -296,6 +296,7 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   const isRetailVertical = useMemo(() => {
     return effectiveVerticalCode === 'RETAIL';
   }, [effectiveVerticalCode]);
+  const isRestaurantVertical = effectiveVerticalCode === 'RESTAURANT';
   const adminManagedFeatureCodes = useMemo(
     () =>
       new Set([
@@ -478,6 +479,10 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
     try {
       const payload = commerceFeatures
         .filter((row) => {
+          if (row.feature_code === 'RESTAURANT_QUICK_SALE_ENABLED' && !isRestaurantVertical) {
+            return false;
+          }
+
           // Exclude all admin-managed flags from save, EXCEPT tax bridge which is
           // configured via the comercial tab form even though it shows as readonly in modules.
           const isTaxBridge = row.feature_code === 'SALES_TAX_BRIDGE' || row.feature_code === 'SALES_TAX_BRIDGE_DEBUG_VIEW';
@@ -661,14 +666,16 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
 
   const groupedEditableFeatures = useMemo(() => {
     const grouped = new Map<string, CommerceSettingsFeature[]>();
-    for (const row of editableFeatures) {
+    for (const row of editableFeatures.filter((item) => (
+      item.feature_code !== 'RESTAURANT_QUICK_SALE_ENABLED' || isRestaurantVertical
+    ))) {
       const category = featureCategoryKey(row);
       const current = grouped.get(category) ?? [];
       current.push(row);
       grouped.set(category, current);
     }
     return grouped;
-  }, [editableFeatures]);
+  }, [editableFeatures, isRestaurantVertical]);
 
   const groupedReadonlyFeaturesFiltered = useMemo(() => {
     const grouped = new Map<string, FeatureToggleRow[]>();
@@ -684,7 +691,6 @@ export function AppConfigView({ accessToken, branchId, warehouseId, cashRegister
   // Ordered + translated category list for the Módulos tab.
   // Only restaurant (if vertical matches), sales, purchases are shown.
   const modulosCategoryMeta = useMemo(() => {
-    const isRestaurantVertical = (activeVerticalCode ?? '').trim().toUpperCase() === 'RESTAURANT';
     const order: { key: string; label: string }[] = [
       ...(isRestaurantVertical ? [{ key: 'restaurant', label: 'Restaurante' }] : []),
       { key: 'sales', label: 'Ventas' },

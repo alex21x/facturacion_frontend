@@ -474,6 +474,25 @@ export function ProductsView({
     }
   }
 
+  async function refreshProductCatalog(searchOverride?: string) {
+    try {
+      const searchValue = (searchOverride ?? search).trim();
+      const normalizedSearch = searchValue.match(/^\[([^\]]+)\]\s+.+$/)?.[1] ?? searchValue;
+      const [data, stockRows] = await Promise.all([
+        fetchInventoryProducts(accessToken, {
+          search: normalizedSearch || undefined,
+          status: status === 'all' ? null : Number(status),
+          cacheBust: String(Date.now()),
+        }),
+        fetchInventoryStock(accessToken),
+      ]);
+      setRows(data);
+      setStockByProductId(new Map(stockRows.map((row) => [row.product_id, Number(row.stock ?? 0)])));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo actualizar productos');
+    }
+  }
+
   useEffect(() => {
     void loadProducts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -982,7 +1001,36 @@ export function ProductsView({
 
         await updateProduct(accessToken, editingId, payload);
         setMessage('Producto actualizado correctamente.');
-        await loadProducts();
+        if (isRestaurant) {
+          await refreshProductCatalog();
+          setRows((prev) => prev.map((row) => (
+            row.id === editingId
+              ? {
+                  ...row,
+                  sku: form.sku.trim() || null,
+                  barcode: form.barcode.trim() || null,
+                  name: form.name.trim(),
+                  unit_id: form.unit_id,
+                  sale_price: String(form.sale_price),
+                  cost_price: String(form.cost_price),
+                  is_stockable: form.is_stockable,
+                  lot_tracking: form.lot_tracking,
+                  has_expiration: form.has_expiration,
+                  status: form.status,
+                  product_nature: form.product_nature,
+                  sunat_code: form.sunat_code.trim() || null,
+                  image_url: form.image_url.trim() || null,
+                  seller_commission_percent: String(form.seller_commission_percent),
+                  line_id: form.line_id,
+                  brand_id: form.brand_id,
+                  location_id: form.location_id,
+                  warranty_id: form.warranty_id,
+                }
+              : row
+          )));
+        } else {
+          await loadProducts();
+        }
       } else {
         const payload = {
           ...form,
@@ -996,10 +1044,48 @@ export function ProductsView({
             : {}),
         };
 
-        await createProduct(accessToken, payload);
+        const created = await createProduct(accessToken, payload) as { id?: number };
         setMessage('Producto creado correctamente.');
         resetForm(true);
-        await loadProducts();
+        if (isRestaurant) {
+          await refreshProductCatalog();
+          const createdId = Number(created.id ?? 0);
+          if (createdId > 0) {
+            setRows((prev) => prev.some((row) => row.id === createdId)
+              ? prev
+              : [{
+                  ...EMPTY_FORM,
+                  id: createdId,
+                  unit_id: payload.unit_id,
+                  sku: payload.sku || null,
+                  barcode: payload.barcode || null,
+                  name: payload.name,
+                  sale_price: String(payload.sale_price),
+                  cost_price: String(payload.cost_price),
+                  is_stockable: payload.is_stockable,
+                  lot_tracking: payload.lot_tracking,
+                  has_expiration: payload.has_expiration,
+                  status: payload.status,
+                  category_name: null,
+                  unit_code: null,
+                  unit_name: null,
+                  line_id: payload.line_id,
+                  brand_id: payload.brand_id,
+                  location_id: payload.location_id,
+                  warranty_id: payload.warranty_id,
+                  product_nature: payload.product_nature,
+                  sunat_code: payload.sunat_code || null,
+                  image_url: payload.image_url || null,
+                  seller_commission_percent: String(payload.seller_commission_percent),
+                  line_name: null,
+                  brand_name: null,
+                  location_name: null,
+                  warranty_name: null,
+                }, ...prev]);
+          }
+        } else {
+          await loadProducts();
+        }
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'No se pudo guardar producto');

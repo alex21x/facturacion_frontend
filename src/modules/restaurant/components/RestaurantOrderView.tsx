@@ -3,6 +3,7 @@ import type { InventoryProduct } from '../../inventory/types';
 import './RestaurantOrderView.css';
 import {
   createRestaurantOrder,
+  checkoutRestaurantOrder,
   fetchRestaurantCustomerAutocomplete,
   fetchRestaurantBootstrap,
   fetchRestaurantOrderDetail,
@@ -18,6 +19,7 @@ import type {
   RestaurantSeriesNumber,
   RestaurantTableRow,
 } from '../types';
+import { todayLima } from '../../../shared/utils/lima';
 
 // ---------------------------------------------------------------------------
 // Types local to this view
@@ -35,11 +37,16 @@ type CartItem = {
 };
 
 type OrderStage = 'SELECT_TABLE' | 'BUILD_ORDER';
+type QuickSaleDocumentKind = 'SALES_ORDER' | 'INVOICE' | 'RECEIPT';
+
+const QUICK_SALE_CUSTOMER_NAME = 'CLIENTES VARIOS';
+const QUICK_SALE_CUSTOMER_DOCUMENT = '11111111';
 
 type Props = {
   accessToken: string;
   branchId: number | null;
   warehouseId: number | null;
+  cashRegisterId?: number | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -72,6 +79,14 @@ function formatCurrency(value: string | number): string {
   }).format(amount);
 }
 
+function orderDisplayedTotal(order: RestaurantOrderRow): number {
+  if (order.items && order.items.length > 0) {
+    return order.items.reduce((total, item) => total + Number(item.total ?? 0), 0);
+  }
+
+  return Number(order.total) || 0;
+}
+
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -80,6 +95,18 @@ function formatDateTime(value: string): string {
     timeStyle: 'short',
     timeZone: 'America/Lima',
   }).format(date);
+}
+
+function isTodayInLima(value: string): boolean {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Lima',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date) === todayLima();
 }
 
 function roundCurrency(value: number): number {
@@ -217,10 +244,12 @@ function TableCard({
   table,
   selected,
   onSelect,
+  orders = [],
 }: {
   table: RestaurantTableRow;
   selected: boolean;
   onSelect: (table: RestaurantTableRow) => void;
+  orders?: RestaurantOrderRow[];
 }) {
   const isDisabled = table.status === 'DISABLED';
   const statusClass = table.status.toLowerCase();
@@ -240,6 +269,23 @@ function TableCard({
          table.status === 'OCCUPIED' ? 'Ocupada' :
          table.status === 'RESERVED' ? 'Reservada' : 'Inactiva'}
       </span>
+      {orders.length > 0 && (
+        <span className="ro-table-card__order-count">{orders.length} pedido{orders.length === 1 ? '' : 's'}</span>
+      )}
+      {orders.length > 0 && (
+        <span className="ro-table-card__orders-tooltip">
+          {orders.map((order) => (
+            <span key={order.id}>
+              <strong>{order.series}-{String(order.number).padStart(6, '0')} · {order.status === 'ISSUED' ? 'Cerrado' : 'Pendiente'}</strong>
+              {order.items?.length
+                ? order.items.map((item) => (
+                    <span key={`${order.id}-${item.line_no}`}>{item.quantity} × {item.description}</span>
+                  ))
+                : <span>{order.line_count} línea(s) · {formatCurrency(orderDisplayedTotal(order))}</span>}
+            </span>
+          ))}
+        </span>
+      )}
     </button>
   );
 }
@@ -248,7 +294,7 @@ function TableCard({
 // Main component
 // ---------------------------------------------------------------------------
 
-export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Props) {
+export function RestaurantOrderView({ accessToken, branchId, warehouseId, cashRegisterId }: Props) {
   const TABLES_CACHE_TTL_MS = 45_000;
   const ORDERS_CACHE_TTL_MS = 20_000;
 
@@ -301,7 +347,11 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   const [orderSearch, setOrderSearch] = useState('');
   const [orderSearchDebounced, setOrderSearchDebounced] = useState('');
   const orderSearchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [restaurantPriceIncludesIgv, setRestaurantPriceIncludesIgv] = useState(true);
+  const [restaurantPriceIncludesIgv, setRestaurantPriceIncludesIgv] = useState(false);
+  const [quickSaleEnabled, setQuickSaleEnabled] = useState(false);
+  const [quickSaleDocumentKind, setQuickSaleDocumentKind] = useState<QuickSaleDocumentKind>('SALES_ORDER');
+  const [quickSaleKindByOrder, setQuickSaleKindByOrder] = useState<Record<number, QuickSaleDocumentKind>>({});
+  const [closingQuickPaymentId, setClosingQuickPaymentId] = useState<number | null>(null);
 
   // ── feedback ──────────────────────────────────────────────────────────────
   const [submitting, setSubmitting] = useState(false);
@@ -310,7 +360,6 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   // ── ready-order toasts (broadcast from ComandasView) ─────────────────────
   type ReadyAlert = { id: number; tableLabel: string; series: string; number: number; ts: number };
   const [readyAlerts, setReadyAlerts] = useState<ReadyAlert[]>([]);
-  const ORDERS_PAGE_SIZE = 20;
 
   function dismissReadyAlert(orderId: number) {
     setReadyAlerts((prev) => prev.filter((a) => a.id !== orderId));
@@ -321,7 +370,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
   }
 
   function ordersCacheKey(status = orderStatusFilter, search = orderSearchDebounced): string {
-    return `restaurant:orders:list:${branchId ?? 'none'}:${status || 'ALL'}:${search.trim().toLowerCase() || 'ALL'}`;
+    return `restaurant:orders:list:${branchId ?? 'none'}:${todayLima()}:${status || 'ALL'}:${search.trim().toLowerCase() || 'ALL'}`;
   }
 
   const loadLookups = useCallback(async () => {
@@ -343,6 +392,20 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
       setLookups(bootstrapRes);
       setRestaurantPriceIncludesIgv(Boolean(bootstrapRes.restaurant_price_includes_igv));
+      const quickSale = Boolean(bootstrapRes.restaurant_quick_sale_enabled);
+      setQuickSaleEnabled(quickSale);
+      if (quickSale) {
+        try {
+          const customerRows = await fetchRestaurantCustomerAutocomplete(accessToken, QUICK_SALE_CUSTOMER_NAME);
+          const exactCustomer = customerRows.find((row) => row.name.trim().toUpperCase() === QUICK_SALE_CUSTOMER_NAME);
+          const defaultCustomer = exactCustomer
+            ?? (await resolveRestaurantCustomerByDocument(accessToken, QUICK_SALE_CUSTOMER_DOCUMENT)).data;
+          setSelectedCustomer(defaultCustomer);
+          setCustomerQuery('');
+        } catch {
+          setMessage('No se pudo cargar CLIENTES VARIOS (DNI 11111111).');
+        }
+      }
 
       const salesOrderKindId = bootstrapRes.document_kind_ids?.SALES_ORDER ?? null;
       const salesOrderSeries = (bootstrapRes.series_numbers ?? []).filter((s) => {
@@ -483,7 +546,8 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
             const parsed = JSON.parse(raw) as { ts?: number; rows?: RestaurantOrderRow[] };
             const ts = Number(parsed.ts ?? 0);
             const cachedRows = Array.isArray(parsed.rows) ? parsed.rows : [];
-            if (Number.isFinite(ts) && (Date.now() - ts) <= ORDERS_CACHE_TTL_MS) {
+            const cacheHasItems = !quickSaleEnabled || cachedRows.every((row) => Array.isArray(row.items));
+            if (cacheHasItems && Number.isFinite(ts) && (Date.now() - ts) <= ORDERS_CACHE_TTL_MS) {
               setOrders(cachedRows);
               usedFreshCache = true;
             }
@@ -502,9 +566,10 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
         branchId,
         status: orderStatusFilter,
         search: orderSearchDebounced,
-        perPage: ORDERS_PAGE_SIZE,
+        perPage: 50,
+        includeItems: quickSaleEnabled,
       });
-      const nextRows = res.data ?? [];
+      const nextRows = (res.data ?? []).filter((order) => isTodayInLima(order.issue_at));
       setOrders(nextRows);
 
       try {
@@ -522,7 +587,13 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     } finally {
       setOrdersLoading(false);
     }
-  }, [accessToken, branchId, orderSearchDebounced, orderStatusFilter, ordersPanelReady]);
+  }, [accessToken, branchId, orderSearchDebounced, orderStatusFilter, ordersPanelReady, quickSaleEnabled]);
+
+  useEffect(() => {
+    if (branchId && !lookupsLoaded) {
+      void loadLookups();
+    }
+  }, [branchId, loadLookups, lookupsLoaded]);
 
   useEffect(() => {
     let timerId: ReturnType<typeof setTimeout> | null = null;
@@ -689,8 +760,9 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     const safeQty = normalizeOrderQuantity(quantity);
     const safeDisplayed = Math.max(0, Number(displayedUnitPrice) || 0);
     const safeRate = Math.max(0, Number(taxRate) || 0);
+    const pricesIncludeIgv = restaurantPriceIncludesIgv;
 
-    if (restaurantPriceIncludesIgv) {
+    if (pricesIncludeIgv) {
       const grossTotal = roundCurrency(safeQty * safeDisplayed);
       const netUnitPrice = safeRate > 0
         ? roundCurrency(safeDisplayed / (1 + safeRate / 100))
@@ -901,6 +973,30 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
     }
   }
 
+  async function closeQuickPayment(order: RestaurantOrderRow) {
+    if (closingQuickPaymentId !== null) return;
+
+    setClosingQuickPaymentId(order.id);
+    setMessage('');
+    try {
+      await checkoutRestaurantOrder(accessToken, order.id, {
+        target_document_kind: quickSaleKindByOrder[order.id] ?? 'SALES_ORDER',
+        cash_register_id: cashRegisterId ?? undefined,
+        payment_method_id: Number(paymentMethodId || 0) || undefined,
+      });
+      setMessage(`Pago cerrado para ${order.series}-${String(order.number).padStart(6, '0')}.`);
+      await loadOrders();
+      if (branchId) {
+        const tablesRes = await fetchRestaurantTables(accessToken, { branchId });
+        setTables(tablesRes.data ?? []);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'No se pudo cerrar el pago.');
+    } finally {
+      setClosingQuickPaymentId(null);
+    }
+  }
+
   // ── submit ────────────────────────────────────────────────────────────────
   async function handleSubmit() {
     if (!selectedTable) {
@@ -980,7 +1076,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
           // BroadcastChannel unavailable — polling will catch up
         }
       } else {
-        await createRestaurantOrder(accessToken, {
+        const createdOrder = await createRestaurantOrder(accessToken, {
           branch_id: branchId!,
           warehouse_id: warehouseId,
           table_id: selectedTable.id,
@@ -1002,6 +1098,13 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
             total: item.total,
           })),
         });
+
+        if (quickSaleEnabled) {
+          setQuickSaleKindByOrder((prev) => ({
+            ...prev,
+            [createdOrder.id]: quickSaleDocumentKind,
+          }));
+        }
       }
 
       // Reset form and refresh
@@ -1029,7 +1132,9 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
           <p className="restaurant-toolbar__eyebrow">Restaurante</p>
           <h3>Pedidos de Salón</h3>
           <p className="restaurant-toolbar__copy">
-            Crea órdenes por mesa. La facturación se emite al cobrar en el módulo Comercial.
+            {quickSaleEnabled
+              ? 'Registra el pedido y realiza el cobro desde esta pantalla.'
+              : 'Crea órdenes por mesa. La facturación se emite al cobrar en el módulo Comercial.'}
           </p>
         </div>
         <div className="restaurant-toolbar__actions">
@@ -1120,6 +1225,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                       table={table}
                       selected={false}
                       onSelect={selectTable}
+                      orders={quickSaleEnabled ? orders.filter((order) => String(order.table_id) === String(table.id)) : []}
                     />
                   ))}
                 </div>
@@ -1177,6 +1283,16 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                     ))}
                   </select>
                 </label>
+                {quickSaleEnabled && (
+                  <label className="ro-field">
+                    <span>Comprobante al cerrar</span>
+                    <select className="restaurant-input" value={quickSaleDocumentKind} onChange={(e) => setQuickSaleDocumentKind(e.target.value as QuickSaleDocumentKind)}>
+                      <option value="SALES_ORDER">Pedido de Venta</option>
+                      <option value="RECEIPT">Boleta</option>
+                      <option value="INVOICE">Factura</option>
+                    </select>
+                  </label>
+                )}
               </div>
 
               {!loadingLookups && salesOrderSeriesList.length === 0 && (
@@ -1194,7 +1310,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                       type="button"
                       className="restaurant-ghost-btn ro-customer-resolve-btn"
                       onClick={() => void handleResolveCustomerDocument()}
-                      disabled={submitting || resolvingCustomerDocument}
+                      disabled={quickSaleEnabled || submitting || resolvingCustomerDocument}
                     >
                       {resolvingCustomerDocument ? 'Consultando...' : 'Consultar DNI/RUC'}
                     </button>
@@ -1202,7 +1318,12 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                   <input
                     className="restaurant-input"
                     placeholder='Busca o escribe "Consumidor Final"'
-                    value={selectedCustomer ? selectedCustomer.name : customerQuery}
+                    value={quickSaleEnabled
+                      ? QUICK_SALE_CUSTOMER_NAME
+                      : selectedCustomer
+                        ? `${selectedCustomer.name} · DNI ${selectedCustomer.doc_number ?? ''}`.trim()
+                      : customerQuery}
+                    disabled={quickSaleEnabled}
                     onChange={(e) => {
                       setSelectedCustomer(null);
                       setCustomerQuery(e.target.value);
@@ -1235,11 +1356,6 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                 className="ro-product-row"
                 ref={productPreviewRef}
                 style={{ position: 'relative' }}
-                onMouseEnter={() => {
-                  setProductPreviewOpen(true);
-                  void ensureFeaturedProductsLoaded();
-                }}
-                onMouseLeave={() => setProductPreviewOpen(false)}
               >
                 <label className="ro-field ro-field--wide">
                   <span>Agregar producto</span>
@@ -1404,7 +1520,9 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                   disabled={submitting || cart.length === 0 || loadingLookups || salesOrderSeriesList.length === 0}
                   onClick={() => void handleSubmit()}
                 >
-                  {submitting ? (editingOrderId ? 'Actualizando pedido...' : 'Enviando a cocina...') : (editingOrderId ? 'Guardar cambios del pedido' : 'Enviar pedido a cocina')}
+                  {submitting
+                    ? (editingOrderId ? 'Actualizando pedido...' : (quickSaleEnabled ? 'Registrando...' : 'Enviando a cocina...'))
+                    : (editingOrderId ? 'Guardar cambios del pedido' : (quickSaleEnabled ? 'Registrar' : 'Enviar pedido a cocina'))}
                 </button>
               </div>
             </div>
@@ -1420,19 +1538,21 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
           ) : (
             <>
           <div className="ro-orders-panel__head">
-            <p className="ro-form-panel__heading">Pedidos activos ({orders.length})</p>
+            <p className="ro-form-panel__heading">{quickSaleEnabled ? `Pedidos del día (${orders.length})` : `Pedidos activos (${orders.length})`}</p>
             <div className="ro-orders-filters">
-              <select
-                className="restaurant-input"
-                value={orderStatusFilter}
-                onChange={(e) => setOrderStatusFilter(e.target.value)}
-              >
-                <option value="">Todos</option>
-                <option value="PENDING">Pendiente</option>
-                <option value="IN_PREP">En preparación</option>
-                <option value="READY">Listo</option>
-                <option value="SERVED">Entregado</option>
-              </select>
+              {!quickSaleEnabled && (
+                <select
+                  className="restaurant-input"
+                  value={orderStatusFilter}
+                  onChange={(e) => setOrderStatusFilter(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  <option value="PENDING">Pendiente</option>
+                  <option value="IN_PREP">En preparación</option>
+                  <option value="READY">Listo</option>
+                  <option value="SERVED">Entregado</option>
+                </select>
+              )}
               <input
                 className="restaurant-input"
                 placeholder="Buscar..."
@@ -1448,7 +1568,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
 
           {orders.length === 0 ? (
             <div className="restaurant-empty-state">
-              <strong>{ordersLoading ? 'Cargando pedidos...' : 'Sin pedidos activos'}</strong>
+              <strong>{ordersLoading ? 'Cargando pedidos...' : (quickSaleEnabled ? 'Sin pedidos del día' : 'Sin pedidos activos')}</strong>
               <p>Crea una orden seleccionando una mesa en el panel izquierdo.</p>
             </div>
           ) : (
@@ -1464,8 +1584,10 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                         <strong className="ro-order-card__table">{order.table_label}</strong>
                       )}
                     </div>
-                    <span className={kitchenBadgeClass(order.kitchen_status)}>
-                      {KITCHEN_STATUS_LABELS[order.kitchen_status] ?? order.kitchen_status}
+                    <span className={quickSaleEnabled ? `ro-payment-status ro-payment-status--${order.status.toLowerCase()}` : kitchenBadgeClass(order.kitchen_status)}>
+                      {quickSaleEnabled
+                        ? (order.status === 'ISSUED' ? 'Pago cerrado' : order.status === 'VOID' || order.status === 'CANCELED' ? 'Cancelado' : 'Pago pendiente')
+                        : (KITCHEN_STATUS_LABELS[order.kitchen_status] ?? order.kitchen_status)}
                     </span>
                   </div>
 
@@ -1484,10 +1606,35 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                     </div>
                     <div className="ro-order-card__row ro-order-card__row--accent">
                       <span>Total</span>
-                      <strong>{formatCurrency(order.total)}</strong>
+                      <strong>{formatCurrency(orderDisplayedTotal(order))}</strong>
                     </div>
                     {order.notes && (
                       <div className="ro-order-card__notes">{order.notes}</div>
+                    )}
+
+                    {quickSaleEnabled && order.status !== 'ISSUED' && order.status !== 'VOID' && order.status !== 'CANCELED' && (
+                      <div className="ro-order-card__quick-payment">
+                        <select
+                          className="restaurant-input"
+                          value={quickSaleKindByOrder[order.id] ?? 'SALES_ORDER'}
+                          onChange={(event) => setQuickSaleKindByOrder((prev) => ({
+                            ...prev,
+                            [order.id]: event.target.value as QuickSaleDocumentKind,
+                          }))}
+                        >
+                          <option value="SALES_ORDER">Pedido de Venta</option>
+                          <option value="RECEIPT">Boleta</option>
+                          <option value="INVOICE">Factura</option>
+                        </select>
+                        <button
+                          type="button"
+                          className="restaurant-primary-btn"
+                          disabled={closingQuickPaymentId === order.id}
+                          onClick={() => void closeQuickPayment(order)}
+                        >
+                          {closingQuickPaymentId === order.id ? 'Cerrando...' : 'Cerrar pago'}
+                        </button>
+                      </div>
                     )}
 
                     {order.items && order.items.length > 0 && (
@@ -1512,7 +1659,7 @@ export function RestaurantOrderView({ accessToken, branchId, warehouseId }: Prop
                       </div>
                     )}
 
-                    {order.kitchen_status !== 'SERVED' && order.kitchen_status !== 'CANCELLED' && (
+                    {(!quickSaleEnabled && order.kitchen_status !== 'SERVED' && order.kitchen_status !== 'CANCELLED') && (
                       <div className="ro-order-card__actions">
                         <button
                           type="button"
