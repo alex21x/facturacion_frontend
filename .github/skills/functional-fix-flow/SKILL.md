@@ -41,6 +41,11 @@ When user intent is clear ("propaga", "continua", "hazlo"), request one generic 
 - Railway/cloud specifics: `railway`.
 - Never skip step 4 before propagating.
 
+## Mobile app exclusion
+- Never propagate backend or frontend changes to `facturacion_app` or any mobile-app repository as part of this backend/frontend branch workflow.
+- Do not ask whether changes should also be propagated to the app; the default is no app propagation.
+- If the user explicitly requests implementing or changing a feature in the app, work in the app repository as a separate task; do not treat it as propagation or ask for confirmation again.
+
 ## Emergency rule
 If a hotfix is mistakenly committed first to `feature/docker-multientorno`:
 1. Immediately cherry-pick that commit into `feature/cambios-generales`.
