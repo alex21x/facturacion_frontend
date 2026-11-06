@@ -36,7 +36,16 @@ function inferRailwayBackendOrigin(host: string): string | null {
 export function getApiBaseUrl(): string {
   const configuredBaseUrl = import.meta.env.VITE_API_BASE_URL?.trim();
   if (configuredBaseUrl) {
-    return configuredBaseUrl.replace(/\/+$/, '');
+    const baseUrl = configuredBaseUrl.replace(/\/+$/, '');
+    if (/^https?:\/\//i.test(baseUrl)) {
+      return baseUrl;
+    }
+
+    if (baseUrl.startsWith('//')) {
+      return `https:${baseUrl}`;
+    }
+
+    return `https://${baseUrl.replace(/^\/+/, '')}`;
   }
 
   if (typeof window === 'undefined') {

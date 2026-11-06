@@ -4,6 +4,7 @@ node_modules
 dist
 dist-admin
 .env
+.env.test
 .env.local
 .env.*.local
 *.log

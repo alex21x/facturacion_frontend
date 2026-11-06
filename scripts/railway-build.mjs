@@ -4,10 +4,16 @@ import { copyFileSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 const explicitTarget = (process.argv[2] ?? '').trim().toLowerCase();
 const envTarget = (process.env.APP_VARIANT ?? '').trim().toLowerCase();
 const target = explicitTarget || envTarget || 'app';
+const buildMode = (process.env.VITE_BUILD_MODE ?? 'production').trim().toLowerCase();
 
+if (!['production', 'test'].includes(buildMode)) {
+  throw new Error(`Unsupported VITE_BUILD_MODE: ${buildMode}`);
+}
+
+const modeArg = buildMode === 'test' ? ' --mode test' : '';
 const cmd = target === 'admin'
-  ? 'npx vite build --config vite.admin.config.ts'
-  : 'npx vite build';
+  ? `npx vite build --config vite.admin.config.ts${modeArg}`
+  : `npx vite build${modeArg}`;
 
 try {
   // Clean only the output directory for this specific target.
