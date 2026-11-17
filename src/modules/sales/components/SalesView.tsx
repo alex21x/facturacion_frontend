@@ -767,8 +767,8 @@ function toEpoch(value: string | null | undefined): number {
 
 function sortDocumentsLatestFirst<T extends { id?: number | null; created_at?: string | null; issue_at?: string | null }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => {
-    const bGeneratedAt = toEpoch(b.created_at ?? b.issue_at ?? null);
-    const aGeneratedAt = toEpoch(a.created_at ?? a.issue_at ?? null);
+    const bGeneratedAt = toEpoch(b.issue_at ?? b.created_at ?? null);
+    const aGeneratedAt = toEpoch(a.issue_at ?? a.created_at ?? null);
 
     if (bGeneratedAt !== aGeneratedAt) {
       return bGeneratedAt - aGeneratedAt;
@@ -8685,7 +8685,7 @@ export function SalesView({ accessToken, branchId, warehouseId, cashRegisterId, 
                     )}
                   </div>
                 </td>
-                <td>{row.created_at ? formatStoredDateTime(row.created_at) : (row.issue_at ? formatStoredDateTime(row.issue_at) : '-')}</td>
+                <td>{formatStoredDateOnly(String(row.issue_at ?? ''))}</td>
                 <td>{row.customer_name}</td>
                 {workshopMultiVehicleEnabled && <td>{formatReportDocumentVehicle(row) || '-'}</td>}
                 <td>{row.payment_method_name ?? 'Sin medio de pago'}</td>
