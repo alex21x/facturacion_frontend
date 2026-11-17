@@ -8,6 +8,7 @@ import {
   fetchCashCompanyProfile,
   fetchCashSalesFeatureFlags,
   fetchCashSessions,
+  fetchSessionPaymentMethodBreakdown,
   fetchCurrentSession,
   openCashSession,
   fetchSessionDetail,
@@ -98,6 +99,7 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
   const [activeTab, setActiveTab] = useState<'sesion' | 'historial'>('sesion');
   const [currentSession, setCurrentSession] = useState<CashSession | null>(null);
   const [movements, setMovements] = useState<CashMovement[]>([]);
+  const [paymentMethodBreakdown, setPaymentMethodBreakdown] = useState<PaymentMethodBreakdown[]>([]);
   const [sessions, setSessions] = useState<CashSession[]>([]);
   const [sessionsMeta, setSessionsMeta] = useState<PaginationMeta>({ page: 1, per_page: 10, total: 0, last_page: 1 });
   const [sessionsPage, setSessionsPage] = useState(1);
@@ -166,6 +168,18 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
     return normalized.includes('efect') || normalized.includes('cash') || normalized.includes('contado');
   }
 
+  function isCashPayment(movement: CashMovement): boolean {
+    return typeof movement.is_cash_payment === 'boolean'
+      ? movement.is_cash_payment
+      : isCashPaymentName(movement.payment_method_name);
+  }
+
+  function isDigitalPayment(method: PaymentMethodBreakdown): boolean {
+    return typeof method.is_cash_payment === 'boolean'
+      ? !method.is_cash_payment
+      : !isCashPaymentName(method.payment_method_name);
+  }
+
   const totalIn = useMemo(
     () => movements.filter((m) => m.movement_type === 'IN').reduce((a, m) => a + Number(m.amount), 0),
     [movements]
@@ -196,9 +210,15 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
   );
   const salesCashInTotal = useMemo(
     () => movements
-      .filter((m) => isSalesMovement(m.ref_type) && m.movement_type === 'IN' && isCashPaymentName(m.payment_method_name))
+      .filter((m) => isSalesMovement(m.ref_type) && m.movement_type === 'IN' && isCashPayment(m))
       .reduce((sum, m) => sum + Number(m.amount), 0),
     [movements]
+  );
+  const digitalSalesInTotal = useMemo(
+    () => paymentMethodBreakdown
+      .filter(isDigitalPayment)
+      .reduce((sum, method) => sum + Number(method.total_amount), 0),
+    [paymentMethodBreakdown]
   );
   const effectiveCashTotal = useMemo(
     () => Number(currentSession?.opening_balance ?? 0) + manualInTotal - manualOutTotal + salesCashInTotal,
@@ -520,10 +540,13 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
           sessionId: sess.id,
           cashRegisterId: cashRegisterId ?? undefined,
         });
+        const paymentMethods = await fetchSessionPaymentMethodBreakdown(accessToken, sess.id);
         setMovements(movs);
+        setPaymentMethodBreakdown(paymentMethods);
         setClosingBalance(Number(sess.expected_balance).toFixed(2));
       } else {
         setMovements([]);
+        setPaymentMethodBreakdown([]);
       }
     } catch (e) {
       setIsError(true);
@@ -1013,6 +1036,11 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                     <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="in" /></span>Ventas efectivo</span>
                     <strong className="cash-value-positive">+{salesCashInTotal.toFixed(2)}</strong>
                   </article>
+                  <article className="cash-metric-card cash-metric-card-in">
+                    <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="in" /></span>Pagos digitales</span>
+                    <strong className="cash-value-positive">+{digitalSalesInTotal.toFixed(2)}</strong>
+                    <small>No incluidos en el efectivo contado</small>
+                  </article>
                   <article className="cash-metric-card cash-metric-card-expected">
                     <span className="cash-metric-label"><span className="cash-metric-icon" aria-hidden="true"><MetricGlyph kind="expected" /></span>Total efectivo</span>
                     <strong>{effectiveCashTotal.toFixed(2)}</strong>
@@ -1307,6 +1335,10 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                       <strong style={{ color: 'var(--color-ok)' }}>+{closeResponse.summary.total_in.toFixed(2)}</strong>
                     </article>
                     <article>
+                      <span>Pagos digitales (no efectivo)</span>
+                      <strong>{closeResponse.summary.digital_total_in?.toFixed(2) ?? '0.00'}</strong>
+                    </article>
+                    <article>
                       <span>Total Salida</span>
                       <strong style={{ color: 'var(--color-err)' }}>-{closeResponse.summary.total_out.toFixed(2)}</strong>
                     </article>
@@ -1344,7 +1376,10 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                         <tbody>
                           {closeResponse.sales_by_payment_method.map((pm) => (
                             <tr key={pm.payment_method_id} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                              <td>{pm.payment_method_name?.trim() ? pm.payment_method_name : '-'}</td>
+                              <td>
+                                {pm.payment_method_name?.trim() ? pm.payment_method_name : '-'}
+                                {isDigitalPayment(pm) && <small> · Digital (no incluido en efectivo)</small>}
+                              </td>
                               <td style={{ textAlign: 'center' }}>{pm.document_count}</td>
                               <td style={{ textAlign: 'right' }}>{pm.total_amount.toFixed(2)}</td>
                             </tr>
@@ -1526,7 +1561,10 @@ export function CashView({ accessToken, cashRegisterId, salesFlowMode = 'DIRECT_
                                   <tbody>
                                     {sessionDetail.payment_method_breakdown.map((pm) => (
                                       <tr key={pm.payment_method_id} style={{ borderBottom: '1px solid #eee' }}>
-                                        <td style={{ padding: '6px' }}>{pm.payment_method_name?.trim() ? pm.payment_method_name : '-'}</td>
+                                        <td style={{ padding: '6px' }}>
+                                          {pm.payment_method_name?.trim() ? pm.payment_method_name : '-'}
+                                          {isDigitalPayment(pm) && <small> · Digital</small>}
+                                        </td>
                                         <td style={{ textAlign: 'center', padding: '6px' }}>{pm.document_count}</td>
                                         <td style={{ textAlign: 'right', padding: '6px' }}>{pm.total_amount.toFixed(2)}</td>
                                       </tr>

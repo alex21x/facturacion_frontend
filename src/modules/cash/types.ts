@@ -42,6 +42,7 @@ export type CashMovement = {
   user_name: string | null;
   movement_at: string;
   payment_method_name: string | null;
+  is_cash_payment?: boolean;
 };
 
 export type OpenSessionPayload = {
@@ -75,6 +76,7 @@ export type PaymentMethodBreakdown = {
   payment_method_id: number;
   payment_method_code: string;
   payment_method_name: string;
+  is_cash_payment?: boolean;
   document_count: number;
   total_amount: number;
 };
@@ -83,6 +85,10 @@ export type CashSessionSummary = {
   opening_balance: number;
   total_in: number;
   total_out: number;
+  cash_total_in?: number;
+  cash_total_out?: number;
+  digital_total_in?: number;
+  digital_total_out?: number;
   expected_balance: number;
   closing_balance: number;
   difference: number;
@@ -152,6 +158,11 @@ export type SessionDetailResponse = {
   summary: {
     total_in: number;
     total_out: number;
+    cash_total_in?: number;
+    cash_total_out?: number;
+    digital_total_in?: number;
+    digital_total_out?: number;
+    expected_balance: number;
     difference: number | null;
   };
   movements: {

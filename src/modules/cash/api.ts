@@ -4,9 +4,11 @@ import type {
   CashMovement,
   CashSession,
   CloseSessionPayload,
+  CloseSessionResponse,
   CreateMovementPayload,
   OpenSessionPayload,
   PaginatedCashSessions,
+  PaymentMethodBreakdown,
   SessionDetailResponse,
   UpdateMovementPayload,
 } from './types';
@@ -104,12 +106,25 @@ export async function closeCashSession(
   accessToken: string,
   sessionId: number,
   payload: CloseSessionPayload
-): Promise<{ message: string; session: CashSession; summary: Record<string, number> }> {
+): Promise<CloseSessionResponse> {
   return apiClient.request(`/api/cash/sessions/${sessionId}/close`, {
     method: 'PUT',
     headers: authHeaders(accessToken),
     body: JSON.stringify(payload),
   });
+}
+
+export async function fetchSessionPaymentMethodBreakdown(
+  accessToken: string,
+  sessionId: number
+): Promise<PaymentMethodBreakdown[]> {
+  const response = await apiClient.request<{
+    payment_method_breakdown: PaymentMethodBreakdown[];
+  }>(`/api/cash/sessions/${sessionId}/payment-method-breakdown`, {
+    method: 'GET',
+    headers: authHeaders(accessToken),
+  });
+  return response.payment_method_breakdown ?? [];
 }
 
 export async function createCashMovement(
